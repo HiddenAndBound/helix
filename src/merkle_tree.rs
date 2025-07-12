@@ -1,6 +1,5 @@
 use anyhow::{Error, Result};
 use p3_baby_bear::BabyBear;
-use std::hash::Hash;
 
 /// A Merkle tree structure for cryptographic proofs.
 ///
@@ -46,28 +45,24 @@ impl MerkleTree {
             *node = blake3::hash(&bytes).into();
         }
 
-        // Markers for the current and next layer in the flat node vector
-        let mut previous_layer_marker = 0;
-        let mut next_layer_marker = length;
-
         // Build the tree layer by layer, hashing pairs of nodes to form parents
-        for d in 0..depth {
-            // Split the current segment into previous and next layers
-            let (previous_layer, next_layer) = nodes
-                [previous_layer_marker..next_layer_marker + (length >> (d + 1))]
-                .split_at_mut(length >> d);
+        let mut current_layer_start = 0;
+        let mut current_layer_size = length;
 
-            for i in 0..(length >> (d + 1)) {
+        for _d in 0..depth {
+            let next_layer_start = current_layer_start + current_layer_size;
+            let next_layer_size = current_layer_size / 2;
+
+            for i in 0..next_layer_size {
                 // Hash the left and right child to get the parent node
-                let left = previous_layer[i << 1];
-                let right = previous_layer[(i << 1) | 1];
+                let left = nodes[current_layer_start + (i << 1)];
+                let right = nodes[current_layer_start + (i << 1) + 1];
                 let parent_hash: [u8; 32] = blake3::hash(&[left, right].concat()).into();
-                next_layer[i] = parent_hash;
-
-                // Update the markers for the next layer using XOR to move up the tree
-                previous_layer_marker ^= length >> d;
-                next_layer_marker ^= length >> (d + 1);
+                nodes[next_layer_start + i] = parent_hash;
             }
+
+            current_layer_start = next_layer_start;
+            current_layer_size = next_layer_size;
         }
 
         // The root is the last node in the vector
@@ -86,26 +81,223 @@ impl MerkleTree {
     /// Returns a merkle path for the given index.
     pub fn get_path(&self, index: usize) -> Vec<[u8; 32]> {
         assert!(index < 1 << self.depth, "Index out of range.");
-        (0..self.depth)
-            .map(|j| {
-                let node_index = (((1 << j) - 1) << (self.depth + 1 - j)) | (index >> j) ^ 1;
-                self.nodes[node_index]
-            })
-            .collect()
+        
+        let mut path = Vec::new();
+        let mut current_index = index;
+        let mut layer_start = 0;
+        let mut layer_size = 1 << self.depth;
+        
+        for _ in 0..self.depth {
+            // Find sibling index
+            let sibling_index = current_index ^ 1;
+            // Add sibling hash to path
+            path.push(self.nodes[layer_start + sibling_index]);
+            
+            // Move to next layer
+            current_index = current_index / 2;
+            layer_start += layer_size;
+            layer_size /= 2;
+        }
+        
+        path
     }
 
     pub fn verify_path(&self, index: usize, path: Vec<[u8; 32]>) -> Result<()> {
         assert!(index < 1 << self.depth, "Index out of range.");
         let mut current_hash = self.nodes[index];
-        for (i, sibling_hash) in path.into_iter().enumerate() {
-            // Hash the current node with its sibling to get the parent
-            let parent_hash: [u8; 32] = blake3::hash(&[current_hash, sibling_hash].concat()).into();
-            // Check if the computed parent hash matches the stored parent hash
-            if parent_hash != self.nodes[(index >> (i + 1)) ^ 1] {
-                return Err(Error::msg("Merkle path verification failed"));
-            }
+        let mut current_index = index;
+        
+        for (_level, sibling_hash) in path.into_iter().enumerate() {
+            // Determine if current node is left or right child
+            let is_left = current_index % 2 == 0;
+            
+            // Hash the current node with its sibling in the correct order
+            let parent_hash: [u8; 32] = if is_left {
+                blake3::hash(&[current_hash, sibling_hash].concat()).into()
+            } else {
+                blake3::hash(&[sibling_hash, current_hash].concat()).into()
+            };
+            
             current_hash = parent_hash;
+            current_index = current_index / 2;
         }
-        Ok(())
+        
+        // Verify that the final computed hash matches the root
+        if current_hash == self.root {
+            Ok(())
+        } else {
+            Err(Error::msg("Merkle path verification failed"))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_leaves(count: usize) -> Vec<BabyBear> {
+        (0..count).map(|i| BabyBear::new(i as u32)).collect()
+    }
+
+    #[test]
+    fn test_new_single_leaf() {
+        let leaves = create_test_leaves(1);
+        let tree = MerkleTree::new(leaves).unwrap();
+        
+        assert_eq!(tree.depth, 0);
+        assert_eq!(tree.nodes.len(), 1);
+    }
+
+    #[test]
+    fn test_new_two_leaves() {
+        let leaves = create_test_leaves(2);
+        let tree = MerkleTree::new(leaves).unwrap();
+        
+        assert_eq!(tree.depth, 1);
+        assert_eq!(tree.nodes.len(), 3);
+    }
+
+    #[test]
+    fn test_new_four_leaves() {
+        let leaves = create_test_leaves(4);
+        let tree = MerkleTree::new(leaves).unwrap();
+        
+        assert_eq!(tree.depth, 2);
+        assert_eq!(tree.nodes.len(), 7);
+    }
+
+    #[test]
+    fn test_new_eight_leaves() {
+        let leaves = create_test_leaves(8);
+        let tree = MerkleTree::new(leaves).unwrap();
+        
+        assert_eq!(tree.depth, 3);
+        assert_eq!(tree.nodes.len(), 15);
+    }
+
+    #[test]
+    #[should_panic(expected = "Expected leaves to be a power of 2")]
+    fn test_new_non_power_of_two_panics() {
+        let leaves = create_test_leaves(3);
+        MerkleTree::new(leaves).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "Expected leaves to be a power of 2")]
+    fn test_new_five_leaves_panics() {
+        let leaves = create_test_leaves(5);
+        MerkleTree::new(leaves).unwrap();
+    }
+
+    #[test]
+    fn test_root_consistency() {
+        let leaves = create_test_leaves(4);
+        let tree = MerkleTree::new(leaves).unwrap();
+        
+        assert_eq!(tree.root(), tree.root);
+        assert_eq!(tree.root, tree.nodes[tree.nodes.len() - 1]);
+    }
+
+    #[test]
+    fn test_get_path_single_leaf() {
+        let leaves = create_test_leaves(1);
+        let tree = MerkleTree::new(leaves).unwrap();
+        
+        let path = tree.get_path(0);
+        assert_eq!(path.len(), 0);
+    }
+
+    #[test]
+    fn test_get_path_two_leaves() {
+        let leaves = create_test_leaves(2);
+        let tree = MerkleTree::new(leaves).unwrap();
+        
+        let path0 = tree.get_path(0);
+        let path1 = tree.get_path(1);
+        
+        assert_eq!(path0.len(), 1);
+        assert_eq!(path1.len(), 1);
+        assert_eq!(path0[0], tree.nodes[1]);
+        assert_eq!(path1[0], tree.nodes[0]);
+    }
+
+    #[test]
+    fn test_get_path_four_leaves() {
+        let leaves = create_test_leaves(4);
+        let tree = MerkleTree::new(leaves).unwrap();
+        
+        for i in 0..4 {
+            let path = tree.get_path(i);
+            assert_eq!(path.len(), 2);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "Index out of range")]
+    fn test_get_path_index_out_of_range() {
+        let leaves = create_test_leaves(4);
+        let tree = MerkleTree::new(leaves).unwrap();
+        
+        tree.get_path(4);
+    }
+
+    #[test]
+    fn test_verify_path_valid() {
+        let leaves = create_test_leaves(4);
+        let tree = MerkleTree::new(leaves).unwrap();
+        
+        for i in 0..4 {
+            let path = tree.get_path(i);
+            assert!(tree.verify_path(i, path).is_ok());
+        }
+    }
+
+    #[test]
+    fn test_verify_path_invalid() {
+        let leaves = create_test_leaves(4);
+        let tree = MerkleTree::new(leaves).unwrap();
+        
+        let path = tree.get_path(0);
+        let mut invalid_path = path.clone();
+        invalid_path[0][0] ^= 1;
+        
+        assert!(tree.verify_path(0, invalid_path).is_err());
+    }
+
+    #[test]
+    #[should_panic(expected = "Index out of range")]
+    fn test_verify_path_index_out_of_range() {
+        let leaves = create_test_leaves(4);
+        let tree = MerkleTree::new(leaves).unwrap();
+        
+        let path = tree.get_path(0);
+        tree.verify_path(4, path).unwrap();
+    }
+
+    #[test]
+    fn test_different_inputs_different_trees() {
+        let leaves1 = create_test_leaves(4);
+        let mut leaves2 = create_test_leaves(4);
+        leaves2[0] = BabyBear::new(100);
+        
+        let tree1 = MerkleTree::new(leaves1).unwrap();
+        let tree2 = MerkleTree::new(leaves2).unwrap();
+        
+        assert_ne!(tree1.root, tree2.root);
+    }
+
+    #[test]
+    fn test_tree_structure_integrity() {
+        let leaves = create_test_leaves(8);
+        let tree = MerkleTree::new(leaves).unwrap();
+        
+        assert_eq!(tree.depth, 3);
+        assert_eq!(tree.nodes.len(), 15);
+        
+        for i in 0..8 {
+            let path = tree.get_path(i);
+            assert_eq!(path.len(), 3);
+            assert!(tree.verify_path(i, path).is_ok());
+        }
     }
 }
