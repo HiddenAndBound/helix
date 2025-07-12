@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Error, Result};
 use p3_baby_bear::BabyBear;
 use std::hash::Hash;
 
@@ -13,6 +13,8 @@ pub struct MerkleTree {
     /// All nodes of the Merkle tree, including leaves and internal nodes.
     /// The leaves are stored first, followed by each layer up to the root.
     pub nodes: Vec<[u8; 32]>,
+
+    pub depth: u32,
 }
 
 impl MerkleTree {
@@ -72,6 +74,38 @@ impl MerkleTree {
         Ok(MerkleTree {
             root: nodes[nodes.len() - 1],
             nodes,
+            depth: depth as u32,
         })
+    }
+
+    /// Returns the root hash of the Merkle tree.
+    pub fn root(&self) -> [u8; 32] {
+        self.root
+    }
+
+    /// Returns a merkle path for the given index.
+    pub fn get_path(&self, index: usize) -> Vec<[u8; 32]> {
+        assert!(index < 1 << self.depth, "Index out of range.");
+        (0..self.depth)
+            .map(|j| {
+                let node_index = (((1 << j) - 1) << (self.depth + 1 - j)) | (index >> j) ^ 1;
+                self.nodes[node_index]
+            })
+            .collect()
+    }
+
+    pub fn verify_path(&self, index: usize, path: Vec<[u8; 32]>) -> Result<()> {
+        assert!(index < 1 << self.depth, "Index out of range.");
+        let mut current_hash = self.nodes[index];
+        for (i, sibling_hash) in path.into_iter().enumerate() {
+            // Hash the current node with its sibling to get the parent
+            let parent_hash: [u8; 32] = blake3::hash(&[current_hash, sibling_hash].concat()).into();
+            // Check if the computed parent hash matches the stored parent hash
+            if parent_hash != self.nodes[(index >> (i + 1)) ^ 1] {
+                return Err(Error::msg("Merkle path verification failed"));
+            }
+            current_hash = parent_hash;
+        }
+        Ok(())
     }
 }
