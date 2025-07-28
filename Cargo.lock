@@ -67,6 +67,7 @@ dependencies = [
  "anyhow",
  "blake3",
  "p3-baby-bear",
+ "p3-field",
  "p3-monty-31",
  "serde",
  "serde_json",
