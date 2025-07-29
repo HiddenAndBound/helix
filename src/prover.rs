@@ -4,15 +4,14 @@ use p3_baby_bear::BabyBear;
 use p3_monty_31::FieldParameters;
 
 // A prover struct for the FRI protocol.
-pub struct WHIRProver {
+pub struct WHIRCommitment {
     rate: usize, // The rate of the FRI prover
     // Fields for the prover
-    evaluation_points: Vec<BabyBear>,
     merkle_tree: MerkleTree,
-    codes: Vec<BabyBear>, // Additional field to store codes
+    code: Vec<BabyBear>, // Additional field to store codes
 }
 
-impl WHIRProver {
+impl WHIRCommitment {
     /// Constructs a new FRI prover with the given evaluation points and Merkle tree.
     ///
     /// # Arguments
@@ -22,8 +21,7 @@ impl WHIRProver {
     /// # Returns
     /// * `FRIProver` - The constructed prover instance.
     pub fn new(evaluation_points: Vec<BabyBear>, merkle_tree: MerkleTree, rate: usize) -> Self {
-        WHIRProver {
-            evaluation_points,
+        WHIRCommitment {
             merkle_tree,
             codes: Vec::new(),
             rate,
