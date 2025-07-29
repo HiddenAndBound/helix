@@ -20,10 +20,10 @@ impl WHIRCommitment {
     ///
     /// # Returns
     /// * `FRIProver` - The constructed prover instance.
-    pub fn new(evaluation_points: Vec<BabyBear>, merkle_tree: MerkleTree, rate: usize) -> Self {
+    pub fn new(code: Vec<BabyBear>, merkle_tree: MerkleTree, rate: usize) -> Self {
         WHIRCommitment {
             merkle_tree,
-            codes: Vec::new(),
+            code,
             rate,
         }
     }
