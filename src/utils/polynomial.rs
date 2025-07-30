@@ -1,7 +1,7 @@
 use core::slice;
 
 use p3_baby_bear::BabyBear;
-use p3_field::{ExtensionField, extension::BinomialExtensionField};
+use p3_field::{ExtensionField, PrimeCharacteristicRing, extension::BinomialExtensionField};
 
 use crate::utils::Fp4;
 
