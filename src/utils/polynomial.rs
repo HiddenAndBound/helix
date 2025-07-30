@@ -3,7 +3,7 @@ use core::slice;
 use p3_baby_bear::BabyBear;
 use p3_field::{ExtensionField, PrimeCharacteristicRing, extension::BinomialExtensionField};
 
-use crate::utils::Fp4;
+use crate::utils::{Fp4, eq::EqEvals};
 
 pub struct MLE {
     coeffs: Vec<BabyBear>,
@@ -31,8 +31,13 @@ impl MLE {
             self.n_vars(),
             "Dimensions of point must match MLE variables"
         );
-        let mut eval = Fp4::ZERO;
 
-        eval
+        let eq = EqEvals::gen_from_point(point);
+
+        eq.coeffs
+            .iter()
+            .zip(self.coeffs.iter())
+            .map(|(&x, &y)| x * y)
+            .sum()
     }
 }

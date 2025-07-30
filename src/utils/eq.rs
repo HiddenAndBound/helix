@@ -2,13 +2,13 @@ use p3_baby_bear::BabyBear;
 use p3_field::{Field, PrimeCharacteristicRing};
 
 use crate::utils::Fp4;
-pub struct Eq<'a> {
-    point: &'a [Fp4],
-    coeffs: Vec<Fp4>,
-    n_vars: usize,
+pub struct EqEvals<'a> {
+    pub point: &'a [Fp4],
+    pub coeffs: Vec<Fp4>,
+    pub n_vars: usize,
 }
 
-impl<'a> Eq<'a> {
+impl<'a> EqEvals<'a> {
     pub fn new(point: &'a [Fp4], coeffs: Vec<Fp4>, n_vars: usize) -> Self {
         Self {
             point,
@@ -46,7 +46,7 @@ mod tests {
     #[test]
     fn test_gen_from_point_empty() {
         let point: Vec<Fp4> = vec![];
-        let eq = Eq::gen_from_point(&point);
+        let eq = EqEvals::gen_from_point(&point);
 
         assert_eq!(eq.n_vars, 0);
         assert_eq!(eq.coeffs.len(), 1);
@@ -56,7 +56,7 @@ mod tests {
     #[test]
     fn test_gen_from_point_single_var() {
         let point = vec![Fp4::from_u32(2)];
-        let eq = Eq::gen_from_point(&point);
+        let eq = EqEvals::gen_from_point(&point);
 
         assert_eq!(eq.n_vars, 1);
         assert_eq!(eq.coeffs.len(), 2);
@@ -80,7 +80,7 @@ mod tests {
     #[test]
     fn test_gen_from_point_two_vars_correctness() {
         let point = vec![Fp4::from_u32(3), Fp4::from_u32(5)];
-        let eq = Eq::gen_from_point(&point);
+        let eq = EqEvals::gen_from_point(&point);
 
         assert_eq!(eq.n_vars, 2);
         assert_eq!(eq.coeffs.len(), 4);
@@ -116,7 +116,7 @@ mod tests {
     fn test_gen_from_point_boundary_cases() {
         // Test with r = [0, 0] - should have eq(x, r) = 1 only when x = [0, 0]
         let point_zero = vec![Fp4::ZERO, Fp4::ZERO];
-        let eq_zero = Eq::gen_from_point(&point_zero);
+        let eq_zero = EqEvals::gen_from_point(&point_zero);
 
         assert_eq!(eq_zero.coeffs[0], Fp4::ONE); // eq(0,0) = 1
         assert_eq!(eq_zero.coeffs[0] + eq_zero.coeffs[1], Fp4::ZERO); // eq(0,1) = 0
@@ -128,7 +128,7 @@ mod tests {
 
         // Test with r = [1, 1] - should have eq(x, r) = 1 only when x = [1, 1]
         let point_one = vec![Fp4::ONE, Fp4::ONE];
-        let eq_one = Eq::gen_from_point(&point_one);
+        let eq_one = EqEvals::gen_from_point(&point_one);
 
         assert_eq!(eq_one.coeffs[0], Fp4::ZERO); // eq(0,0) = 0
         assert_eq!(eq_one.coeffs[0] + eq_one.coeffs[1], Fp4::ZERO); // eq(0,1) = 0
@@ -142,7 +142,7 @@ mod tests {
     #[test]
     fn test_gen_from_point_three_vars_structure() {
         let point = vec![Fp4::from_u32(2), Fp4::from_u32(3), Fp4::from_u32(5)];
-        let eq = Eq::gen_from_point(&point);
+        let eq = EqEvals::gen_from_point(&point);
 
         assert_eq!(eq.n_vars, 3);
         assert_eq!(eq.coeffs.len(), 8);
@@ -169,7 +169,7 @@ mod tests {
         // Test the specific tensor expansion algorithm used in gen_from_point
         // The algorithm iteratively applies the transformation matrix [1, 0; -1, 1]
         let point = vec![Fp4::from_u32(7)];
-        let eq = Eq::gen_from_point(&point);
+        let eq = EqEvals::gen_from_point(&point);
 
         // Manually verify the tensor expansion steps:
         // Start with coeffs = [1, 0]
@@ -194,7 +194,7 @@ mod tests {
         // Test that the generated coefficients satisfy the multilinear extension property
         // The polynomial should agree with the discrete equality function on {0,1}^n
         let point = vec![Fp4::from_u32(11), Fp4::from_u32(13)];
-        let eq = Eq::gen_from_point(&point);
+        let eq = EqEvals::gen_from_point(&point);
 
         let r0 = Fp4::from_u32(11);
         let r1 = Fp4::from_u32(13);
