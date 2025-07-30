@@ -1,7 +1,9 @@
-use crate::merkle_tree::MerkleTree;
 use anyhow::Result;
 use p3_baby_bear::BabyBear;
 use p3_monty_31::FieldParameters;
+use utils::merkle_tree::MerkleTree;
+
+use crate::utils;
 
 // A prover struct for the FRI protocol.
 pub struct WHIRCommitment {
