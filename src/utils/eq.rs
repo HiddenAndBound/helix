@@ -1,5 +1,4 @@
-use p3_baby_bear::BabyBear;
-use p3_field::{Field, PrimeCharacteristicRing};
+use p3_field::PrimeCharacteristicRing;
 
 use crate::utils::Fp4;
 pub struct EqEvals<'a> {
@@ -41,7 +40,7 @@ impl<'a> EqEvals<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use p3_field::{Field, PrimeCharacteristicRing};
+    use p3_field::PrimeCharacteristicRing;
 
     #[test]
     fn test_gen_from_point_empty() {
@@ -266,7 +265,7 @@ mod tests {
         for x0 in 0..2 {
             for x1 in 0..2 {
                 for x2 in 0..2 {
-                    let eval_point = vec![
+                    let _eval_point = vec![
                         Fp4::from_u32(x0),
                         Fp4::from_u32(x1), 
                         Fp4::from_u32(x2)
