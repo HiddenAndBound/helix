@@ -2,6 +2,7 @@ use p3_field::PrimeCharacteristicRing;
 
 use crate::utils::{Fp4, eq::EqEvals};
 
+#[derive(Debug, Clone)]
 pub struct MLE<F: PrimeCharacteristicRing + Clone> {
     coeffs: Vec<F>,
 }
