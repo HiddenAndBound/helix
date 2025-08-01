@@ -6,7 +6,10 @@ use p3_field::{PrimeCharacteristicRing, PrimeField32};
 use std::marker::PhantomData;
 
 pub mod prover;
-pub mod verifier;
+pub mod enhanced_prover;
+pub mod optimizations;
+pub mod config;
+pub mod traits;
 
 /// Sumcheck proof consisting of univariate polynomials for each round
 #[derive(Debug, Clone)]
