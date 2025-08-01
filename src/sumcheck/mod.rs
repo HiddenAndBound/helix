@@ -111,7 +111,7 @@ impl SumCheckProof {
             let points: Vec<_> = (0..=constraint.degree())
                 .map(|x| Fp4::from_u32(x as u32))
                 .collect();
-            let poly = <crate::sumcheck::univariate::UnivariatePolynomial<Fp4> as crate::sumcheck::univariate::UnivariatePolynomialTrait>::interpolate(&points, &evaluations)?;
+            let poly = <crate::sumcheck::univariate::UnivariatePolynomial<Fp4>>::interpolate(&points, &evaluations)?;
             let round_poly = SumCheckRoundProof::new(poly.coefficients().to_vec());
             round_proofs.push(round_poly);
 
@@ -180,16 +180,12 @@ where
     ClosureConstraint::new(closure, degree, num_vars, num_mles)
 }
 
-/// Helper function to create a univariate polynomial from coefficients
-pub fn univariate_from_coeffs(coeffs: Vec<Fp4>) -> UnivariatePolynomial<Fp4> {
-    UnivariatePolynomial::new(coeffs)
-}
 
 /// Helper function to interpolate a univariate polynomial from points and values
 pub fn interpolate_univariate(
     points: &[Fp4],
     values: &[Fp4],
 ) -> Result<UnivariatePolynomial<Fp4>, SumCheckError> {
-    <crate::sumcheck::univariate::UnivariatePolynomial<Fp4> as crate::sumcheck::univariate::UnivariatePolynomialTrait>::interpolate(points, values)
+    <crate::sumcheck::univariate::UnivariatePolynomial<Fp4>>::interpolate(points, values)
         .map_err(|e| SumCheckError::InterpolationError(e.to_string()))
 }

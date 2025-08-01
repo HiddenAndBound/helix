@@ -1,4 +1,5 @@
 use std::ops::{Add, Mul};
+use p3_field::{Field, PrimeCharacteristicRing};
 use crate::{Fp, Fp4};
 
 /// A univariate polynomial represented by its coefficients
@@ -96,15 +97,15 @@ impl UnivariatePolynomial<Fp> {
         }
         
         let n = points.len();
-        let mut coeffs = vec![Fp::ZERO; n];
+        let mut coeffs = vec![Fp::zero(); n];
         
         for i in 0..n {
-            let mut basis = vec![Fp::ONE];
+            let mut basis = vec![Fp::one()];
             
             // Compute Lagrange basis polynomial for point i
             for j in 0..n {
                 if i != j {
-                    let mut new_basis = vec![Fp::ZERO; basis.len() + 1];
+                    let mut new_basis = vec![Fp::zero(); basis.len() + 1];
                     let denom = points[i] - points[j];
                     let denom_inv = denom.inverse().ok_or("Division by zero")?;
                     
@@ -141,15 +142,15 @@ impl UnivariatePolynomial<Fp4> {
         }
         
         let n = points.len();
-        let mut coeffs = vec![Fp4::ZERO; n];
+        let mut coeffs = vec![Fp4::zero(); n];
         
         for i in 0..n {
-            let mut basis = vec![Fp4::ONE];
+            let mut basis = vec![Fp4::one()];
             
             // Compute Lagrange basis polynomial for point i
             for j in 0..n {
                 if i != j {
-                    let mut new_basis = vec![Fp4::ZERO; basis.len() + 1];
+                    let mut new_basis = vec![Fp4::zero(); basis.len() + 1];
                     let denom = points[i] - points[j];
                     let denom_inv = denom.inverse().ok_or("Division by zero")?;
                     
@@ -180,42 +181,42 @@ mod tests {
 
     #[test]
     fn test_polynomial_creation() {
-        let poly = UnivariatePolynomial::new(vec![Fp::from(1), Fp::from(2), Fp::from(3)]);
+        let poly = UnivariatePolynomial::new(vec![Fp::from_u32(1), Fp::from_u32(2), Fp::from_u32(3)]);
         assert_eq!(poly.degree(), 2);
-        assert_eq!(poly.coefficients(), &[Fp::from(1), Fp::from(2), Fp::from(3)]);
+        assert_eq!(poly.coefficients(), &[Fp::from_u32(1), Fp::from_u32(2), Fp::from_u32(3)]);
     }
 
     #[test]
     fn test_polynomial_evaluation() {
-        let poly = UnivariatePolynomial::new(vec![Fp::from(1), Fp::from(2), Fp::from(3)]);
+        let poly = UnivariatePolynomial::new(vec![Fp::from_u32(1), Fp::from_u32(2), Fp::from_u32(3)]);
         
         // Evaluate at x = 2: 1 + 2*2 + 3*4 = 1 + 4 + 12 = 17
-        let result = poly.evaluate(Fp::from(2));
-        assert_eq!(result, Fp::from(17));
+        let result = poly.evaluate(Fp::from_u32(2));
+        assert_eq!(result, Fp::from_u32(17));
     }
 
     #[test]
     fn test_polynomial_addition() {
-        let poly1 = UnivariatePolynomial::new(vec![Fp::from(1), Fp::from(2)]);
-        let poly2 = UnivariatePolynomial::new(vec![Fp::from(3), Fp::from(4), Fp::from(5)]);
+        let poly1 = UnivariatePolynomial::new(vec![Fp::from_u32(1), Fp::from_u32(2)]);
+        let poly2 = UnivariatePolynomial::new(vec![Fp::from_u32(3), Fp::from_u32(4), Fp::from_u32(5)]);
         
         let sum = poly1.add(&poly2);
-        assert_eq!(sum.coefficients(), &[Fp::from(4), Fp::from(6), Fp::from(5)]);
+        assert_eq!(sum.coefficients(), &[Fp::from_u32(4), Fp::from_u32(6), Fp::from_u32(5)]);
     }
 
     #[test]
     fn test_polynomial_multiplication() {
-        let poly1 = UnivariatePolynomial::new(vec![Fp::from(1), Fp::from(2)]);
-        let poly2 = UnivariatePolynomial::new(vec![Fp::from(3), Fp::from(4)]);
+        let poly1 = UnivariatePolynomial::new(vec![Fp::from_u32(1), Fp::from_u32(2)]);
+        let poly2 = UnivariatePolynomial::new(vec![Fp::from_u32(3), Fp::from_u32(4)]);
         
         let product = poly1.mul(&poly2);
-        assert_eq!(product.coefficients(), &[Fp::from(3), Fp::from(10), Fp::from(8)]);
+        assert_eq!(product.coefficients(), &[Fp::from_u32(3), Fp::from_u32(10), Fp::from_u32(8)]);
     }
 
     #[test]
     fn test_polynomial_interpolation() {
-        let points = vec![Fp::from(1), Fp::from(2), Fp::from(3)];
-        let values = vec![Fp::from(1), Fp::from(4), Fp::from(9)];
+        let points = vec![Fp::from_u32(1), Fp::from_u32(2), Fp::from_u32(3)];
+        let values = vec![Fp::from_u32(1), Fp::from_u32(4), Fp::from_u32(9)];
         
         let poly = UnivariatePolynomial::interpolate(&points, &values).unwrap();
         

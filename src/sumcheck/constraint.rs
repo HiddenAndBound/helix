@@ -1,32 +1,32 @@
-use std::marker::PhantomData;
-use p3_field::PrimeCharacteristicRing;
 use crate::utils::{Fp4, polynomial::MLE};
+use p3_field::PrimeCharacteristicRing;
+use std::marker::PhantomData;
 
 /// Trait for defining custom constraint polynomials in the sumcheck protocol
 pub trait ConstraintPolynomial<F: PrimeCharacteristicRing + Clone> {
     /// Evaluate the constraint polynomial at a given point
-    /// 
+    ///
     /// # Arguments
     /// * `mles` - Slice of MLE references to evaluate
     /// * `point` - Point in the extension field to evaluate at
-    /// 
+    ///
     /// # Returns
     /// The evaluation result in Fp4
-    fn evaluate(&self, mles: &[&MLE<F>], point: &[Fp4]) -> Fp4;
-    
+    fn evaluate(&self, mles: &[&MLE<F>], point: &[Fp]) -> Fp4;
+
     /// Maximum degree of the constraint polynomial
     fn degree(&self) -> usize;
-    
+
     /// Number of variables in the constraint
     fn num_variables(&self) -> usize;
-    
+
     /// Number of MLE inputs required
     fn num_mles(&self) -> usize;
 }
 
 /// A constraint polynomial defined by a closure function
-pub struct ClosureConstraint<F, C> 
-where 
+pub struct ClosureConstraint<F, C>
+where
     F: PrimeCharacteristicRing + Clone,
     C: Fn(&[&MLE<F>], &[Fp4]) -> Fp4,
 {
@@ -38,23 +38,18 @@ where
 }
 
 impl<F, C> ClosureConstraint<F, C>
-where 
+where
     F: PrimeCharacteristicRing + Clone,
     C: Fn(&[&MLE<F>], &[Fp4]) -> Fp4,
 {
     /// Create a new closure-based constraint polynomial
-    /// 
+    ///
     /// # Arguments
     /// * `closure` - Function that evaluates the constraint
     /// * `degree` - Maximum degree of the polynomial
     /// * `num_variables` - Number of variables in the constraint
     /// * `num_mles` - Number of MLE inputs required
-    pub fn new(
-        closure: C,
-        degree: usize,
-        num_variables: usize,
-        num_mles: usize,
-    ) -> Self {
+    pub fn new(closure: C, degree: usize, num_variables: usize, num_mles: usize) -> Self {
         Self {
             closure,
             degree,
@@ -66,22 +61,22 @@ where
 }
 
 impl<F, C> ConstraintPolynomial<F> for ClosureConstraint<F, C>
-where 
+where
     F: PrimeCharacteristicRing + Clone,
     C: Fn(&[&MLE<F>], &[Fp4]) -> Fp4,
 {
     fn evaluate(&self, mles: &[&MLE<F>], point: &[Fp4]) -> Fp4 {
         (self.closure)(mles, point)
     }
-    
+
     fn degree(&self) -> usize {
         self.degree
     }
-    
+
     fn num_variables(&self) -> usize {
         self.num_variables
     }
-    
+
     fn num_mles(&self) -> usize {
         self.num_mles
     }
@@ -115,14 +110,18 @@ mod tests {
     fn test_constraint_evaluation() {
         // Create simple MLEs for testing
         let coeffs_a = vec![
-            BabyBear::from_u32(1), BabyBear::from_u32(2),
-            BabyBear::from_u32(3), BabyBear::from_u32(4),
+            BabyBear::from_u32(1),
+            BabyBear::from_u32(2),
+            BabyBear::from_u32(3),
+            BabyBear::from_u32(4),
         ];
         let coeffs_b = vec![
-            BabyBear::from_u32(5), BabyBear::from_u32(6),
-            BabyBear::from_u32(7), BabyBear::from_u32(8),
+            BabyBear::from_u32(5),
+            BabyBear::from_u32(6),
+            BabyBear::from_u32(7),
+            BabyBear::from_u32(8),
         ];
-        
+
         let mle_a = MLE::new(coeffs_a);
         let mle_b = MLE::new(coeffs_b);
         let mles = vec![&mle_a, &mle_b];
@@ -142,12 +141,12 @@ mod tests {
         // Test evaluation at a point
         let point = vec![Fp4::from_u32(3), Fp4::from_u32(5)];
         let result = constraint.evaluate(&mles, &point);
-        
+
         // Verify the result is the product of individual evaluations
         let a_eval = mle_a.evaluate(&point);
         let b_eval = mle_b.evaluate(&point);
         let expected = a_eval * b_eval;
-        
+
         assert_eq!(result, expected);
     }
 
@@ -158,7 +157,7 @@ mod tests {
         let coeffs_b = vec![BabyBear::from_u32(3), BabyBear::from_u32(4)];
         let coeffs_c = vec![BabyBear::from_u32(5), BabyBear::from_u32(6)];
         let coeffs_d = vec![BabyBear::from_u32(7), BabyBear::from_u32(8)];
-        
+
         let mle_a = MLE::new(coeffs_a);
         let mle_b = MLE::new(coeffs_b);
         let mle_c = MLE::new(coeffs_c);
@@ -180,14 +179,14 @@ mod tests {
 
         let point = vec![Fp4::from_u32(7)];
         let result = constraint.evaluate(&mles, &point);
-        
+
         // Manually compute expected result
         let a_eval = mle_a.evaluate(&point);
         let b_eval = mle_b.evaluate(&point);
         let c_eval = mle_c.evaluate(&point);
         let d_eval = mle_d.evaluate(&point);
         let expected = (a_eval + b_eval) * c_eval - d_eval;
-        
+
         assert_eq!(result, expected);
     }
 }
