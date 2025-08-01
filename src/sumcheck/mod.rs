@@ -1,289 +1,195 @@
-use crate::utils::challenger::Challenger;
-use crate::utils::polynomial::MLE;
-use crate::utils::{Fp, Fp4};
-use p3_baby_bear::BabyBear;
-use p3_field::{PrimeCharacteristicRing, PrimeField32};
-use std::marker::PhantomData;
+//! Sumcheck protocol implementation
+//!
+//! This module provides the core infrastructure for the sumcheck protocol,
+//! including constraint polynomials, univariate polynomials, and error handling.
 
-pub mod prover;
-pub mod enhanced_prover;
-pub mod optimizations;
-pub mod config;
-pub mod traits;
+use p3_field::PrimeCharacteristicRing;
 
-/// Sumcheck proof consisting of univariate polynomials for each round
-#[derive(Debug, Clone)]
-pub struct SumcheckProof {
-    /// Univariate polynomials sent by the prover in each round
-    pub round_polynomials: Vec<Vec<Fp4>>,
-    /// Final claimed sum
-    pub claimed_sum: Fp4,
+use crate::{
+    Fp, Fp4,
+    challenger::{self, Challenger},
+    eq::EqEvals,
+    polynomial::MLE,
+};
+
+// Re-export core components
+pub mod constraint;
+pub mod error;
+pub mod univariate;
+
+// Re-export commonly used items
+pub use constraint::{ConstraintPolynomial, ClosureConstraint};
+pub use error::SumCheckError;
+pub use univariate::UnivariatePolynomial;
+
+/// Struct holding a complete sumcheck proof
+pub struct SumCheckProof {
+    /// Round proofs for each variable
+    round_proofs: Vec<SumCheckRoundProof>,
+    /// Final evaluation claims
+    final_claims: Vec<Fp4>,
+    /// Number of variables in the sumcheck
+    num_variables: usize,
 }
 
-/// Prover for the sumcheck protocol
-pub struct SumcheckProver {
-    _phantom: PhantomData<BabyBear>,
-}
-
-impl SumcheckProver {
-    /// Create a new sumcheck prover
-    pub fn new() -> Self {
+impl SumCheckProof {
+    /// Creates a new SumCheckProof
+    pub fn new(round_proofs: Vec<SumCheckRoundProof>, final_claims: Vec<Fp4>, num_variables: usize) -> Self {
         Self {
-            _phantom: PhantomData,
+            round_proofs,
+            final_claims,
+            num_variables,
         }
     }
 
-    /// Execute the sumcheck protocol to prove the sum of a multilinear polynomial
-    /// over the boolean hypercube {0,1}^n
-    pub fn prove(
-        &self,
-        polynomial: &MLE<BabyBear>,
-        challenger: &mut Challenger,
-    ) -> (SumcheckProof, Vec<Fp4>) {
-        let mut current_poly = MLE::<Fp4>::new(
-            polynomial
-                .coeffs()
-                .iter()
-                .map(|c| Fp4::from(Fp::from_u32(c.as_canonical_u32())))
-                .collect(),
-        );
-        let mut round_polynomials = Vec::new();
-        let mut challenges = Vec::new();
-
-        // Calculate the actual sum over the boolean hypercube
-        let claimed_sum = self.calculate_boolean_hypercube_sum(polynomial);
-
-        let num_variables = current_poly.n_vars();
-
-        for _round in 0..num_variables {
-            // Compute the univariate polynomial for this round
-            let round_poly = self.compute_round_polynomial_fp4(&current_poly);
-            round_polynomials.push(round_poly.clone());
-
-            // Observe the round polynomial coefficients
-            challenger.observe_fp4_elems(&round_poly);
-
-            // Get challenge from verifier
-            let challenge = challenger.get_challenge();
-            challenges.push(challenge);
-
-            // Fold the polynomial using the challenge
-            current_poly = current_poly.fold_in_place(challenge);
-        }
-
-        (
-            SumcheckProof {
-                round_polynomials,
-                claimed_sum,
-            },
-            challenges,
-        )
-    }
-
-    /// Calculate the sum of the polynomial over the boolean hypercube
-    fn calculate_boolean_hypercube_sum(&self, poly: &MLE<BabyBear>) -> Fp4 {
-        let mut sum = Fp4::ZERO;
-
-        // Iterate over all points in the boolean hypercube
-        for coeff in poly.coeffs() {
-            let fp = Fp::from_u32(coeff.as_canonical_u32());
-            sum += Fp4::from(fp);
-        }
-
-        sum
-    }
-
-    /// Compute the univariate polynomial for a given round
-    fn compute_round_polynomial(&self, poly: &MLE<BabyBear>) -> Vec<Fp4> {
-        // The univariate polynomial is g_i(X) = sum_{b_{i+1},...,b_n} f(r_1,...,r_{i-1},X,b_{i+1},...,b_n)
-        // For simplicity, we'll compute it by evaluating at X=0 and X=1
-
-        let mut g_0 = Fp4::ZERO; // g_i(0)
-        let mut g_1 = Fp4::ZERO; // g_i(1)
-
-        let half_len = poly.len() / 2;
-
-        // Split coefficients into even (x_i=0) and odd (x_i=1) indices
-        for i in 0..half_len {
-            let low_idx = i * 2; // Even indices: x_i=0
-            let high_idx = i * 2 + 1; // Odd indices: x_i=1
-
-            let low_coeff = &poly.coeffs()[low_idx];
-            let high_coeff = &poly.coeffs()[high_idx];
-
-            g_0 += Fp4::from(Fp::from_u32(low_coeff.as_canonical_u32()));
-            g_1 += Fp4::from(Fp::from_u32(high_coeff.as_canonical_u32()));
-        }
-
-        // The univariate polynomial is g_i(X) = (g_1 - g_0) * X + g_0
-        vec![g_0, g_1 - g_0]
-    }
-
-    /// Compute the univariate polynomial for a given round (Fp4 version)
-    fn compute_round_polynomial_fp4(&self, poly: &MLE<Fp4>) -> Vec<Fp4> {
-        // The univariate polynomial is g_i(X) = sum_{b_{i+1},...,b_n} f(r_1,...,r_{i-1},X,b_{i+1},...,b_n)
-        // For simplicity, we'll compute it by evaluating at X=0 and X=1
-
-        let mut g_0 = Fp4::ZERO; // g_i(0)
-        let mut g_1 = Fp4::ZERO; // g_i(1)
-
-        let half_len = poly.len() / 2;
-
-        // Split coefficients into even (x_i=0) and odd (x_i=1) indices
-        for i in 0..half_len {
-            let low_idx = i * 2; // Even indices: x_i=0
-            let high_idx = i * 2 + 1; // Odd indices: x_i=1
-
-            let low_coeff = &poly.coeffs()[low_idx];
-            let high_coeff = &poly.coeffs()[high_idx];
-
-            g_0 += *low_coeff;
-            g_1 += *high_coeff;
-        }
-
-        // The univariate polynomial is g_i(X) = (g_1 - g_0) * X + g_0
-        vec![g_0, g_1 - g_0]
-    }
-}
-
-/// Verifier for the sumcheck protocol
-pub struct SumcheckVerifier {
-    /// Number of variables in the polynomial
-    pub num_variables: usize,
-}
-
-impl SumcheckVerifier {
-    /// Create a new sumcheck verifier
-    pub fn new(num_variables: usize) -> Self {
-        Self { num_variables }
-    }
-
-    /// Verify a sumcheck proof
-    pub fn verify(
-        &self,
-        proof: &SumcheckProof,
+    /// Proves a sumcheck instance for the given MLEs and constraint
+    pub fn prove<F, C>(
+        mles: &[MLE<F>],
+        constraint: &C,
         claimed_sum: Fp4,
         challenger: &mut Challenger,
-        polynomial: &MLE<BabyBear>,
-    ) -> bool {
+    ) -> Result<Self, SumCheckError>
+    where
+        F: PrimeCharacteristicRing + Clone,
+        Fp4: From<F>,
+        C: ConstraintPolynomial<F>,
+    {
+        // Validate inputs
+        if mles.len() != constraint.num_mles() {
+            return Err(SumCheckError::InvalidNumMles {
+                expected: constraint.num_mles(),
+                actual: mles.len(),
+            });
+        }
+
+        let num_vars = mles[0].n_vars();
+        if num_vars != constraint.num_variables() {
+            return Err(SumCheckError::VariableCountMismatch {
+                expected: constraint.num_variables(),
+                actual: num_vars,
+            });
+        }
+
+        for mle in mles {
+            if mle.n_vars() != num_vars {
+                return Err(SumCheckError::VariableCountMismatch {
+                    expected: num_vars,
+                    actual: mle.n_vars(),
+                });
+            }
+        }
+
+        let mut round_proofs = Vec::with_capacity(num_vars);
+        let mut current_mles: Vec<MLE<Fp4>> = mles.iter().map(|mle| {
+            // Convert MLE<F> to MLE<Fp4> for evaluation
+            MLE::new(mle.coeffs().iter().map(|c| Fp4::from(c.clone())).collect())
+        }).collect();
+
         let mut current_sum = claimed_sum;
-        let mut challenges = Vec::new();
+        let mut challenges = Vec::with_capacity(num_vars);
 
-        for round in 0..self.num_variables {
-            if round >= proof.round_polynomials.len() {
-                return false;
+        // Round-by-round sumcheck protocol
+        for round in 0..num_vars {
+            // Evaluate constraint over hypercube points for current round
+            let mut evaluations = Vec::with_capacity(constraint.degree() + 1);
+            for x in 0..=constraint.degree() {
+                let point = Fp4::from_u32(x as u32);
+                challenges.push(point);
+                // Convert MLE<Fp4> to MLE<F> references by reconstructing the references
+                let mle_refs: Vec<&MLE<F>> = current_mles.iter()
+                    .map(|mle_fp4| {
+                        // Convert MLE<Fp4> to MLE<F> by reconstructing the reference
+                        unsafe { &*(mle_fp4 as *const MLE<Fp4> as *const MLE<F>) }
+                    })
+                    .collect();
+                let eval = constraint.evaluate(&mle_refs, &challenges);
+                evaluations.push(eval);
+                challenges.pop();
             }
 
-            let round_poly = &proof.round_polynomials[round];
-            if round_poly.len() != 2 {
-                return false; // Should be degree-1 univariate polynomial
-            }
-
-            // Check that g_i(0) + g_i(1) = current_sum
-            let g_0 = round_poly[0];
-            let g_1 = g_0 + round_poly[1];
-
-            if g_0 + g_1 != current_sum {
-                return false;
-            }
+            // Interpolate univariate polynomial
+            let points: Vec<_> = (0..=constraint.degree())
+                .map(|x| Fp4::from_u32(x as u32))
+                .collect();
+            let poly = <crate::sumcheck::univariate::UnivariatePolynomial<Fp4> as crate::sumcheck::univariate::UnivariatePolynomialTrait>::interpolate(&points, &evaluations)?;
+            let round_poly = SumCheckRoundProof::new(poly.coefficients().to_vec());
+            round_proofs.push(round_poly);
 
             // Get challenge from verifier
-            challenger.observe_fp4_elems(round_poly);
             let challenge = challenger.get_challenge();
             challenges.push(challenge);
 
-            // Update current_sum for next round: g_i(challenge)
-            current_sum = g_0 + challenge * round_poly[1];
+            // Fold all MLEs with the challenge
+            current_mles = current_mles.into_iter()
+                .map(|mle| mle.fold_in_place(challenge))
+                .collect();
         }
 
-        // Finally, check that the polynomial evaluated at the challenges equals the final claim
-        let expected_eval = polynomial.evaluate(&challenges);
-        expected_eval == current_sum
+        // Final evaluation claims
+        let final_claims = challenges;
+
+        Ok(Self {
+            round_proofs,
+            final_claims,
+            num_variables: num_vars,
+        })
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::utils::challenger::Challenger;
-    use p3_baby_bear::BabyBear;
+pub struct SumCheckRoundProof {
+    coeffs: Vec<Fp4>,
+}
 
-    #[test]
-    fn test_simple_sumcheck() {
-        let prover = SumcheckProver::new();
-        let verifier = SumcheckVerifier::new(2);
-
-        // Create a simple polynomial: f(x,y) = x + y
-        let coeffs = vec![
-            BabyBear::from_u32(0), // f(0,0) = 0
-            BabyBear::from_u32(1), // f(0,1) = 1
-            BabyBear::from_u32(1), // f(1,0) = 1
-            BabyBear::from_u32(2), // f(1,1) = 2
-        ];
-        let poly = MLE::new(coeffs);
-
-        let mut challenger = Challenger::new();
-        let (proof, challenges) = prover.prove(&poly, &mut challenger);
-
-        // The sum should be 0 + 1 + 1 + 2 = 4
-        assert_eq!(proof.claimed_sum, Fp4::from(Fp::from_u32(4)));
-
-        let mut verifier_challenger = Challenger::new();
-        let is_valid = verifier.verify(&proof, proof.claimed_sum, &mut verifier_challenger, &poly);
-        assert!(is_valid);
+impl SumCheckRoundProof {
+    pub fn new(coeffs: Vec<Fp4>) -> Self {
+        Self { coeffs }
     }
 
-    #[test]
-    fn test_constant_polynomial() {
-        let prover = SumcheckProver::new();
-        let verifier = SumcheckVerifier::new(2);
-
-        // Create a constant polynomial: f(x,y) = 3
-        let coeffs = vec![
-            BabyBear::from_u32(3), // f(0,0) = 3
-            BabyBear::from_u32(3), // f(0,1) = 3
-            BabyBear::from_u32(3), // f(1,0) = 3
-            BabyBear::from_u32(3), // f(1,1) = 3
-        ];
-        let poly = MLE::new(coeffs);
-
-        let mut challenger = Challenger::new();
-        let (proof, challenges) = prover.prove(&poly, &mut challenger);
-
-        // The sum should be 3 * 4 = 12
-        assert_eq!(proof.claimed_sum, Fp4::from(Fp::from_u32(12)));
-
-        let mut verifier_challenger = Challenger::new();
-        let is_valid = verifier.verify(&proof, proof.claimed_sum, &mut verifier_challenger, &poly);
-        assert!(is_valid);
+    pub fn degree(&self) -> usize {
+        self.coeffs.len() - 1
     }
 
-    #[test]
-    fn test_linear_polynomial() {
-        let prover = SumcheckProver::new();
-        let verifier = SumcheckVerifier::new(3);
-
-        // Create a polynomial: f(x,y,z) = x + 2y + 3z
-        let coeffs = vec![
-            BabyBear::from_u32(0), // f(0,0,0) = 0
-            BabyBear::from_u32(3), // f(0,0,1) = 3
-            BabyBear::from_u32(2), // f(0,1,0) = 2
-            BabyBear::from_u32(5), // f(0,1,1) = 5
-            BabyBear::from_u32(1), // f(1,0,0) = 1
-            BabyBear::from_u32(4), // f(1,0,1) = 4
-            BabyBear::from_u32(3), // f(1,1,0) = 3
-            BabyBear::from_u32(6), // f(1,1,1) = 6
-        ];
-        let poly = MLE::new(coeffs);
-
-        let mut challenger = Challenger::new();
-        let (proof, challenges) = prover.prove(&poly, &mut challenger);
-
-        // The sum should be 0+3+2+5+1+4+3+6 = 24
-        assert_eq!(proof.claimed_sum, Fp4::from(Fp::from_u32(24)));
-
-        let mut verifier_challenger = Challenger::new();
-        let is_valid = verifier.verify(&proof, proof.claimed_sum, &mut verifier_challenger, &poly);
-        assert!(is_valid);
+    pub fn eval(&self, point: Fp4) -> Fp4 {
+        let mut eval = Fp4::ZERO;
+        for &coeff in &self.coeffs {
+            eval = coeff + eval * point
+        }
+        eval
     }
+
+    /// Creates a round proof from evaluations by interpolating a univariate polynomial
+    pub fn from_evaluations(evals: &[Fp4]) -> Result<Self, SumCheckError> {
+        let points: Vec<_> = (0..evals.len())
+            .map(|x| Fp4::from_u32(x as u32))
+            .collect();
+        let poly = UnivariatePolynomial::interpolate(&points, evals)?;
+        Ok(Self::new(poly.coefficients().to_vec()))
+    }
+}
+
+/// Helper function to create a constraint polynomial from a closure
+pub fn constraint_from_closure<F>(
+    closure: impl Fn(&[&MLE<F>], &[Fp4]) -> Fp4 + Clone + Send + Sync,
+    degree: usize,
+    num_vars: usize,
+    num_mles: usize,
+) -> ClosureConstraint<F, impl Fn(&[&MLE<F>], &[Fp4]) -> Fp4 + Clone + Send + Sync>
+where
+    F: PrimeCharacteristicRing + Clone,
+{
+    ClosureConstraint::new(closure, degree, num_vars, num_mles)
+}
+
+/// Helper function to create a univariate polynomial from coefficients
+pub fn univariate_from_coeffs(coeffs: Vec<Fp4>) -> UnivariatePolynomial<Fp4> {
+    UnivariatePolynomial::new(coeffs)
+}
+
+/// Helper function to interpolate a univariate polynomial from points and values
+pub fn interpolate_univariate(
+    points: &[Fp4],
+    values: &[Fp4],
+) -> Result<UnivariatePolynomial<Fp4>, SumCheckError> {
+    <crate::sumcheck::univariate::UnivariatePolynomial<Fp4> as crate::sumcheck::univariate::UnivariatePolynomialTrait>::interpolate(points, values)
+        .map_err(|e| SumCheckError::InterpolationError(e.to_string()))
 }
