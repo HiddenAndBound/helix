@@ -167,8 +167,8 @@ impl SumCheckRoundProof {
 
     /// Creates a round proof from evaluations by interpolating a univariate polynomial
     pub fn from_evaluations(evals: &[Fp4]) -> Result<Self, SumCheckError> {
-        let points: Vec<Fp4> = (0..evals.len()).map(|x| Fp4::from_u32(x as u32)).collect();
-        let poly = UnivariatePolynomial::<Fp4>::interpolate(&points, evals)?;
+        let poly = UnivariatePolynomial::<Fp4>::interpolate(evals)
+            .ok_or(SumCheckError::InterpolationError("Failed to interpolate polynomial".to_string()))?;
         Ok(Self::new(poly.coefficients().to_vec()))
     }
 }
