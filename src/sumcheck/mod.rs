@@ -56,7 +56,7 @@ impl SumCheckProof {
     where
         F: PrimeCharacteristicRing + Clone,
         Fp4: From<F>,
-        C: ConstraintPolynomial<F>,
+        C: ConstraintPolynomial,
     {
         // Validate inputs
         if mles.len() != constraint.num_mles() {
@@ -167,30 +167,8 @@ impl SumCheckRoundProof {
 
     /// Creates a round proof from evaluations by interpolating a univariate polynomial
     pub fn from_evaluations(evals: &[Fp4]) -> Result<Self, SumCheckError> {
-        let points: Vec<_> = (0..evals.len()).map(|x| Fp4::from_u32(x as u32)).collect();
-        let poly = UnivariatePolynomial::interpolate(&points, evals)?;
+        let points: Vec<Fp4> = (0..evals.len()).map(|x| Fp4::from_u32(x as u32)).collect();
+        let poly = UnivariatePolynomial::<Fp4>::interpolate(&points, evals)?;
         Ok(Self::new(poly.coefficients().to_vec()))
     }
-}
-
-/// Helper function to create a constraint polynomial from a closure
-pub fn constraint_from_closure<F>(
-    closure: impl Fn(&[&MLE<F>], &[Fp4]) -> Fp4 + Clone + Send + Sync,
-    degree: usize,
-    num_vars: usize,
-    num_mles: usize,
-) -> ClosureConstraint<F, impl Fn(&[&MLE<F>], &[Fp4]) -> Fp4 + Clone + Send + Sync>
-where
-    F: PrimeCharacteristicRing + Clone,
-{
-    ClosureConstraint::new(closure, degree, num_vars, num_mles)
-}
-
-/// Helper function to interpolate a univariate polynomial from points and values
-pub fn interpolate_univariate(
-    points: &[Fp4],
-    values: &[Fp4],
-) -> Result<UnivariatePolynomial<Fp4>, SumCheckError> {
-    <crate::sumcheck::univariate::UnivariatePolynomial<Fp4>>::interpolate(points, values)
-        .map_err(|e| SumCheckError::InterpolationError(e.to_string()))
 }
