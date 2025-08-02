@@ -18,7 +18,7 @@ pub mod error;
 pub mod univariate;
 
 // Re-export commonly used items
-pub use constraint::{ConstraintPolynomial, ClosureConstraint};
+pub use constraint::{ClosureConstraint, ConstraintPolynomial};
 pub use error::SumCheckError;
 pub use univariate::UnivariatePolynomial;
 
@@ -34,7 +34,11 @@ pub struct SumCheckProof {
 
 impl SumCheckProof {
     /// Creates a new SumCheckProof
-    pub fn new(round_proofs: Vec<SumCheckRoundProof>, final_claims: Vec<Fp4>, num_variables: usize) -> Self {
+    pub fn new(
+        round_proofs: Vec<SumCheckRoundProof>,
+        final_claims: Vec<Fp4>,
+        num_variables: usize,
+    ) -> Self {
         Self {
             round_proofs,
             final_claims,
@@ -80,49 +84,53 @@ impl SumCheckProof {
         }
 
         let mut round_proofs = Vec::with_capacity(num_vars);
-        let mut current_mles: Vec<MLE<Fp4>> = mles.iter().map(|mle| {
-            // Convert MLE<F> to MLE<Fp4> for evaluation
-            MLE::new(mle.coeffs().iter().map(|c| Fp4::from(c.clone())).collect())
-        }).collect();
+        let mut current_mles: Vec<MLE<Fp4>> = mles
+            .iter()
+            .map(|mle| {
+                // Convert MLE<F> to MLE<Fp4> for evaluation
+                MLE::new(mle.coeffs().iter().map(|c| Fp4::from(c.clone())).collect())
+            })
+            .collect();
 
         let mut current_sum = claimed_sum;
         let mut challenges = Vec::with_capacity(num_vars);
 
         // Round-by-round sumcheck protocol
         for round in 0..num_vars {
-            // Evaluate constraint over hypercube points for current round
-            let mut evaluations = Vec::with_capacity(constraint.degree() + 1);
-            for x in 0..=constraint.degree() {
-                let point = Fp4::from_u32(x as u32);
-                challenges.push(point);
-                // Convert MLE<Fp4> to MLE<F> references by reconstructing the references
-                let mle_refs: Vec<&MLE<F>> = current_mles.iter()
-                    .map(|mle_fp4| {
-                        // Convert MLE<Fp4> to MLE<F> by reconstructing the reference
-                        unsafe { &*(mle_fp4 as *const MLE<Fp4> as *const MLE<F>) }
-                    })
+            let mut coeffs = vec![Fp4::ZERO; constraint.degree()];
+            for i in 0..1 << num_vars - round - 1 {
+                let eval_0: Vec<Fp4> = current_mles
+                    .iter()
+                    .map(|mle| mle.coeffs()[i << 1])
                     .collect();
-                let eval = constraint.evaluate(&mle_refs, &challenges);
-                evaluations.push(eval);
-                challenges.pop();
+                let eval_1: Vec<Fp4> = current_mles
+                    .iter()
+                    .map(|mle| mle.coeffs()[(i << 1) | 1])
+                    .collect();
+                let eval_2: Vec<Fp4> = eval_0
+                    .iter()
+                    .zip(eval_1.iter())
+                    .map(|(x0, x1)| x0.double() + *x1)
+                    .collect();
+
+                coeffs[0] += eval_0.into_iter().map(|x| x).product::<Fp4>();
+                coeffs[1] += eval_1.into_iter().map(|x| x).product::<Fp4>();
+                coeffs[2] += eval_2.into_iter().map(|x| x).product::<Fp4>();
             }
 
-            // Interpolate univariate polynomial
-            let points: Vec<_> = (0..=constraint.degree())
-                .map(|x| Fp4::from_u32(x as u32))
-                .collect();
-            let poly = <crate::sumcheck::univariate::UnivariatePolynomial<Fp4>>::interpolate(&points, &evaluations)?;
-            let round_poly = SumCheckRoundProof::new(poly.coefficients().to_vec());
-            round_proofs.push(round_poly);
+            let round_proof = SumCheckRoundProof::from_evaluations(&coeffs).expect("Should work");
 
-            // Get challenge from verifier
+            challenger.observe_fp4_elems(&round_proof.coeffs);
+
             let challenge = challenger.get_challenge();
-            challenges.push(challenge);
 
-            // Fold all MLEs with the challenge
-            current_mles = current_mles.into_iter()
+            current_mles = current_mles
+                .into_iter()
                 .map(|mle| mle.fold_in_place(challenge))
                 .collect();
+
+            challenges.push(challenge);
+            round_proofs.push(round_proof);
         }
 
         // Final evaluation claims
@@ -159,9 +167,7 @@ impl SumCheckRoundProof {
 
     /// Creates a round proof from evaluations by interpolating a univariate polynomial
     pub fn from_evaluations(evals: &[Fp4]) -> Result<Self, SumCheckError> {
-        let points: Vec<_> = (0..evals.len())
-            .map(|x| Fp4::from_u32(x as u32))
-            .collect();
+        let points: Vec<_> = (0..evals.len()).map(|x| Fp4::from_u32(x as u32)).collect();
         let poly = UnivariatePolynomial::interpolate(&points, evals)?;
         Ok(Self::new(poly.coefficients().to_vec()))
     }
@@ -179,7 +185,6 @@ where
 {
     ClosureConstraint::new(closure, degree, num_vars, num_mles)
 }
-
 
 /// Helper function to interpolate a univariate polynomial from points and values
 pub fn interpolate_univariate(
