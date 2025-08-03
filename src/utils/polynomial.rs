@@ -1,4 +1,5 @@
 use p3_field::PrimeCharacteristicRing;
+use std::ops::{Index, Range};
 
 use crate::utils::{Fp4, eq::EqEvals};
 
@@ -79,6 +80,22 @@ impl<F: PrimeCharacteristicRing + Clone> MLE<F> {
     /// Returns a reference to the coefficient vector (for testing/debugging)
     pub fn coeffs(&self) -> &[F] {
         &self.coeffs
+    }
+}
+
+impl<F: PrimeCharacteristicRing + Clone> Index<usize> for MLE<F> {
+    type Output = F;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.coeffs[index]
+    }
+}
+
+impl<F: PrimeCharacteristicRing + Clone> Index<Range<usize>> for MLE<F> {
+    type Output = [F];
+
+    fn index(&self, range: Range<usize>) -> &Self::Output {
+        &self.coeffs[range]
     }
 }
 
@@ -304,5 +321,77 @@ mod tests {
         // With challenge = 1, result should be [f(1,0), f(1,1)] = [20, 40]
         assert_eq!(folded.coeffs()[0], Fp4::from_u32(20));
         assert_eq!(folded.coeffs()[1], Fp4::from_u32(40));
+    }
+
+    #[test]
+    fn test_mle_index_single_element() {
+        let coeffs = vec![BabyBear::from_u32(42)];
+        let mle = MLE::new(coeffs);
+        
+        assert_eq!(mle[0], BabyBear::from_u32(42));
+    }
+
+    #[test]
+    fn test_mle_index_multiple_elements() {
+        let coeffs = vec![
+            BabyBear::from_u32(10),
+            BabyBear::from_u32(20),
+            BabyBear::from_u32(30),
+            BabyBear::from_u32(40),
+        ];
+        let mle = MLE::new(coeffs);
+        
+        assert_eq!(mle[0], BabyBear::from_u32(10));
+        assert_eq!(mle[1], BabyBear::from_u32(20));
+        assert_eq!(mle[2], BabyBear::from_u32(30));
+        assert_eq!(mle[3], BabyBear::from_u32(40));
+    }
+
+    #[test]
+    fn test_mle_index_range() {
+        let coeffs = vec![
+            BabyBear::from_u32(10),
+            BabyBear::from_u32(20),
+            BabyBear::from_u32(30),
+            BabyBear::from_u32(40),
+        ];
+        let mle = MLE::new(coeffs);
+        
+        let slice = &mle[1..3];
+        assert_eq!(slice.len(), 2);
+        assert_eq!(slice[0], BabyBear::from_u32(20));
+        assert_eq!(slice[1], BabyBear::from_u32(30));
+    }
+
+    #[test]
+    fn test_mle_index_full_range() {
+        let coeffs = vec![
+            BabyBear::from_u32(100),
+            BabyBear::from_u32(200),
+        ];
+        let mle = MLE::new(coeffs);
+        
+        let full_slice = &mle[0..2];
+        assert_eq!(full_slice.len(), 2);
+        assert_eq!(full_slice[0], BabyBear::from_u32(100));
+        assert_eq!(full_slice[1], BabyBear::from_u32(200));
+    }
+
+    #[test]
+    fn test_mle_index_with_fp4() {
+        let coeffs = vec![
+            Fp4::from_u32(5),
+            Fp4::from_u32(15),
+            Fp4::from_u32(25),
+            Fp4::from_u32(35),
+        ];
+        let mle = MLE::new(coeffs);
+        
+        assert_eq!(mle[0], Fp4::from_u32(5));
+        assert_eq!(mle[3], Fp4::from_u32(35));
+        
+        let range_slice = &mle[1..3];
+        assert_eq!(range_slice[0], Fp4::from_u32(15));
+        assert_eq!(range_slice[1], Fp4::from_u32(25));
     }
 }

@@ -55,7 +55,13 @@ src/
 
 ### Key Components
 
-**Multilinear Extensions (MLEs)**: Core polynomial representation supporting efficient evaluation over extension fields. Located in `src/utils/polynomial.rs`.
+**Multilinear Extensions (MLEs)**: Core polynomial representation supporting efficient evaluation over extension fields. Located in `src/utils/polynomial.rs`. Uses power-of-2 coefficient vectors and supports folding operations for sum-check protocols.
+
+**Sparse Matrices (SparseMLE)**: Efficient sparse matrix representation for Spartan R1CS matrices. Located in `src/spartan/sparse.rs`. Key features:
+- O(nnz) storage complexity vs O(n²) dense representation
+- Power-of-2 dimension requirements for zkSNARK compatibility
+- Direct MLE multiplication via `multiply_by_mle()` method
+- Metadata preprocessing for sum-check protocols with timestamp tracking
 
 **WHIR Commitments**: Polynomial commitment scheme with configurable rates, implemented in `src/spartan/prover.rs` via `WHIRCommitment`.
 
@@ -86,3 +92,44 @@ Based on the implementation plan, future development focuses on:
 - All cryptographic operations use BLAKE3
 - Merkle trees require power-of-two leaf counts
 - Field operations are designed for constant-time execution where supported
+
+## Testing Guidelines
+
+### Isolated Module Testing
+When compilation errors exist in other modules, use targeted testing approaches:
+```bash
+# Test specific module only
+cargo test --lib spartan::sparse::tests
+
+# Test with pattern matching
+cargo test sparse --lib
+```
+
+### Module Isolation for Development
+For parallel development, temporarily disable problematic modules in `mod.rs`:
+```rust
+mod error;
+// mod prover;    // Temporarily disabled
+mod sparse;
+// mod sumcheck;  // Temporarily disabled
+mod univariate;
+```
+
+### Field Element Construction
+Use correct BabyBear constructors in tests:
+- `BabyBear::new(value)` - Basic constructor
+- `BabyBear::from_u32(value)` - From u32 (preferred in tests)
+- `BabyBear::from_usize(value)` - From usize (for indices)
+- **Avoid**: `BabyBear::from_canonical_u32()` (doesn't exist)
+
+### Sparse Matrix Implementation Details
+
+**Dimension Calculation**: Uses `(max_coordinate + 1).next_power_of_two()` to ensure power-of-2 sizing while containing all matrix indices.
+
+**TimeStamps Arrays**: 
+- `read_ts` and `final_ts` serve different purposes and have different sizes
+- `read_ts[i]` = timestamp before i-th memory access (size = padded accesses)
+- `final_ts[j]` = final write count for address j (size = address space)
+- No requirement for equal array lengths
+
+**Zero-Padding Strategy**: Dummy memory accesses to address 0 maintain power-of-2 memory access patterns without affecting computation results.

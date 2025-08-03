@@ -1,11 +1,5 @@
-use crate::Fp4;
+use crate::{Fp4, spartan::sumcheck::OuterSumCheckProof};
 
 pub struct SpartanProof {
     outer_sumcheck_proof: OuterSumCheckProof,
 }
-
-pub struct OuterSumCheckProof {
-    round_proofs: Vec<UnivariatePoly>,
-    final_claims: Vec<Fp4>,
-}
-

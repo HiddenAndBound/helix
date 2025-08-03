@@ -1,4 +1,5 @@
 use p3_field::PrimeCharacteristicRing;
+use std::ops::{Index, Range};
 
 use crate::utils::Fp4;
 pub struct EqEvals<'a> {
@@ -34,6 +35,61 @@ impl<'a> EqEvals<'a> {
             coeffs,
             n_vars,
         }
+    }
+
+    /// Folds the equality polynomial by binding the lowest variable to a challenge value.
+    /// 
+    /// For EqEvals with n variables, this computes:
+    /// g(x₁, ..., xₙ₋₁) = eq(challenge, x₁, ..., xₙ₋₁; r₀, r₁, ..., rₙ₋₁)
+    ///                  = (1 - challenge) * eq(0, x₁, ..., xₙ₋₁; r₀, r₁, ..., rₙ₋₁) + 
+    ///                    challenge * eq(1, x₁, ..., xₙ₋₁; r₀, r₁, ..., rₙ₋₁)
+    pub fn fold_in_place<'b>(self, challenge: Fp4, new_point: &'b [Fp4]) -> EqEvals<'b> {
+        if self.coeffs.len() == 1 {
+            // Base case: 0-variable polynomial, return constant
+            return EqEvals {
+                point: new_point,
+                coeffs: vec![self.coeffs[0]],
+                n_vars: 0,
+            };
+        }
+
+        let half_len = self.coeffs.len() / 2;
+        let mut folded_coeffs = Vec::with_capacity(half_len);
+
+        // For each coefficient pair (low, high) where low corresponds to x₀=0 and high to x₀=1
+        for i in 0..half_len {
+            let low_idx = i * 2; // Even indices: x₀=0
+            let high_idx = i * 2 + 1; // Odd indices: x₀=1
+
+            let low = self.coeffs[low_idx]; // eq(..., x₀=0)
+            let high = self.coeffs[high_idx]; // eq(..., x₀=1)
+
+            // Compute (1 - challenge) * low + challenge * high
+            let folded = low * (Fp4::ONE - challenge) + high * challenge;
+            folded_coeffs.push(folded);
+        }
+
+        EqEvals {
+            point: new_point,
+            coeffs: folded_coeffs,
+            n_vars: self.n_vars.saturating_sub(1),
+        }
+    }
+}
+
+impl<'a> Index<usize> for EqEvals<'a> {
+    type Output = Fp4;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.coeffs[index]
+    }
+}
+
+impl<'a> Index<Range<usize>> for EqEvals<'a> {
+    type Output = [Fp4];
+
+    fn index(&self, range: Range<usize>) -> &Self::Output {
+        &self.coeffs[range]
     }
 }
 
@@ -331,6 +387,179 @@ mod tests {
             assert_eq!(eq_extended.coeffs[i], eq_base.coeffs[i] * (Fp4::ONE - r2));
             assert_eq!(eq_extended.coeffs[i + 4], eq_base.coeffs[i] * r2);
         }
+    }
+
+    #[test]
+    fn test_eq_evals_index_single_element() {
+        let point = vec![];
+        let eq = EqEvals::gen_from_point(&point);
+        
+        assert_eq!(eq[0], Fp4::ONE);
+    }
+
+    #[test]
+    fn test_eq_evals_index_multiple_elements() {
+        let point = vec![Fp4::from_u32(3), Fp4::from_u32(5)];
+        let eq = EqEvals::gen_from_point(&point);
+        
+        // Test individual indexing
+        assert_eq!(eq[0], (Fp4::ONE - Fp4::from_u32(3)) * (Fp4::ONE - Fp4::from_u32(5)));
+        assert_eq!(eq[1], Fp4::from_u32(3) * (Fp4::ONE - Fp4::from_u32(5)));
+        assert_eq!(eq[2], (Fp4::ONE - Fp4::from_u32(3)) * Fp4::from_u32(5));
+        assert_eq!(eq[3], Fp4::from_u32(3) * Fp4::from_u32(5));
+    }
+
+    #[test]
+    fn test_eq_evals_index_range() {
+        let point = vec![Fp4::from_u32(2), Fp4::from_u32(7)];
+        let eq = EqEvals::gen_from_point(&point);
+        
+        let slice = &eq[1..3];
+        assert_eq!(slice.len(), 2);
+        assert_eq!(slice[0], Fp4::from_u32(2) * (Fp4::ONE - Fp4::from_u32(7)));
+        assert_eq!(slice[1], (Fp4::ONE - Fp4::from_u32(2)) * Fp4::from_u32(7));
+    }
+
+    #[test]
+    fn test_eq_evals_index_full_range() {
+        let point = vec![Fp4::from_u32(11)];
+        let eq = EqEvals::gen_from_point(&point);
+        
+        let full_slice = &eq[0..2];
+        assert_eq!(full_slice.len(), 2);
+        assert_eq!(full_slice[0], Fp4::ONE - Fp4::from_u32(11));
+        assert_eq!(full_slice[1], Fp4::from_u32(11));
+    }
+
+    #[test]
+    fn test_eq_evals_fold_two_variables() {
+        let point = vec![Fp4::from_u32(3), Fp4::from_u32(5)];
+        let eq = EqEvals::gen_from_point(&point);
+        let challenge = Fp4::from_u32(7);
+        
+        let new_point = vec![Fp4::from_u32(5)]; // remaining point after folding first variable
+        let folded = eq.fold_in_place(challenge, &new_point);
+        
+        assert_eq!(folded.n_vars, 1);
+        assert_eq!(folded.coeffs.len(), 2);
+        
+        // Folded coefficients should be (1-challenge)*low + challenge*high
+        let one_minus_challenge = Fp4::ONE - challenge;
+        let expected_0 = one_minus_challenge * ((Fp4::ONE - Fp4::from_u32(3)) * (Fp4::ONE - Fp4::from_u32(5))) + 
+                        challenge * (Fp4::from_u32(3) * (Fp4::ONE - Fp4::from_u32(5)));
+        let expected_1 = one_minus_challenge * ((Fp4::ONE - Fp4::from_u32(3)) * Fp4::from_u32(5)) + 
+                        challenge * (Fp4::from_u32(3) * Fp4::from_u32(5));
+        
+        assert_eq!(folded.coeffs[0], expected_0);
+        assert_eq!(folded.coeffs[1], expected_1);
+    }
+
+    #[test]
+    fn test_eq_evals_fold_single_variable() {
+        let point = vec![Fp4::from_u32(11)];
+        let eq = EqEvals::gen_from_point(&point);
+        let challenge = Fp4::from_u32(13);
+        
+        let new_point = vec![]; // empty point for constant polynomial
+        let folded = eq.fold_in_place(challenge, &new_point);
+        
+        // Should return constant polynomial (0 variables)
+        assert_eq!(folded.n_vars, 0);
+        assert_eq!(folded.coeffs.len(), 1);
+        
+        // Result should be (1-13)*(1-11) + 13*11
+        let expected = (Fp4::ONE - challenge) * (Fp4::ONE - Fp4::from_u32(11)) + 
+                      challenge * Fp4::from_u32(11);
+        assert_eq!(folded.coeffs[0], expected);
+    }
+
+    #[test]
+    fn test_eq_evals_fold_constant() {
+        let point = vec![];
+        let eq = EqEvals::gen_from_point(&point);
+        let challenge = Fp4::from_u32(42);
+        
+        let new_point = vec![];
+        let folded = eq.fold_in_place(challenge, &new_point);
+        
+        // Should remain constant
+        assert_eq!(folded.n_vars, 0);
+        assert_eq!(folded.coeffs.len(), 1);
+        assert_eq!(folded.coeffs[0], Fp4::ONE);
+    }
+
+    #[test]
+    fn test_eq_evals_fold_three_variables() {
+        let point = vec![Fp4::from_u32(2), Fp4::from_u32(3), Fp4::from_u32(5)];
+        let eq = EqEvals::gen_from_point(&point);
+        let challenge = Fp4::from_u32(7);
+        
+        // Store original coeffs before folding
+        let original_coeffs = eq.coeffs.clone();
+        let new_point = vec![Fp4::from_u32(3), Fp4::from_u32(5)]; // remaining point after folding first variable
+        let folded = eq.fold_in_place(challenge, &new_point);
+        
+        assert_eq!(folded.n_vars, 2);
+        assert_eq!(folded.coeffs.len(), 4);
+        
+        // Verify folding preserves equality polynomial structure
+        let one_minus_challenge = Fp4::ONE - challenge;
+        for i in 0..4 {
+            let low_idx = i * 2;
+            let high_idx = i * 2 + 1;
+            let expected = one_minus_challenge * original_coeffs[low_idx] + challenge * original_coeffs[high_idx];
+            assert_eq!(folded.coeffs[i], expected);
+        }
+    }
+
+    #[test]
+    fn test_eq_evals_multiple_folds() {
+        let point = vec![Fp4::from_u32(2), Fp4::from_u32(3)];
+        let eq = EqEvals::gen_from_point(&point);
+        
+        assert_eq!(eq.n_vars, 2);
+        
+        // First fold: 2 vars -> 1 var
+        let point1 = vec![Fp4::from_u32(3)]; // remaining point after first fold
+        let eq = eq.fold_in_place(Fp4::from_u32(5), &point1);
+        assert_eq!(eq.n_vars, 1);
+        assert_eq!(eq.coeffs.len(), 2);
+        
+        // Second fold: 1 var -> 0 vars (constant)
+        let point0 = vec![]; // empty point for constant
+        let eq = eq.fold_in_place(Fp4::from_u32(7), &point0);
+        assert_eq!(eq.n_vars, 0);
+        assert_eq!(eq.coeffs.len(), 1);
+    }
+
+    #[test]
+    fn test_eq_evals_fold_with_zero_challenge() {
+        let point = vec![Fp4::from_u32(3), Fp4::from_u32(5)];
+        let eq = EqEvals::gen_from_point(&point);
+        
+        // Store original coeffs before folding
+        let original_coeffs = eq.coeffs.clone();
+        let new_point = vec![Fp4::from_u32(5)]; // remaining point after folding first variable
+        let folded = eq.fold_in_place(Fp4::ZERO, &new_point);
+        
+        // With challenge = 0, should get coefficients for x₀=0 case
+        assert_eq!(folded.coeffs[0], original_coeffs[0]); // eq(0,0)
+        assert_eq!(folded.coeffs[1], original_coeffs[2]); // eq(0,1)
+    }
+
+    #[test]
+    fn test_eq_evals_fold_with_one_challenge() {
+        let point = vec![Fp4::from_u32(3), Fp4::from_u32(5)];
+        let eq = EqEvals::gen_from_point(&point);
+        
+        // Store original coeffs before folding
+        let original_coeffs = eq.coeffs.clone();
+        let new_point = vec![Fp4::from_u32(5)]; // remaining point after folding first variable
+        let folded = eq.fold_in_place(Fp4::ONE, &new_point);
+        
+        // With challenge = 1, should get coefficients for x₀=1 case
+        assert_eq!(folded.coeffs[0], original_coeffs[1]); // eq(1,0)
+        assert_eq!(folded.coeffs[1], original_coeffs[3]); // eq(1,1)
     }
     
 }
