@@ -166,18 +166,19 @@ mod univariate_tests {
         // For f(x) = 3x + 7:
         // f(0) = 7, f(1) = 10
         // Should interpolate to [a=3, b=7]
-        let mut evals = vec![Fp4::from_u32(7), Fp4::from_u32(10)];
+        let evals = vec![Fp4::from_u32(7), Fp4::from_u32(10)];
+        let mut poly = UnivariatePoly::new(evals).unwrap();
 
-        UnivariatePoly::interpolate_in_place(&mut evals).unwrap();
+        poly.interpolate_in_place().unwrap();
 
-        assert_eq!(evals[0], Fp4::from_u32(3)); // a = f(1) - f(0) = 10 - 7 = 3
-        assert_eq!(evals[1], Fp4::from_u32(7)); // b = f(0) = 7
+        assert_eq!(poly.coeffs[0], Fp4::from_u32(7)); // a = f(0) = 7  
+        assert_eq!(poly.coeffs[1], Fp4::from_u32(3)); // b = f(1) - f(0) = 10 - 7 = 3
     }
 
     #[test]
     fn test_interpolate_in_place_invalid_length() {
-        let mut evals = vec![Fp4::from_u32(1), Fp4::from_u32(2), Fp4::from_u32(3)];
-        let result = UnivariatePoly::interpolate_in_place(&mut evals);
+        let evals = vec![Fp4::from_u32(1), Fp4::from_u32(2), Fp4::from_u32(3)];
+        let result = UnivariatePoly::new(evals);
 
         assert!(result.is_err());
         assert!(matches!(
@@ -203,14 +204,15 @@ mod univariate_tests {
         // Evaluate at 0 and 1
         let f_0 = original_poly.eval_at(Fp4::ZERO);
         let f_1 = original_poly.eval_at(Fp4::ONE);
-        let mut evals = vec![f_0, f_1];
+        let evals = vec![f_0, f_1];
 
-        // Interpolate back to coefficients
-        UnivariatePoly::interpolate_in_place(&mut evals).unwrap();
+        // Create polynomial from evaluations and interpolate back to coefficients
+        let mut eval_poly = UnivariatePoly::new(evals).unwrap();
+        eval_poly.interpolate_in_place().unwrap();
 
         // Should recover original coefficients
-        assert_eq!(evals[0], Fp4::from_u32(5)); // Linear coefficient
-        assert_eq!(evals[1], Fp4::from_u32(11)); // Constant coefficient
+        assert_eq!(eval_poly.coeffs[0], Fp4::from_u32(11)); // Constant coefficient
+        assert_eq!(eval_poly.coeffs[1], Fp4::from_u32(5)); // Linear coefficient
     }
 
     #[test]

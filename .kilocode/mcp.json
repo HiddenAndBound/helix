@@ -27,7 +27,7 @@
         "@upstash/context7-mcp"
       ],
       "env": {
-        "DEFAULT_MINIMUM_TOKENS": ""
+        "DEFAULT_MINIMUM_TOKENS": "1000"
       }
     },
     "playwright": {
@@ -35,9 +35,9 @@
       "args": [
         "-y",
         "@playwright/mcp@latest",
-        "--browser=",
-        "--headless=",
-        "--viewport-size="
+        "--browser=chromium",
+        "--headless=true",
+        "--viewport-size=1280x720"
       ]
     }
   }

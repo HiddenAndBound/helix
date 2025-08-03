@@ -100,4 +100,32 @@ impl OuterSumCheckProof {
 
         OuterSumCheckProof::new(round_proofs, final_evals)
     }
+
+    pub fn verify(&self, challenger: &mut Challenger) {
+        let rounds = self.round_proofs.len();
+        let eq_point = challenger.get_challenges(rounds);
+
+        let mut current_claim = Fp4::ZERO;
+        let mut round_challenges = Vec::new();
+        for round in 0..rounds {
+            let round_poly = &self.round_proofs[round];
+
+            assert_eq!(
+                current_claim,
+                (Fp4::ONE - eq_point[round]) * round_poly.eval_at(Fp4::ZERO)
+                    + eq_point[round] * round_poly.eval_at(Fp4::ONE)
+            );
+
+            challenger.observe_fp4_elems(&round_poly.coefficients());
+            let challenge = challenger.get_challenge();
+            current_claim = round_poly.eval_at(challenge);
+
+            round_challenges.push(challenge);
+        }
+
+        assert_eq!(
+            current_claim,
+            self.final_evals[0] * self.final_evals[1] - self.final_evals[2]
+        )
+    }
 }

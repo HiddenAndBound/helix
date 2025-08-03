@@ -375,6 +375,65 @@ mod tests {
     }
 
     #[test]
+    fn test_fold_in_place() {
+        // Test folding a 2-variable equality polynomial
+        let point = vec![Fp4::from_u32(3), Fp4::from_u32(5)];
+        let mut eq = EqEvals::gen_from_point(&point);
+
+        assert_eq!(eq.n_vars, 2);
+        assert_eq!(eq.coeffs.len(), 4);
+
+        // Store original coefficients for verification
+        let orig_coeffs = eq.coeffs.clone();
+
+        // Fold the polynomial (binds the first variable)
+        eq.fold_in_place();
+
+        // After folding, should have 1 variable and 2 coefficients
+        assert_eq!(eq.n_vars, 1);
+        assert_eq!(eq.coeffs.len(), 2);
+
+        // Verify the folding was done correctly
+        // For folding without challenge, it computes: low - high for each pair
+        assert_eq!(eq.coeffs[0], orig_coeffs[0] - orig_coeffs[1]);
+        assert_eq!(eq.coeffs[1], orig_coeffs[2] - orig_coeffs[3]);
+    }
+
+    #[test]
+    fn test_fold_in_place_single_var() {
+        // Test folding a 1-variable equality polynomial to constant
+        let point = vec![Fp4::from_u32(7)];
+        let mut eq = EqEvals::gen_from_point(&point);
+
+        assert_eq!(eq.n_vars, 1);
+        assert_eq!(eq.coeffs.len(), 2);
+
+        // Fold the polynomial
+        eq.fold_in_place();
+
+        // After folding, should have 0 variables and 1 coefficient
+        assert_eq!(eq.n_vars, 0);
+        assert_eq!(eq.coeffs.len(), 1);
+    }
+
+    #[test]
+    fn test_fold_in_place_base_case() {
+        // Test folding when already at base case (0 variables)
+        let point: Vec<Fp4> = vec![];
+        let mut eq = EqEvals::gen_from_point(&point);
+
+        assert_eq!(eq.n_vars, 0);
+        assert_eq!(eq.coeffs.len(), 1);
+
+        // Folding should be a no-op
+        eq.fold_in_place();
+
+        assert_eq!(eq.n_vars, 0);
+        assert_eq!(eq.coeffs.len(), 1);
+        assert_eq!(eq.coeffs[0], Fp4::ONE);
+    }
+
+    #[test]
     fn test_incremental_variable_extension() {
         // Test that adding variables extends the polynomial correctly
         let point_base = vec![Fp4::from_u32(3), Fp4::from_u32(5)];
