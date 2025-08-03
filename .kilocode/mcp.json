@@ -20,13 +20,6 @@
         "GITHUB_READ_ONLY": "1"
       }
     },
-    "memory": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-memory"
-      ]
-    },
     "context7": {
       "command": "npx",
       "args": [

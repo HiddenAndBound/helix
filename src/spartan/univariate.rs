@@ -65,23 +65,16 @@ impl UnivariatePoly {
     ///
     /// # Post-condition
     /// * `evals` is mutated to contain [a, b] coefficients
-    pub fn interpolate_in_place(evals: &mut Vec<Fp4>) -> SumCheckResult<()> {
-        if evals.len() != 2 {
-            return Err(SumCheckError::ValidationError(format!(
-                "Interpolation requires exactly 2 evaluation points, got {}",
-                evals.len()
-            )));
-        }
+    pub fn interpolate_in_place(&mut self) -> SumCheckResult<()> {
+        let f_0 = self.coeffs[0]; // f(0) = b
+        let f_1 = self.coeffs[1]; // f(1) = a + b
 
-        let f_0 = evals[0]; // f(0) = b
-        let f_1 = evals[1]; // f(1) = a + b
-
-        let a = f_1 - f_0; // Linear coefficient: a = f(1) - f(0)
-        let b = f_0; // Constant coefficient: b = f(0)
+        let b = f_1 - f_0; // Linear coefficient: a = f(1) - f(0)
+        let a = f_0; // Constant coefficient: b = f(0)
 
         // Mutate in place: [f(0), f(1)] → [a, b]
-        evals[0] = a;
-        evals[1] = b;
+        self.coeffs[0] = a;
+        self.coeffs[1] = b;
 
         Ok(())
     }

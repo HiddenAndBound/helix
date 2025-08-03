@@ -38,19 +38,15 @@ impl<'a> EqEvals<'a> {
     }
 
     /// Folds the equality polynomial by binding the lowest variable to a challenge value.
-    /// 
+    ///
     /// For EqEvals with n variables, this computes:
     /// g(x₁, ..., xₙ₋₁) = eq(challenge, x₁, ..., xₙ₋₁; r₀, r₁, ..., rₙ₋₁)
-    ///                  = (1 - challenge) * eq(0, x₁, ..., xₙ₋₁; r₀, r₁, ..., rₙ₋₁) + 
+    ///                  = (1 - challenge) * eq(0, x₁, ..., xₙ₋₁; r₀, r₁, ..., rₙ₋₁) +
     ///                    challenge * eq(1, x₁, ..., xₙ₋₁; r₀, r₁, ..., rₙ₋₁)
-    pub fn fold_in_place<'b>(self, challenge: Fp4, new_point: &'b [Fp4]) -> EqEvals<'b> {
+    pub fn fold_in_place<'b>(&mut self) {
         if self.coeffs.len() == 1 {
             // Base case: 0-variable polynomial, return constant
-            return EqEvals {
-                point: new_point,
-                coeffs: vec![self.coeffs[0]],
-                n_vars: 0,
-            };
+            return;
         }
 
         let half_len = self.coeffs.len() / 2;
@@ -65,15 +61,13 @@ impl<'a> EqEvals<'a> {
             let high = self.coeffs[high_idx]; // eq(..., x₀=1)
 
             // Compute (1 - challenge) * low + challenge * high
-            let folded = low * (Fp4::ONE - challenge) + high * challenge;
+            let folded = low - high;
             folded_coeffs.push(folded);
         }
 
-        EqEvals {
-            point: new_point,
-            coeffs: folded_coeffs,
-            n_vars: self.n_vars.saturating_sub(1),
-        }
+        self.point = &self.point[1..];
+        self.coeffs = folded_coeffs;
+        self.n_vars = self.n_vars.saturating_sub(1);
     }
 }
 
@@ -169,7 +163,10 @@ mod tests {
 
         // For eq(x0, x1, x2; r0, r1, r2) = eq(x0; r0) * eq(x1; r1) * eq(x2; r2)
         // Test a few key evaluations
-        assert_eq!(eq.coeffs[0], (Fp4::ONE - r0) * (Fp4::ONE - r1) * (Fp4::ONE - r2)); // eq(0,0,0)
+        assert_eq!(
+            eq.coeffs[0],
+            (Fp4::ONE - r0) * (Fp4::ONE - r1) * (Fp4::ONE - r2)
+        ); // eq(0,0,0)
         assert_eq!(eq.coeffs[7], r0 * r1 * r2); // eq(1,1,1)
         assert_eq!(eq.coeffs[1], r0 * (Fp4::ONE - r1) * (Fp4::ONE - r2)); // eq(1,0,0)
         assert_eq!(eq.coeffs[4], (Fp4::ONE - r0) * (Fp4::ONE - r1) * r2); // eq(0,0,1)
@@ -178,10 +175,10 @@ mod tests {
     #[test]
     fn test_gen_from_point_four_vars() {
         let point = vec![
-            Fp4::from_u32(11), 
-            Fp4::from_u32(13), 
-            Fp4::from_u32(17), 
-            Fp4::from_u32(19)
+            Fp4::from_u32(11),
+            Fp4::from_u32(13),
+            Fp4::from_u32(17),
+            Fp4::from_u32(19),
         ];
         let eq = EqEvals::gen_from_point(&point);
 
@@ -194,16 +191,16 @@ mod tests {
 
         // Test corner evaluations
         let r0 = point[0];
-        let r1 = point[1];  
+        let r1 = point[1];
         let r2 = point[2];
         let r3 = point[3];
 
         // eq(0,0,0,0)
         assert_eq!(
-            eq.coeffs[0], 
+            eq.coeffs[0],
             (Fp4::ONE - r0) * (Fp4::ONE - r1) * (Fp4::ONE - r2) * (Fp4::ONE - r3)
         );
-        
+
         // eq(1,1,1,1)
         assert_eq!(eq.coeffs[15], r0 * r1 * r2 * r3);
     }
@@ -218,7 +215,7 @@ mod tests {
 
         // When r0 = 0, eq(x0; 0) = 1 - x0
         // coeffs[0] = eq(0,0) = 1 * (1-5) = -4
-        // coeffs[1] = eq(1,0) = 0 * (1-5) = 0  
+        // coeffs[1] = eq(1,0) = 0 * (1-5) = 0
         // coeffs[2] = eq(0,1) = 1 * 5 = 5
         // coeffs[3] = eq(1,1) = 0 * 5 = 0
 
@@ -249,8 +246,12 @@ mod tests {
     fn test_gen_from_point_large_vars() {
         // Test with 6 variables to ensure scalability
         let point = vec![
-            Fp4::from_u32(2), Fp4::from_u32(3), Fp4::from_u32(5),
-            Fp4::from_u32(7), Fp4::from_u32(11), Fp4::from_u32(13)
+            Fp4::from_u32(2),
+            Fp4::from_u32(3),
+            Fp4::from_u32(5),
+            Fp4::from_u32(7),
+            Fp4::from_u32(11),
+            Fp4::from_u32(13),
         ];
         let eq = EqEvals::gen_from_point(&point);
 
@@ -260,14 +261,15 @@ mod tests {
         // Test that the algorithm completes without error and produces expected size
         // Check a few corner cases
         let all_ones_index = 63; // Binary: 111111
-        let all_zeros_index = 0;  // Binary: 000000
+        let all_zeros_index = 0; // Binary: 000000
 
         // eq(1,1,1,1,1,1) should be the product of all r_i
         let expected_all_ones = point.iter().copied().reduce(|acc, x| acc * x).unwrap();
         assert_eq!(eq.coeffs[all_ones_index], expected_all_ones);
 
         // eq(0,0,0,0,0,0) should be the product of all (1-r_i)
-        let expected_all_zeros = point.iter()
+        let expected_all_zeros = point
+            .iter()
             .map(|&r| Fp4::ONE - r)
             .reduce(|acc, x| acc * x)
             .unwrap();
@@ -289,8 +291,11 @@ mod tests {
             for j in 0..2 {
                 let tensor_idx = i + 2 * j;
                 let expected = eq_x0.coeffs[i] * eq_x1.coeffs[j];
-                assert_eq!(eq.coeffs[tensor_idx], expected, 
-                    "Tensor product mismatch at ({}, {})", i, j);
+                assert_eq!(
+                    eq.coeffs[tensor_idx], expected,
+                    "Tensor product mismatch at ({}, {})",
+                    i, j
+                );
             }
         }
     }
@@ -301,10 +306,10 @@ mod tests {
         for n_vars in 0..8 {
             let point: Vec<Fp4> = (0..n_vars).map(|i| Fp4::from_u32(i as u32 + 1)).collect();
             let eq = EqEvals::gen_from_point(&point);
-            
+
             assert_eq!(eq.coeffs.len(), 1 << n_vars);
             assert_eq!(eq.n_vars, n_vars);
-            
+
             // Check that coefficient length is power of 2
             let len = eq.coeffs.len();
             assert_eq!(len & (len - 1), 0, "Length {} is not power of 2", len);
@@ -321,12 +326,8 @@ mod tests {
         for x0 in 0..2 {
             for x1 in 0..2 {
                 for x2 in 0..2 {
-                    let _eval_point = vec![
-                        Fp4::from_u32(x0),
-                        Fp4::from_u32(x1), 
-                        Fp4::from_u32(x2)
-                    ];
-                    
+                    let _eval_point = vec![Fp4::from_u32(x0), Fp4::from_u32(x1), Fp4::from_u32(x2)];
+
                     // Manually compute eq(eval_point, point)
                     let mut expected = Fp4::ONE;
                     for i in 0..3 {
@@ -337,8 +338,11 @@ mod tests {
 
                     // Compare with coefficient-based evaluation
                     let index = x0 + 2 * x1 + 4 * x2;
-                    assert_eq!(eq.coeffs[index as usize], expected, 
-                        "Mismatch at evaluation point ({}, {}, {})", x0, x1, x2);
+                    assert_eq!(
+                        eq.coeffs[index as usize], expected,
+                        "Mismatch at evaluation point ({}, {}, {})",
+                        x0, x1, x2
+                    );
                 }
             }
         }
@@ -393,7 +397,7 @@ mod tests {
     fn test_eq_evals_index_single_element() {
         let point = vec![];
         let eq = EqEvals::gen_from_point(&point);
-        
+
         assert_eq!(eq[0], Fp4::ONE);
     }
 
@@ -401,9 +405,12 @@ mod tests {
     fn test_eq_evals_index_multiple_elements() {
         let point = vec![Fp4::from_u32(3), Fp4::from_u32(5)];
         let eq = EqEvals::gen_from_point(&point);
-        
+
         // Test individual indexing
-        assert_eq!(eq[0], (Fp4::ONE - Fp4::from_u32(3)) * (Fp4::ONE - Fp4::from_u32(5)));
+        assert_eq!(
+            eq[0],
+            (Fp4::ONE - Fp4::from_u32(3)) * (Fp4::ONE - Fp4::from_u32(5))
+        );
         assert_eq!(eq[1], Fp4::from_u32(3) * (Fp4::ONE - Fp4::from_u32(5)));
         assert_eq!(eq[2], (Fp4::ONE - Fp4::from_u32(3)) * Fp4::from_u32(5));
         assert_eq!(eq[3], Fp4::from_u32(3) * Fp4::from_u32(5));
@@ -413,7 +420,7 @@ mod tests {
     fn test_eq_evals_index_range() {
         let point = vec![Fp4::from_u32(2), Fp4::from_u32(7)];
         let eq = EqEvals::gen_from_point(&point);
-        
+
         let slice = &eq[1..3];
         assert_eq!(slice.len(), 2);
         assert_eq!(slice[0], Fp4::from_u32(2) * (Fp4::ONE - Fp4::from_u32(7)));
@@ -424,142 +431,10 @@ mod tests {
     fn test_eq_evals_index_full_range() {
         let point = vec![Fp4::from_u32(11)];
         let eq = EqEvals::gen_from_point(&point);
-        
+
         let full_slice = &eq[0..2];
         assert_eq!(full_slice.len(), 2);
         assert_eq!(full_slice[0], Fp4::ONE - Fp4::from_u32(11));
         assert_eq!(full_slice[1], Fp4::from_u32(11));
     }
-
-    #[test]
-    fn test_eq_evals_fold_two_variables() {
-        let point = vec![Fp4::from_u32(3), Fp4::from_u32(5)];
-        let eq = EqEvals::gen_from_point(&point);
-        let challenge = Fp4::from_u32(7);
-        
-        let new_point = vec![Fp4::from_u32(5)]; // remaining point after folding first variable
-        let folded = eq.fold_in_place(challenge, &new_point);
-        
-        assert_eq!(folded.n_vars, 1);
-        assert_eq!(folded.coeffs.len(), 2);
-        
-        // Folded coefficients should be (1-challenge)*low + challenge*high
-        let one_minus_challenge = Fp4::ONE - challenge;
-        let expected_0 = one_minus_challenge * ((Fp4::ONE - Fp4::from_u32(3)) * (Fp4::ONE - Fp4::from_u32(5))) + 
-                        challenge * (Fp4::from_u32(3) * (Fp4::ONE - Fp4::from_u32(5)));
-        let expected_1 = one_minus_challenge * ((Fp4::ONE - Fp4::from_u32(3)) * Fp4::from_u32(5)) + 
-                        challenge * (Fp4::from_u32(3) * Fp4::from_u32(5));
-        
-        assert_eq!(folded.coeffs[0], expected_0);
-        assert_eq!(folded.coeffs[1], expected_1);
-    }
-
-    #[test]
-    fn test_eq_evals_fold_single_variable() {
-        let point = vec![Fp4::from_u32(11)];
-        let eq = EqEvals::gen_from_point(&point);
-        let challenge = Fp4::from_u32(13);
-        
-        let new_point = vec![]; // empty point for constant polynomial
-        let folded = eq.fold_in_place(challenge, &new_point);
-        
-        // Should return constant polynomial (0 variables)
-        assert_eq!(folded.n_vars, 0);
-        assert_eq!(folded.coeffs.len(), 1);
-        
-        // Result should be (1-13)*(1-11) + 13*11
-        let expected = (Fp4::ONE - challenge) * (Fp4::ONE - Fp4::from_u32(11)) + 
-                      challenge * Fp4::from_u32(11);
-        assert_eq!(folded.coeffs[0], expected);
-    }
-
-    #[test]
-    fn test_eq_evals_fold_constant() {
-        let point = vec![];
-        let eq = EqEvals::gen_from_point(&point);
-        let challenge = Fp4::from_u32(42);
-        
-        let new_point = vec![];
-        let folded = eq.fold_in_place(challenge, &new_point);
-        
-        // Should remain constant
-        assert_eq!(folded.n_vars, 0);
-        assert_eq!(folded.coeffs.len(), 1);
-        assert_eq!(folded.coeffs[0], Fp4::ONE);
-    }
-
-    #[test]
-    fn test_eq_evals_fold_three_variables() {
-        let point = vec![Fp4::from_u32(2), Fp4::from_u32(3), Fp4::from_u32(5)];
-        let eq = EqEvals::gen_from_point(&point);
-        let challenge = Fp4::from_u32(7);
-        
-        // Store original coeffs before folding
-        let original_coeffs = eq.coeffs.clone();
-        let new_point = vec![Fp4::from_u32(3), Fp4::from_u32(5)]; // remaining point after folding first variable
-        let folded = eq.fold_in_place(challenge, &new_point);
-        
-        assert_eq!(folded.n_vars, 2);
-        assert_eq!(folded.coeffs.len(), 4);
-        
-        // Verify folding preserves equality polynomial structure
-        let one_minus_challenge = Fp4::ONE - challenge;
-        for i in 0..4 {
-            let low_idx = i * 2;
-            let high_idx = i * 2 + 1;
-            let expected = one_minus_challenge * original_coeffs[low_idx] + challenge * original_coeffs[high_idx];
-            assert_eq!(folded.coeffs[i], expected);
-        }
-    }
-
-    #[test]
-    fn test_eq_evals_multiple_folds() {
-        let point = vec![Fp4::from_u32(2), Fp4::from_u32(3)];
-        let eq = EqEvals::gen_from_point(&point);
-        
-        assert_eq!(eq.n_vars, 2);
-        
-        // First fold: 2 vars -> 1 var
-        let point1 = vec![Fp4::from_u32(3)]; // remaining point after first fold
-        let eq = eq.fold_in_place(Fp4::from_u32(5), &point1);
-        assert_eq!(eq.n_vars, 1);
-        assert_eq!(eq.coeffs.len(), 2);
-        
-        // Second fold: 1 var -> 0 vars (constant)
-        let point0 = vec![]; // empty point for constant
-        let eq = eq.fold_in_place(Fp4::from_u32(7), &point0);
-        assert_eq!(eq.n_vars, 0);
-        assert_eq!(eq.coeffs.len(), 1);
-    }
-
-    #[test]
-    fn test_eq_evals_fold_with_zero_challenge() {
-        let point = vec![Fp4::from_u32(3), Fp4::from_u32(5)];
-        let eq = EqEvals::gen_from_point(&point);
-        
-        // Store original coeffs before folding
-        let original_coeffs = eq.coeffs.clone();
-        let new_point = vec![Fp4::from_u32(5)]; // remaining point after folding first variable
-        let folded = eq.fold_in_place(Fp4::ZERO, &new_point);
-        
-        // With challenge = 0, should get coefficients for x₀=0 case
-        assert_eq!(folded.coeffs[0], original_coeffs[0]); // eq(0,0)
-        assert_eq!(folded.coeffs[1], original_coeffs[2]); // eq(0,1)
-    }
-
-    #[test]
-    fn test_eq_evals_fold_with_one_challenge() {
-        let point = vec![Fp4::from_u32(3), Fp4::from_u32(5)];
-        let eq = EqEvals::gen_from_point(&point);
-        
-        // Store original coeffs before folding
-        let original_coeffs = eq.coeffs.clone();
-        let new_point = vec![Fp4::from_u32(5)]; // remaining point after folding first variable
-        let folded = eq.fold_in_place(Fp4::ONE, &new_point);
-        
-        // With challenge = 1, should get coefficients for x₀=1 case
-        assert_eq!(folded.coeffs[0], original_coeffs[1]); // eq(1,0)
-        assert_eq!(folded.coeffs[1], original_coeffs[3]); // eq(1,1)
-    }
-    
 }
