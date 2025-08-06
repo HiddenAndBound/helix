@@ -1,10 +1,10 @@
-# Deep-FRI
+# Helix
 
 A Rust implementation of cryptographic primitives for zero-knowledge proof systems, focusing on multilinear extensions (MLEs), polynomial commitments, and Merkle tree constructions.
 
 ## Overview
 
-Deep-FRI provides core cryptographic building blocks for constructing efficient zero-knowledge proof systems. The library implements:
+Helix provides core cryptographic building blocks for constructing efficient zero-knowledge proof systems. The library implements:
 
 - **Multilinear Extensions (MLEs)**: Polynomial representations supporting efficient evaluation over extension fields
 - **WHIR Commitment Scheme**: A polynomial commitment protocol with configurable rates  
