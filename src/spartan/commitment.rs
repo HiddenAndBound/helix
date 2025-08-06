@@ -118,6 +118,29 @@ impl PolynomialCommitment<Fp4> for DummyPCS {
     }
 }
 
+impl DummyPCS {
+    /// Prove evaluation for Spark protocol
+    pub fn prove_evaluation(
+        _polynomial: &MLE<Fp4>,
+        _point: &[Fp4],
+        _value: Fp4,
+        _challenger: &mut crate::challenger::Challenger,
+    ) -> Result<DummyOpeningProof, Box<dyn std::error::Error>> {
+        Ok(DummyOpeningProof)
+    }
+    
+    /// Verify evaluation for Spark protocol
+    pub fn verify_evaluation(
+        _commitment: &DummyCommitment,
+        _point: &[Fp4],
+        _value: Fp4,
+        _proof: &DummyOpeningProof,
+        _challenger: &mut crate::challenger::Challenger,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        Ok(true)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
