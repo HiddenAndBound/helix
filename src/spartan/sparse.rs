@@ -9,7 +9,7 @@
 //! - Twist & Shout memory checking timestamps
 
 use crate::spartan::error::{SparseError, SparseResult};
-use crate::utils::{Fp, polynomial::MLE};
+use crate::utils::{Fp, Fp4, polynomial::MLE, eq::EqEvals};
 use p3_baby_bear::BabyBear;
 use p3_field::{PrimeCharacteristicRing, PrimeField32};
 use std::collections::HashMap;
@@ -149,6 +149,63 @@ impl SparseMLE {
         }
 
         Ok(result)
+    }
+
+    /// Binds the first half of variables using the EqEvals (equality polynomial) to compute 
+    /// pre-multiplication of the vector (x·A) as a linear algebra equation as an MLE<Fp4>.
+    /// 
+    /// This implements the binding of the first log₂(rows) variables of the multilinear 
+    /// extension of the sparse matrix, effectively computing the inner product of the 
+    /// EqEvals coefficients with the matrix rows.
+    ///
+    /// # Arguments
+    /// * `eq_evals` - The equality polynomial evaluations for the point whose length 
+    ///               should equal log₂(rows) of the underlying sparse matrix
+    ///
+    /// # Returns
+    /// An MLE<Fp4> representing the result of x·A where x is encoded via eq_evals
+    pub fn bind_first_half_variables(&self, eq_evals: &EqEvals) -> SparseResult<MLE<Fp4>> {
+        let (rows, cols) = self.dimensions;
+
+        if rows == 0 || cols == 0 {
+            return Err(SparseError::EmptyMatrix);
+        }
+
+        // Calculate the number of row variables (log₂ of row dimensions)
+        let row_vars = (rows as f64).log2().ceil() as usize;
+        
+        // Validate that eq_evals has the correct number of variables for row binding
+        if eq_evals.n_vars != row_vars {
+            return Err(SparseError::ValidationError(format!(
+                "EqEvals has {} variables but expected {} for {} rows", 
+                eq_evals.n_vars, row_vars, rows
+            )));
+        }
+
+        // The eq_evals should have 2^row_vars coefficients
+        let expected_eq_coeffs = 1 << row_vars;
+        if eq_evals.coeffs.len() != expected_eq_coeffs {
+            return Err(SparseError::ValidationError(format!(
+                "EqEvals has {} coefficients but expected {} for {} row variables", 
+                eq_evals.coeffs.len(), expected_eq_coeffs, row_vars
+            )));
+        }
+
+        // Initialize result vector with zeros - this will be our column dimension
+        let mut result_coeffs = vec![Fp4::ZERO; cols];
+
+        // For each non-zero entry in the sparse matrix, accumulate the weighted contribution
+        // This computes: result[col] = ∑_row (eq_evals[row] * matrix[row][col])
+        for ((row, col), &value) in self.iter() {
+            // Ensure we don't go out of bounds
+            if *row < rows && *col < cols && *row < eq_evals.coeffs.len() {
+                // Convert BabyBear matrix value to Fp4 and multiply by eq_evals coefficient
+                let contribution = eq_evals.coeffs[*row] * Fp4::from(value);
+                result_coeffs[*col] += contribution;
+            }
+        }
+
+        Ok(MLE::new(result_coeffs))
     }
 }
 
@@ -701,5 +758,169 @@ mod tests {
         // Verify arrays have appropriate lengths (both power of 2)
         assert_eq!(timestamps.read_ts.len(), 8); // Padded memory accesses
         assert_eq!(timestamps.final_ts.len(), 4); // Address space size
+    }
+
+    #[test]
+    fn test_bind_first_half_variables_simple_matrix() {
+        use crate::utils::eq::EqEvals;
+        
+        // Create a simple 2x2 matrix:
+        // [1, 2]
+        // [3, 4]
+        let mut coeffs = HashMap::new();
+        coeffs.insert((0, 0), BabyBear::ONE);        // A[0,0] = 1
+        coeffs.insert((0, 1), BabyBear::from_u32(2)); // A[0,1] = 2
+        coeffs.insert((1, 0), BabyBear::from_u32(3)); // A[1,0] = 3
+        coeffs.insert((1, 1), BabyBear::from_u32(4)); // A[1,1] = 4
+
+        let sparse_mle = SparseMLE::new(coeffs).unwrap();
+        
+        // For a 2x2 matrix, we need log₂(2) = 1 row variable
+        // Create EqEvals for point [r₀] where r₀ = 5
+        let point = vec![Fp4::from_u32(5)];
+        let eq_evals = EqEvals::gen_from_point(&point);
+        
+        let result = sparse_mle.bind_first_half_variables(&eq_evals).unwrap();
+        
+        // The result should be an MLE with 2 coefficients (column dimension)
+        assert_eq!(result.len(), 2);
+        
+        // Calculate expected result manually:
+        // eq_evals for point [5] should give coefficients [(1-5), 5] = [-4, 5]
+        // result[0] = eq_evals[0] * A[0,0] + eq_evals[1] * A[1,0] = -4*1 + 5*3 = 11
+        // result[1] = eq_evals[0] * A[0,1] + eq_evals[1] * A[1,1] = -4*2 + 5*4 = 12
+        let expected_col0 = (Fp4::ONE - Fp4::from_u32(5)) * Fp4::ONE + Fp4::from_u32(5) * Fp4::from_u32(3);
+        let expected_col1 = (Fp4::ONE - Fp4::from_u32(5)) * Fp4::from_u32(2) + Fp4::from_u32(5) * Fp4::from_u32(4);
+        
+        assert_eq!(result.coeffs()[0], expected_col0);
+        assert_eq!(result.coeffs()[1], expected_col1);
+    }
+
+    #[test]
+    fn test_bind_first_half_variables_4x4_matrix() {
+        use crate::utils::eq::EqEvals;
+        
+        // Create a 4x4 matrix with specific pattern for easy verification
+        let mut coeffs = HashMap::new();
+        for row in 0..4 {
+            for col in 0..4 {
+                coeffs.insert((row, col), BabyBear::from_u32((row + col + 1) as u32));
+            }
+        }
+
+        let sparse_mle = SparseMLE::new(coeffs).unwrap();
+        
+        // For a 4x4 matrix, we need log₂(4) = 2 row variables
+        // Create EqEvals for point [r₀, r₁] where r₀ = 2, r₁ = 3
+        let point = vec![Fp4::from_u32(2), Fp4::from_u32(3)];
+        let eq_evals = EqEvals::gen_from_point(&point);
+        
+        let result = sparse_mle.bind_first_half_variables(&eq_evals).unwrap();
+        
+        // The result should be an MLE with 4 coefficients (column dimension)
+        assert_eq!(result.len(), 4);
+        
+        // Verify the result by checking that each coefficient is computed correctly
+        // Each result[col] = ∑_row (eq_evals[row] * matrix[row][col])
+        for col in 0..4 {
+            let mut expected = Fp4::ZERO;
+            for row in 0..4 {
+                let matrix_value = Fp4::from_u32((row + col + 1) as u32);
+                expected += eq_evals[row] * matrix_value;
+            }
+            assert_eq!(result.coeffs()[col], expected);
+        }
+    }
+
+    #[test]
+    fn test_bind_first_half_variables_sparse_matrix() {
+        use crate::utils::eq::EqEvals;
+        
+        // Create a sparse 4x4 matrix with only a few non-zero entries
+        let mut coeffs = HashMap::new();
+        coeffs.insert((0, 1), BabyBear::from_u32(7));  // A[0,1] = 7
+        coeffs.insert((2, 0), BabyBear::from_u32(11)); // A[2,0] = 11
+        coeffs.insert((3, 3), BabyBear::from_u32(13)); // A[3,3] = 13
+
+        let sparse_mle = SparseMLE::new(coeffs).unwrap();
+        
+        // For a 4x4 matrix, we need 2 row variables
+        let point = vec![Fp4::from_u32(4), Fp4::from_u32(6)];
+        let eq_evals = EqEvals::gen_from_point(&point);
+        
+        let result = sparse_mle.bind_first_half_variables(&eq_evals).unwrap();
+        
+        // Check specific entries that should be non-zero
+        // result[0] = eq_evals[2] * 11 (only non-zero contribution from row 2)
+        let expected_col0 = eq_evals[2] * Fp4::from_u32(11);
+        assert_eq!(result.coeffs()[0], expected_col0);
+        
+        // result[1] = eq_evals[0] * 7 (only non-zero contribution from row 0)
+        let expected_col1 = eq_evals[0] * Fp4::from_u32(7);
+        assert_eq!(result.coeffs()[1], expected_col1);
+        
+        // result[2] should be zero (no non-zero entries in column 2)
+        assert_eq!(result.coeffs()[2], Fp4::ZERO);
+        
+        // result[3] = eq_evals[3] * 13 (only non-zero contribution from row 3)
+        let expected_col3 = eq_evals[3] * Fp4::from_u32(13);
+        assert_eq!(result.coeffs()[3], expected_col3);
+    }
+
+    #[test]
+    fn test_bind_first_half_variables_dimension_mismatch() {
+        use crate::utils::eq::EqEvals;
+        
+        // Create a 2x2 matrix
+        let mut coeffs = HashMap::new();
+        coeffs.insert((0, 0), BabyBear::ONE);
+        coeffs.insert((1, 1), BabyBear::ONE);
+
+        let sparse_mle = SparseMLE::new(coeffs).unwrap();
+        
+        // Try to bind with wrong number of variables (should be 1 for 2x2 matrix)
+        let wrong_point = vec![Fp4::from_u32(1), Fp4::from_u32(2)]; // 2 variables instead of 1
+        let eq_evals = EqEvals::gen_from_point(&wrong_point);
+        
+        let result = sparse_mle.bind_first_half_variables(&eq_evals);
+        assert!(matches!(result, Err(SparseError::ValidationError(_))));
+    }
+
+    #[test]
+    fn test_bind_first_half_variables_empty_matrix() {
+        use crate::utils::eq::EqEvals;
+        
+        let sparse_mle = SparseMLE::empty();
+        let point = vec![Fp4::from_u32(1)];
+        let eq_evals = EqEvals::gen_from_point(&point);
+        
+        let result = sparse_mle.bind_first_half_variables(&eq_evals);
+        assert!(matches!(result, Err(SparseError::EmptyMatrix)));
+    }
+
+    #[test]
+    fn test_bind_first_half_variables_single_row_matrix() {
+        use crate::utils::eq::EqEvals;
+        
+        // Create a 1x4 matrix: [5, 6, 7, 8]
+        let mut coeffs = HashMap::new();
+        coeffs.insert((0, 0), BabyBear::from_u32(5));
+        coeffs.insert((0, 1), BabyBear::from_u32(6));
+        coeffs.insert((0, 2), BabyBear::from_u32(7));
+        coeffs.insert((0, 3), BabyBear::from_u32(8));
+
+        let sparse_mle = SparseMLE::new(coeffs).unwrap();
+        
+        // For a 1-row matrix, we need log₂(1) = 0 row variables (constant polynomial)
+        let point: Vec<Fp4> = vec![]; // Empty point for 0 variables
+        let eq_evals = EqEvals::gen_from_point(&point);
+        
+        let result = sparse_mle.bind_first_half_variables(&eq_evals).unwrap();
+        
+        // The result should just be the matrix row scaled by eq_evals[0] = 1
+        assert_eq!(result.coeffs()[0], Fp4::from_u32(5));
+        assert_eq!(result.coeffs()[1], Fp4::from_u32(6));
+        assert_eq!(result.coeffs()[2], Fp4::from_u32(7));
+        assert_eq!(result.coeffs()[3], Fp4::from_u32(8));
     }
 }

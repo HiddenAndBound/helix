@@ -42,7 +42,10 @@ impl SpartanProof {
     }
 
     pub fn prove(instance: R1CSInstance, challenger: &mut Challenger) -> Self {
-        
+        let z = &instance.witness_mle();
+        let (A, B, C) = (instance.r1cs.a, instance.r1cs.b, instance.r1cs.c);
+        let outer_sum_check = OuterSumCheckProof::prove(&A, &B, &C, z, challenger);
+        let inner_sum_check = InnerSumCheckProof::prove(&A, &B, z, challenger);
         todo!()
     }
     /// Verifies the Spartan proof. Panics if verification fails.

@@ -257,12 +257,21 @@ impl InnerSumCheckProof {
         }
     }
 
-    /// Generates a sum-check proof for f(x) = ⟨A(x), B(x)⟩.
+    /// Generates a batch sum-check proof for (Az(r_x), Bz(r_x), and Cz(r_x)) 
     ///
     /// Computes A·z and B·z then runs the sum-check protocol for inner products.
-    pub fn prove(A: &SparseMLE, B: &SparseMLE, z: &MLE<Fp>, challenger: &mut Challenger) -> Self {
+    pub fn prove(
+        a_bound: &MLE<Fp4>,
+        b_bound: &MLE<Fp4>,
+        c_bound: &MLE<Fp4>,
+        outer_claims: [Fp4; 3],
+        //The random challenge should be derived based on the commitments and the first sumcheck transcript.
+        random_challenge: Fp4,
+        z: &MLE<Fp>,
+        challenger: &mut Challenger,
+    ) -> Self {
         // Compute A·z and B·z (sparse matrix-MLE multiplications)
-        let (a, b) = (A.multiply_by_mle(z).unwrap(), B.multiply_by_mle(z).unwrap());
+
         let rounds = a.n_vars();
 
         // Get random evaluation point from challenger (Fiat-Shamir)

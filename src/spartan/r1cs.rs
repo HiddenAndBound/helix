@@ -11,7 +11,7 @@
 
 use crate::spartan::error::{SparseError, SparseResult};
 use crate::spartan::sparse::SparseMLE;
-use crate::utils::polynomial::MLE;
+use crate::utils::{polynomial::MLE, Fp4, eq::EqEvals};
 use p3_baby_bear::BabyBear;
 use p3_field::PrimeCharacteristicRing;
 use std::collections::HashMap;
@@ -432,6 +432,60 @@ impl R1CSInstance {
     pub fn num_public_inputs(&self) -> usize {
         self.r1cs.num_public_inputs
     }
+
+    /// Computes the EqEvals for a given point and returns the result of binding the first
+    /// half of variables for each SparseMLE in the R1CS instance.
+    ///
+    /// This method computes the pre-multiplication (x·A), (x·B), (x·C) where x is encoded
+    /// via the equality polynomial at the given point. The point length should equal
+    /// log₂(rows) of the constraint matrices.
+    ///
+    /// # Arguments
+    /// * `point` - The point at which to evaluate the equality polynomial, whose length
+    ///            should equal log₂ of the matrix row dimensions
+    ///
+    /// # Returns
+    /// A tuple of MLE<Fp4> representing (x·A, x·B, x·C) where x is the vector encoded
+    /// via eq(point, ·)
+    pub fn compute_bound_matrices(&self, point: &[Fp4]) -> SparseResult<(MLE<Fp4>, MLE<Fp4>, MLE<Fp4>)> {
+        // Validate that all constraint matrices have the same row dimensions
+        let (a_rows, _) = self.r1cs.a.dimensions();
+        let (b_rows, _) = self.r1cs.b.dimensions();
+        let (c_rows, _) = self.r1cs.c.dimensions();
+
+        if a_rows != b_rows || b_rows != c_rows {
+            return Err(SparseError::ValidationError(format!(
+                "Inconsistent row dimensions: A={}, B={}, C={}", 
+                a_rows, b_rows, c_rows
+            )));
+        }
+
+        let row_count = a_rows;
+        if row_count == 0 {
+            return Err(SparseError::EmptyMatrix);
+        }
+
+        // Calculate the expected number of row variables
+        let row_vars = (row_count as f64).log2().ceil() as usize;
+
+        // Validate that the point has the correct length for row variables
+        if point.len() != row_vars {
+            return Err(SparseError::ValidationError(format!(
+                "Point has {} elements but expected {} for {} rows", 
+                point.len(), row_vars, row_count
+            )));
+        }
+
+        // Generate the equality polynomial evaluations from the given point
+        let eq_evals = EqEvals::gen_from_point(point);
+
+        // Bind the first half of variables for each matrix using the equality polynomial
+        let bound_a = self.r1cs.a.bind_first_half_variables(&eq_evals)?;
+        let bound_b = self.r1cs.b.bind_first_half_variables(&eq_evals)?;
+        let bound_c = self.r1cs.c.bind_first_half_variables(&eq_evals)?;
+
+        Ok((bound_a, bound_b, bound_c))
+    }
 }
 
 #[cfg(test)]
@@ -594,5 +648,173 @@ mod tests {
             bad_instance,
             Err(SparseError::DimensionMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn test_compute_bound_matrices_simple_instance() {
+        let (r1cs, witness) = R1CS::simple_test_instance().unwrap();
+        let instance = R1CSInstance::new(r1cs, witness).unwrap();
+
+        // The simple test instance has 1 constraint (row), so we need 0 variables (log₂(1) = 0)
+        let point: Vec<Fp4> = vec![]; // Empty point for 0 variables
+        
+        let result = instance.compute_bound_matrices(&point);
+        assert!(result.is_ok());
+
+        let (bound_a, bound_b, bound_c) = result.unwrap();
+        
+        // Each bound matrix should have 8 coefficients (column dimension)
+        assert_eq!(bound_a.len(), 8);
+        assert_eq!(bound_b.len(), 8);
+        assert_eq!(bound_c.len(), 8);
+
+        // For a single constraint, the binding should just return the constraint row values
+        // A matrix has entry (0,0) = 1, others are 0
+        assert_eq!(bound_a.coeffs()[0], Fp4::ONE);
+        for i in 1..8 {
+            assert_eq!(bound_a.coeffs()[i], Fp4::ZERO);
+        }
+
+        // B matrix has entry (0,1) = 1, others are 0  
+        assert_eq!(bound_b.coeffs()[1], Fp4::ONE);
+        for i in [0, 2, 3, 4, 5, 6, 7] {
+            assert_eq!(bound_b.coeffs()[i], Fp4::ZERO);
+        }
+
+        // C matrix has entry (0,2) = 1, others are 0
+        assert_eq!(bound_c.coeffs()[2], Fp4::ONE);
+        for i in [0, 1, 3, 4, 5, 6, 7] {
+            assert_eq!(bound_c.coeffs()[i], Fp4::ZERO);
+        }
+    }
+
+    #[test]
+    fn test_compute_bound_matrices_multi_constraint_instance() {
+        let (r1cs, witness) = R1CS::multi_constraint_test_instance().unwrap();
+        let instance = R1CSInstance::new(r1cs, witness).unwrap();
+
+        // The multi constraint instance has 4 constraints (rows), so we need log₂(4) = 2 variables
+        let point = vec![Fp4::from_u32(3), Fp4::from_u32(7)];
+        
+        let result = instance.compute_bound_matrices(&point);
+        assert!(result.is_ok());
+
+        let (bound_a, bound_b, bound_c) = result.unwrap();
+        
+        // Each bound matrix should have 8 coefficients (column dimension) 
+        assert_eq!(bound_a.len(), 8);
+        assert_eq!(bound_b.len(), 8);
+        assert_eq!(bound_c.len(), 8);
+
+        // Verify that the binding operation was applied correctly by checking that
+        // the results are non-zero where we expect contributions from the constraint matrices
+        
+        // Since this is a complex verification, we'll mainly check that the operation
+        // completed successfully and produced results of the correct dimensions
+        // The detailed correctness is tested in the SparseMLE bind tests
+    }
+
+    #[test]
+    fn test_compute_bound_matrices_point_dimension_mismatch() {
+        let (r1cs, witness) = R1CS::simple_test_instance().unwrap();
+        let instance = R1CSInstance::new(r1cs, witness).unwrap();
+
+        // Simple instance has 1 constraint, so needs 0 variables, but we provide 1
+        let wrong_point = vec![Fp4::from_u32(5)];
+        
+        let result = instance.compute_bound_matrices(&wrong_point);
+        assert!(matches!(result, Err(SparseError::ValidationError(_))));
+    }
+
+    #[test]
+    fn test_compute_bound_matrices_empty_point_multi_constraint() {
+        let (r1cs, witness) = R1CS::multi_constraint_test_instance().unwrap();
+        let instance = R1CSInstance::new(r1cs, witness).unwrap();
+
+        // Multi constraint instance has 4 constraints, so needs 2 variables, but we provide 0
+        let empty_point: Vec<Fp4> = vec![];
+        
+        let result = instance.compute_bound_matrices(&empty_point);
+        assert!(matches!(result, Err(SparseError::ValidationError(_))));
+    }
+
+    #[test]
+    fn test_compute_bound_matrices_mathematical_correctness() {
+        use std::collections::HashMap;
+
+        // Create a simple 2x4 R1CS system for testing
+        let mut a_coeffs = HashMap::new();
+        let mut b_coeffs = HashMap::new(); 
+        let mut c_coeffs = HashMap::new();
+
+        // A matrix: [1, 2, 0, 0]
+        //           [0, 0, 3, 4]
+        a_coeffs.insert((0, 0), BabyBear::ONE);
+        a_coeffs.insert((0, 1), BabyBear::from_u32(2));
+        a_coeffs.insert((1, 2), BabyBear::from_u32(3));
+        a_coeffs.insert((1, 3), BabyBear::from_u32(4));
+
+        // B matrix: [5, 0, 6, 0]
+        //           [0, 7, 0, 8]  
+        b_coeffs.insert((0, 0), BabyBear::from_u32(5));
+        b_coeffs.insert((0, 2), BabyBear::from_u32(6));
+        b_coeffs.insert((1, 1), BabyBear::from_u32(7));
+        b_coeffs.insert((1, 3), BabyBear::from_u32(8));
+
+        // C matrix: [9, 10, 0, 0]
+        //           [0, 0, 11, 12]
+        c_coeffs.insert((0, 0), BabyBear::from_u32(9));
+        c_coeffs.insert((0, 1), BabyBear::from_u32(10));
+        c_coeffs.insert((1, 2), BabyBear::from_u32(11));
+        c_coeffs.insert((1, 3), BabyBear::from_u32(12));
+
+        // Pad all matrices to 4 columns with zeros
+        for matrix in [&mut a_coeffs, &mut b_coeffs, &mut c_coeffs] {
+            for row in 0..2 {
+                for col in 0..4 {
+                    if !matrix.contains_key(&(row, col)) {
+                        matrix.insert((row, col), BabyBear::ZERO);
+                    }
+                }
+            }
+        }
+
+        let a = SparseMLE::new(a_coeffs).unwrap();
+        let b = SparseMLE::new(b_coeffs).unwrap(); 
+        let c = SparseMLE::new(c_coeffs).unwrap();
+
+        let r1cs = R1CS::new(a, b, c, 0).unwrap();
+        
+        // Create dummy witness (not used in this test)
+        let witness = Witness::new(vec![], vec![BabyBear::ZERO; 4]).unwrap();
+        let instance = R1CSInstance::new(r1cs, witness).unwrap();
+
+        // For 2 rows, we need 1 variable (log₂(2) = 1)
+        let point = vec![Fp4::from_u32(13)]; // Use point [13]
+        
+        let (bound_a, _bound_b, _bound_c) = instance.compute_bound_matrices(&point).unwrap();
+
+        // Manually calculate expected results using EqEvals for point [13]
+        use crate::utils::eq::EqEvals;
+        let eq_evals = EqEvals::gen_from_point(&point);
+        
+        // eq_evals should be [(1-13), 13] = [-12, 13]
+        assert_eq!(eq_evals.coeffs.len(), 2);
+        
+        // For A matrix, result should be:
+        // col 0: eq_evals[0] * 1 + eq_evals[1] * 0 = -12 * 1 = -12
+        // col 1: eq_evals[0] * 2 + eq_evals[1] * 0 = -12 * 2 = -24  
+        // col 2: eq_evals[0] * 0 + eq_evals[1] * 3 = 13 * 3 = 39
+        // col 3: eq_evals[0] * 0 + eq_evals[1] * 4 = 13 * 4 = 52
+        
+        let expected_a0 = eq_evals[0] * Fp4::ONE;
+        let expected_a1 = eq_evals[0] * Fp4::from_u32(2);
+        let expected_a2 = eq_evals[1] * Fp4::from_u32(3);
+        let expected_a3 = eq_evals[1] * Fp4::from_u32(4);
+        
+        assert_eq!(bound_a.coeffs()[0], expected_a0);
+        assert_eq!(bound_a.coeffs()[1], expected_a1);
+        assert_eq!(bound_a.coeffs()[2], expected_a2); 
+        assert_eq!(bound_a.coeffs()[3], expected_a3);
     }
 }
