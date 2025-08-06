@@ -10,4 +10,4 @@ mod univariate;
 
 pub use commitment::{DummyCommitment, DummyOpeningProof, DummyPCS, PolynomialCommitment};
 pub use r1cs::{R1CS, R1CSInstance, Witness};
-pub use spark::{OpeningClaim, SparkInstance, SparkProof};
+pub use spark::generate_spark_opening_oracles;

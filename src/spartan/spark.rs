@@ -1,323 +1,291 @@
-//! Spark IOP components for polynomial commitment opening in Spartan.
+//! Spark opening oracles for efficient sparse polynomial commitment opening.
 //!
-//! The Spark protocol provides the final phase of Spartan's IOP by enabling efficient
-//! verification of polynomial commitment openings. It batches multiple opening claims
-//! to achieve logarithmic communication complexity.
+//! This module provides functionality to generate e_rx and e_ry oracles for the Spark
+//! protocol, enabling efficient opening of polynomial commitments to sparse multilinear
+//! extension polynomials.
 
-use crate::{
-    Fp, Fp4,
-    challenger::Challenger,
-    polynomial::MLE,
-    spartan::{
-        sparse::SparseMLE,
-        sumcheck::SparkSumCheckProof,
-        commitment::{DummyPCS, PolynomialCommitment},
-    },
-};
-use p3_field::PrimeCharacteristicRing;
+use crate::spartan::error::{SparseError, SparseResult};
+use crate::spartan::sparse::SpartanMetadata;
+use crate::utils::{Fp4, polynomial::MLE, eq::EqEvals};
+use p3_field::PrimeField32;
 
-/// Represents a single polynomial commitment opening claim.
-/// 
-/// **Mathematical Purpose:**
-/// Each opening proves that a committed polynomial P(x) evaluates to a specific value v
-/// at a given point r: P(r) = v. This is essential for verifying the final polynomial
-/// evaluations from the inner sumcheck phase.
-#[derive(Debug, Clone)]
-pub struct OpeningClaim {
-    /// The point at which the polynomial is evaluated
-    pub point: Vec<Fp4>,
-    /// The claimed evaluation value P(point) = value
-    pub value: Fp4,
-    /// The polynomial commitment being opened
-    pub commitment: <DummyPCS as PolynomialCommitment<Fp4>>::Commitment,
-}
-
-impl OpeningClaim {
-    pub fn new(point: Vec<Fp4>, value: Fp4, commitment: <DummyPCS as PolynomialCommitment<Fp4>>::Commitment) -> Self {
-        Self { point, value, commitment }
+/// Generates e_rx and e_ry oracles for Spark opening of polynomial commitments.
+///
+/// This function takes the preprocessed metadata for the three constraint matrices
+/// (A, B, C) and an evaluation point that is the concatenation of the outer sum-check
+/// challenge (rx) and inner sum-check challenge (ry). It generates separate equality
+/// polynomial evaluations for rx and ry, then creates oracle mappings for efficient
+/// polynomial commitment opening.
+///
+/// # Arguments
+/// * `metadata_a` - Preprocessed metadata for constraint matrix A
+/// * `metadata_b` - Preprocessed metadata for constraint matrix B
+/// * `metadata_c` - Preprocessed metadata for constraint matrix C
+/// * `evaluation_point` - Concatenated evaluation point [rx || ry] from sum-check protocol
+///
+/// # Returns
+/// Array of 3 tuples, each containing (e_rx, e_ry) oracles as MLE<Fp4> for matrices A, B, C
+///
+/// # Errors
+/// - `ValidationError` if evaluation_point has odd length (cannot split into rx/ry)
+/// - `ValidationError` if metadata vectors are empty
+/// - `IndexOutOfBounds` if row/col indices exceed EqEvals bounds
+///
+/// # Protocol Context
+/// In the Spark protocol:
+/// 1. The outer sum-check generates challenges rx
+/// 2. The inner sum-check generates challenges ry  
+/// 3. The evaluation point is rx ⊕ ry (concatenation)
+/// 4. For each matrix metadata, we create oracles where:
+///    - e_rx[i] = eq_rx[row[i]] (row indices map to rx equality polynomial)
+///    - e_ry[i] = eq_ry[col[i]] (column indices map to ry equality polynomial)
+pub fn generate_spark_opening_oracles(
+    metadata_a: &SpartanMetadata,
+    metadata_b: &SpartanMetadata,
+    metadata_c: &SpartanMetadata,
+    evaluation_point: &[Fp4]
+) -> SparseResult<[(MLE<Fp4>, MLE<Fp4>); 3]> {
+    // Validate evaluation point can be split into rx and ry
+    if evaluation_point.len() % 2 != 0 {
+        return Err(SparseError::ValidationError(format!(
+            "Evaluation point length {} must be even to split into rx and ry",
+            evaluation_point.len()
+        )));
     }
+
+    let half_len = evaluation_point.len() / 2;
+    
+    // Split evaluation point into rx (first half) and ry (second half)
+    let rx_point = &evaluation_point[..half_len];
+    let ry_point = &evaluation_point[half_len..];
+
+    // Generate equality polynomial evaluations for rx and ry
+    let eq_rx = EqEvals::gen_from_point(rx_point);
+    let eq_ry = EqEvals::gen_from_point(ry_point);
+
+    // Process each metadata to create oracle pairs
+    let oracle_a = generate_oracle_pair(metadata_a, &eq_rx, &eq_ry)?;
+    let oracle_b = generate_oracle_pair(metadata_b, &eq_rx, &eq_ry)?;
+    let oracle_c = generate_oracle_pair(metadata_c, &eq_rx, &eq_ry)?;
+
+    Ok([oracle_a, oracle_b, oracle_c])
 }
 
-/// Spark IOP proof for batched polynomial commitment openings.
-/// 
-/// **Mathematical Purpose:**
-/// Instead of verifying 3 separate polynomial commitment openings (which would require
-/// 3 separate sumcheck protocols), Spark batches them into a single verification using
-/// random linear combinations. This reduces communication from O(3n) to O(n + 3).
-#[derive(Debug, Clone)]
-pub struct SparkProof {
-    /// The batched sumcheck proof for triple products A(x)·B(x)·C(x)
-    pub sumcheck_proof: SparkSumCheckProof,
-    /// Individual opening proofs for each polynomial commitment  
-    pub opening_proofs: Vec<<DummyPCS as PolynomialCommitment<Fp4>>::Proof>,
-}
+/// Helper function to generate e_rx and e_ry oracle pair for a single metadata.
+///
+/// For each position i in the metadata:
+/// - e_rx[i] = eq_rx[row[i]] (equality polynomial evaluated at row index)
+/// - e_ry[i] = eq_ry[col[i]] (equality polynomial evaluated at column index)
+fn generate_oracle_pair(
+    metadata: &SpartanMetadata,
+    eq_rx: &EqEvals,
+    eq_ry: &EqEvals
+) -> SparseResult<(MLE<Fp4>, MLE<Fp4>)> {
+    let len = metadata.len();
+    
+    if len == 0 {
+        return Err(SparseError::ValidationError(
+            "Cannot generate oracles for empty metadata".to_string()
+        ));
+    }
 
-impl SparkProof {
-    /// Creates a new Spark proof from its components.
-    pub fn new(
-        sumcheck_proof: SparkSumCheckProof,
-        opening_proofs: Vec<<DummyPCS as PolynomialCommitment<Fp4>>::Proof>,
-    ) -> Self {
-        Self {
-            sumcheck_proof,
-            opening_proofs,
+    let mut e_rx_vec = Vec::with_capacity(len);
+    let mut e_ry_vec = Vec::with_capacity(len);
+
+    // Access the underlying coefficients of the MLEs
+    let row_coeffs = metadata.row().coeffs();
+    let col_coeffs = metadata.col().coeffs();
+
+    for i in 0..len {
+        // Convert field elements to indices
+        let row_index = row_coeffs[i].as_canonical_u32() as usize;
+        let col_index = col_coeffs[i].as_canonical_u32() as usize;
+
+        // Validate indices are within bounds
+        if row_index >= eq_rx.coeffs.len() {
+            return Err(SparseError::IndexOutOfBounds {
+                index: (row_index, 0),
+                bounds: (eq_rx.coeffs.len(), 0),
+            });
         }
+        if col_index >= eq_ry.coeffs.len() {
+            return Err(SparseError::IndexOutOfBounds {
+                index: (col_index, 0),
+                bounds: (eq_ry.coeffs.len(), 0),
+            });
+        }
+
+        // Populate oracle vectors
+        e_rx_vec.push(eq_rx.coeffs[row_index]);
+        e_ry_vec.push(eq_ry.coeffs[col_index]);
     }
 
-    /// Generates a Spark proof for batched polynomial commitment openings.
-    /// 
-    /// **Mathematical Process:**
-    /// 1. **Batching**: Combines 3 opening claims using random challenges r₁, r₂, r₃
-    /// 2. **Sumcheck**: Proves the batched claim via SparkSumCheckProof  
-    /// 3. **Individual Openings**: Generates commitment opening proofs for each polynomial
-    /// 
-    /// **Input**: Three opening claims from the inner sumcheck phase
-    /// **Output**: Single batched proof with 3x communication efficiency
-    pub fn prove(
-        opening_claims: [OpeningClaim; 3],
-        polynomials: [&MLE<Fp4>; 3],  // The actual polynomials being opened
-        challenger: &mut Challenger,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        // Generate random challenges for batching the three opening claims
-        let batching_challenges = [
-            challenger.get_challenge(),
-            challenger.get_challenge(), 
-            challenger.get_challenge(),
+    // Convert to MLEs
+    let e_rx_mle = MLE::new(e_rx_vec);
+    let e_ry_mle = MLE::new(e_ry_vec);
+
+    Ok((e_rx_mle, e_ry_mle))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::spartan::sparse::SparseMLE;
+    use p3_baby_bear::BabyBear;
+    use p3_field::PrimeCharacteristicRing;
+    use std::collections::HashMap;
+
+    fn create_test_metadata(entries: Vec<(usize, usize, u32)>) -> SpartanMetadata {
+        // Create sparse MLE from test entries
+        let mut coeffs = HashMap::new();
+        for (row, col, val) in entries {
+            coeffs.insert((row, col), BabyBear::from_u32(val));
+        }
+        let sparse_mle = SparseMLE::new(coeffs).unwrap();
+        
+        // Preprocess to metadata
+        SpartanMetadata::preprocess(&sparse_mle).unwrap()
+    }
+
+    #[test]
+    fn test_generate_spark_opening_oracles_simple() {
+        // Create simple 2x2 test matrices
+        let metadata_a = create_test_metadata(vec![(0, 0, 1), (1, 1, 2)]);
+        let metadata_b = create_test_metadata(vec![(0, 1, 3), (1, 0, 4)]);
+        let metadata_c = create_test_metadata(vec![(0, 0, 5), (0, 1, 6)]);
+
+        // Evaluation point with 2 variables (1 for rx, 1 for ry)
+        let evaluation_point = vec![
+            Fp4::from_u32(2), // rx
+            Fp4::from_u32(3), // ry
         ];
 
-        // Create dummy sparse matrices for the sumcheck protocol
-        // Note: In practice, these would be derived from the polynomial structure
-        let dummy_instances = create_dummy_spark_instances(&polynomials)?;
+        let result = generate_spark_opening_oracles(
+            &metadata_a, &metadata_b, &metadata_c, &evaluation_point
+        ).unwrap();
 
-        // Create a dummy witness for the sumcheck (this would be the witness MLE in practice)
-        let witness = create_dummy_witness(polynomials[0].n_vars());
+        // Verify we get 3 oracle pairs
+        assert_eq!(result.len(), 3);
+        
+        // Each oracle pair should have MLEs with length matching metadata
+        assert_eq!(result[0].0.len(), metadata_a.len()); // e_rx for A
+        assert_eq!(result[0].1.len(), metadata_a.len()); // e_ry for A
+        assert_eq!(result[1].0.len(), metadata_b.len()); // e_rx for B
+        assert_eq!(result[1].1.len(), metadata_b.len()); // e_ry for B
+        assert_eq!(result[2].0.len(), metadata_c.len()); // e_rx for C
+        assert_eq!(result[2].1.len(), metadata_c.len()); // e_ry for C
+    }
 
-        // Phase 1: Batched Sumcheck
-        // Proves: r₁·(A₁·B₁·C₁) + r₂·(A₂·B₂·C₂) + r₃·(A₃·B₃·C₃) = batched_claimed_sum
-        let sumcheck_proof = SparkSumCheckProof::prove(
-            &dummy_instances,
-            &batching_challenges,
-            &witness,
-            challenger,
+    #[test]
+    fn test_generate_spark_opening_oracles_manual_verification() {
+        // Create simple metadata with known indices
+        let metadata = create_test_metadata(vec![(1, 0, 10)]); // row=1, col=0, val=10
+
+        // Evaluation point: rx=[2], ry=[3]
+        let evaluation_point = vec![Fp4::from_u32(2), Fp4::from_u32(3)];
+
+        let result = generate_spark_opening_oracles(
+            &metadata, &metadata, &metadata, &evaluation_point
+        ).unwrap();
+
+        // For this test case:
+        // - eq_rx for point [2] gives coefficients [(1-2), 2] = [-1, 2]
+        // - eq_ry for point [3] gives coefficients [(1-3), 3] = [-2, 3]
+        // - metadata has row[0] = 1, col[0] = 0
+        // - So e_rx[0] = eq_rx[1] = 2, e_ry[0] = eq_ry[0] = -2
+
+        let expected_e_rx_0 = Fp4::from_u32(2);
+        let expected_e_ry_0 = Fp4::ONE - Fp4::from_u32(3); // (1-3) = -2
+
+        assert_eq!(result[0].0.coeffs()[0], expected_e_rx_0);
+        assert_eq!(result[0].1.coeffs()[0], expected_e_ry_0);
+    }
+
+    #[test]
+    fn test_generate_spark_opening_oracles_odd_evaluation_point() {
+        let metadata = create_test_metadata(vec![(0, 0, 1)]);
+        
+        // Odd length evaluation point should fail
+        let odd_evaluation_point = vec![Fp4::from_u32(1), Fp4::from_u32(2), Fp4::from_u32(3)];
+
+        let result = generate_spark_opening_oracles(
+            &metadata, &metadata, &metadata, &odd_evaluation_point
         );
 
-        // Phase 2: Individual Polynomial Commitment Openings
-        // Generate opening proofs for each polynomial at its respective point
-        let mut opening_proofs = Vec::new();
-        for (polynomial, claim) in polynomials.iter().zip(opening_claims.iter()) {
-            let opening_proof = DummyPCS::prove_evaluation(
-                polynomial,
-                &claim.point,
-                claim.value,
-                challenger,
-            )?;
-            opening_proofs.push(opening_proof);
-        }
-
-        Ok(SparkProof::new(sumcheck_proof, opening_proofs))
+        assert!(matches!(result, Err(SparseError::ValidationError(_))));
     }
 
-    /// Verifies a Spark proof for batched polynomial commitment openings.
-    /// 
-    /// **Mathematical Verification:**
-    /// 1. **Sumcheck Verification**: Ensures the batched polynomial equation holds
-    /// 2. **Opening Verification**: Checks each individual polynomial commitment opening
-    /// 3. **Consistency Check**: Verifies that batching was performed correctly
-    /// 
-    /// **Security**: Combines the soundness of both sumcheck and commitment schemes
-    pub fn verify(
-        &self,
-        opening_claims: [OpeningClaim; 3],
-        challenger: &mut Challenger,
-    ) -> Result<bool, Box<dyn std::error::Error>> {
-        // Phase 1: Verify the batched sumcheck proof
-        // This ensures the batched polynomial relation holds
-        self.sumcheck_proof.verify(challenger);
+    #[test]
+    fn test_generate_oracle_pair_bounds_checking() {
+        let metadata = create_test_metadata(vec![(2, 3, 1)]); // row=2, col=3 (out of bounds)
 
-        // Phase 2: Verify individual polynomial commitment openings  
-        // This ensures each claimed evaluation is correct
-        for (claim, proof) in opening_claims.iter().zip(self.opening_proofs.iter()) {
-            let is_valid = DummyPCS::verify_evaluation(
-                &claim.commitment,
-                &claim.point,
-                claim.value,
-                proof,
-                challenger,
-            )?;
-            
-            if !is_valid {
-                return Ok(false);
-            }
-        }
-
-        // Phase 3: Consistency check
-        // Verify that the sumcheck and opening proofs are consistent
-        // (In practice, this would check that the final evaluations match)
+        // Small evaluation points that will create small EqEvals
+        let rx_point = vec![Fp4::from_u32(1)]; // Creates 2 coefficients (indices 0,1)
+        let ry_point = vec![Fp4::from_u32(2)]; // Creates 2 coefficients (indices 0,1)
         
-        Ok(true)
-    }
-}
+        let eq_rx = EqEvals::gen_from_point(&rx_point);
+        let eq_ry = EqEvals::gen_from_point(&ry_point);
 
-/// Spark IOP instance representing the complete polynomial commitment opening protocol.
-/// 
-/// **Mathematical Purpose:**  
-/// Coordinates the entire Spark protocol execution, managing the transition from
-/// inner sumcheck outputs to final commitment verification. This is where the
-/// polynomial evaluation claims from InnerSumCheck get verified via commitments.
-#[derive(Debug)]
-pub struct SparkInstance {
-    /// The polynomial commitments that need to be opened
-    pub commitments: Vec<<DummyPCS as PolynomialCommitment<Fp4>>::Commitment>,
-    /// The points at which polynomials should be evaluated  
-    pub evaluation_points: Vec<Vec<Fp4>>,
-    /// The claimed evaluation values
-    pub claimed_values: Vec<Fp4>,
-}
-
-impl SparkInstance {
-    /// Creates a new Spark instance from inner sumcheck outputs.
-    /// 
-    /// **Input Transformation:**
-    /// Takes the point evaluations from InnerSumCheck (A_bound(r_y), B_bound(r_y), 
-    /// C_bound(r_y), Z(r_y)) and transforms them into commitment opening claims.
-    pub fn new(
-        commitments: Vec<<DummyPCS as PolynomialCommitment<Fp4>>::Commitment>,
-        evaluation_points: Vec<Vec<Fp4>>,
-        claimed_values: Vec<Fp4>,
-    ) -> Self {
-        assert_eq!(commitments.len(), evaluation_points.len());
-        assert_eq!(commitments.len(), claimed_values.len());
-        
-        Self {
-            commitments,
-            evaluation_points,
-            claimed_values,
-        }
+        // Should fail because row=2 and col=3 are out of bounds for 2-element EqEvals
+        let result = generate_oracle_pair(&metadata, &eq_rx, &eq_ry);
+        assert!(matches!(result, Err(SparseError::IndexOutOfBounds { .. })));
     }
 
-    /// Executes the complete Spark IOP protocol.
-    /// 
-    /// **Protocol Flow:**
-    /// 1. **Setup**: Convert instance data into opening claims
-    /// 2. **Prove**: Generate batched Spark proof  
-    /// 3. **Output**: Proof that can be verified by any party
-    /// 
-    /// **Communication Complexity**: O(log n + k) where n = polynomial size, k = number of openings
-    pub fn prove(
-        &self,
-        polynomials: Vec<&MLE<Fp4>>,
-        challenger: &mut Challenger,
-    ) -> Result<SparkProof, Box<dyn std::error::Error>> {
-        assert_eq!(polynomials.len(), 3, "Spark protocol expects exactly 3 polynomials");
+    #[test]
+    fn test_generate_oracle_pair_empty_metadata() {
+        // Create empty metadata (this should actually fail at metadata creation)
+        // But let's test the oracle generation boundary
+        let empty_coeffs = HashMap::new();
+        let result = SparseMLE::new(empty_coeffs);
+        assert!(matches!(result, Err(SparseError::EmptyMatrix)));
+    }
 
-        // Convert instance data into opening claims
-        let opening_claims = [
-            OpeningClaim::new(
-                self.evaluation_points[0].clone(),
-                self.claimed_values[0],
-                self.commitments[0].clone(),
-            ),
-            OpeningClaim::new(
-                self.evaluation_points[1].clone(),
-                self.claimed_values[1],
-                self.commitments[1].clone(),
-            ),
-            OpeningClaim::new(
-                self.evaluation_points[2].clone(),
-                self.claimed_values[2],
-                self.commitments[2].clone(),
-            ),
+    #[test]
+    fn test_generate_spark_opening_oracles_four_variables() {
+        // Test with larger evaluation points (4 variables: 2 for rx, 2 for ry)
+        let metadata = create_test_metadata(vec![(0, 1, 7), (2, 0, 8)]);
+
+        let evaluation_point = vec![
+            Fp4::from_u32(1), Fp4::from_u32(2), // rx = [1, 2]
+            Fp4::from_u32(3), Fp4::from_u32(4), // ry = [3, 4]
         ];
 
-        // Generate the batched Spark proof
-        SparkProof::prove(
-            opening_claims,
-            [polynomials[0], polynomials[1], polynomials[2]],
-            challenger,
-        )
+        let result = generate_spark_opening_oracles(
+            &metadata, &metadata, &metadata, &evaluation_point
+        ).unwrap();
+
+        // Verify structure is correct
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].0.len(), 2); // Two non-zero entries in metadata
+        assert_eq!(result[0].1.len(), 2);
     }
 
-    /// Verifies a Spark proof against this instance.
-    /// 
-    /// **Verification Process:**
-    /// 1. **Reconstruct Claims**: Convert instance data back to opening claims
-    /// 2. **Verify Proof**: Use SparkProof verification procedure
-    /// 3. **Return Result**: Boolean indicating proof validity
-    pub fn verify(
-        &self,
-        proof: &SparkProof,
-        challenger: &mut Challenger,
-    ) -> Result<bool, Box<dyn std::error::Error>> {
-        // Reconstruct opening claims from instance data
-        let opening_claims = [
-            OpeningClaim::new(
-                self.evaluation_points[0].clone(),
-                self.claimed_values[0],
-                self.commitments[0].clone(),
-            ),
-            OpeningClaim::new(
-                self.evaluation_points[1].clone(),
-                self.claimed_values[1],
-                self.commitments[1].clone(),
-            ),
-            OpeningClaim::new(
-                self.evaluation_points[2].clone(),
-                self.claimed_values[2],
-                self.commitments[2].clone(),
-            ),
-        ];
-
-        // Verify the proof
-        proof.verify(opening_claims, challenger)
-    }
-}
-
-// Helper functions for creating dummy components
-
-/// Creates dummy sparse matrix instances for the Spark sumcheck protocol.
-/// 
-/// **Purpose**: In the full implementation, these would be constructed from the
-/// polynomial structure and commitment scheme. For now, we use dummy matrices
-/// to demonstrate the protocol structure.
-fn create_dummy_spark_instances(
-    polynomials: &[&MLE<Fp4>; 3],
-) -> Result<[(SparseMLE, SparseMLE, SparseMLE); 3], Box<dyn std::error::Error>> {
-    use std::collections::HashMap;
-    
-    let mut instances = Vec::new();
-    
-    for i in 0..3 {
-        let poly_size = polynomials[i].len();
-        let _matrix_dim = (poly_size, poly_size);
+    #[test]
+    fn test_oracle_values_consistency() {
+        // Test that oracle values are consistent with EqEvals lookups
+        // Use 4 entries to get a power of 2
+        let metadata = create_test_metadata(vec![(0, 0, 1), (1, 1, 2), (0, 1, 3), (1, 0, 4)]);
         
-        // Create simple identity-like sparse matrices for demonstration
-        let mut coeffs_a = HashMap::new();
-        let mut coeffs_b = HashMap::new(); 
-        let mut coeffs_c = HashMap::new();
-        
-        // Add some sparse entries based on polynomial structure
-        for j in 0..std::cmp::min(4, poly_size) {
-            coeffs_a.insert((j, j), Fp::from_u32((i + 1) as u32));
-            coeffs_b.insert((j, (j + 1) % poly_size), Fp::from_u32((i + 2) as u32));
-            coeffs_c.insert(((j + 1) % poly_size, j), Fp::from_u32((i + 3) as u32));
+        let rx_point = vec![Fp4::from_u32(5)];
+        let ry_point = vec![Fp4::from_u32(7)];
+        let evaluation_point = [rx_point.clone(), ry_point.clone()].concat();
+
+        let result = generate_spark_opening_oracles(
+            &metadata, &metadata, &metadata, &evaluation_point
+        ).unwrap();
+
+        // Manual verification: create EqEvals and check lookups
+        let eq_rx = EqEvals::gen_from_point(&rx_point);
+        let eq_ry = EqEvals::gen_from_point(&ry_point);
+
+        // metadata has entries at (0,0), (0,1), (1,0), (1,1) (sorted order)
+        // So row indices are [0, 0, 1, 1] and col indices are [0, 1, 0, 1]
+        let expected_e_rx = vec![eq_rx[0], eq_rx[0], eq_rx[1], eq_rx[1]];
+        let expected_e_ry = vec![eq_ry[0], eq_ry[1], eq_ry[0], eq_ry[1]];
+
+        for i in 0..4 {
+            assert_eq!(result[0].0.coeffs()[i], expected_e_rx[i]);
+            assert_eq!(result[0].1.coeffs()[i], expected_e_ry[i]);
         }
-        
-        let sparse_a = SparseMLE::new(coeffs_a)?;
-        let sparse_b = SparseMLE::new(coeffs_b)?;
-        let sparse_c = SparseMLE::new(coeffs_c)?;
-        
-        instances.push((sparse_a, sparse_b, sparse_c));
     }
-    
-    Ok([instances[0].clone(), instances[1].clone(), instances[2].clone()])
-}
-
-/// Creates a dummy witness MLE for the Spark protocol.
-/// 
-/// **Purpose**: Provides a placeholder witness for the sumcheck protocol.
-/// In practice, this would be derived from the actual proof context.
-fn create_dummy_witness(n_vars: usize) -> MLE<Fp> {
-    let size = 1 << n_vars;
-    let coeffs = (0..size).map(|i| Fp::from_u32((i + 1) as u32)).collect();
-    MLE::new(coeffs)
 }
