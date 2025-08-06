@@ -110,7 +110,7 @@ impl SparseMLE {
         // Initialize result vector with zeros
         let mut result = vec![BabyBear::ZERO; rows];
 
-        // Perform sparse matrix-MLE multiplication
+        // Perform sparse matrix-MLE multiplication with O(nnz) complexity
         for ((row, col), &value) in self.iter() {
             // Ensure we don't go out of bounds (defensive programming)
             if *row < rows && *col < cols {
@@ -119,6 +119,22 @@ impl SparseMLE {
         }
 
         Ok(MLE::new(result))
+    }
+
+    /// Creates sparse MLE from this matrix (flattened representation)
+    pub fn to_sparse_mle(&self) -> crate::spartan::mle::SparseMultilinearExtension {
+        let mut coeffs = HashMap::new();
+        let (rows, cols) = self.dimensions;
+        let n_vars = (rows * cols).next_power_of_two().trailing_zeros() as usize;
+        
+        for ((row, col), &value) in self.iter() {
+            if value != BabyBear::ZERO {
+                let index = row * cols + col;
+                coeffs.insert(index, value);
+            }
+        }
+        
+        crate::spartan::mle::SparseMultilinearExtension::new(coeffs, n_vars)
     }
 
     /// Multiplies this sparse matrix by a dense vector (legacy method).

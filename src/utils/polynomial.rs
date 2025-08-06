@@ -81,6 +81,95 @@ impl<F: PrimeCharacteristicRing + Clone> MLE<F> {
     pub fn coeffs(&self) -> &[F] {
         &self.coeffs
     }
+
+    /// Creates MLE from vector (convenience method)
+    pub fn from_vector(vector: Vec<F>) -> Self {
+        Self::new(vector)
+    }
+
+    /// Creates zero MLE with given number of variables
+    pub fn zero(n_vars: usize) -> Self {
+        let len = 1 << n_vars;
+        Self::new(vec![F::ZERO; len])
+    }
+
+    /// Creates constant MLE
+    pub fn constant(value: F, n_vars: usize) -> Self {
+        let len = 1 << n_vars;
+        Self::new(vec![value; len])
+    }
+
+    /// Computes partial evaluation (binds variables from left)
+    pub fn partial_evaluate(&self, point: &[Fp4], num_vars: usize) -> MLE<Fp4>
+    where
+        Fp4: From<F>,
+    {
+        assert!(num_vars <= self.n_vars(), "Too many variables to bind");
+        
+        let mut current = FieldExtension::promote_to_fp4(self);
+        
+        for &challenge in point.iter().take(num_vars) {
+            current = current.fold_in_place(challenge);
+        }
+        
+        current
+    }
+
+    /// Computes dot product with another MLE
+    pub fn dot_product(&self, other: &Self) -> F
+    where
+        F: Mul<Output = F> + Add<Output = F> + Clone,
+    {
+        assert_eq!(self.len(), other.len(), "Dimension mismatch for dot product");
+        
+        self.coeffs()
+            .iter()
+            .zip(other.coeffs().iter())
+            .map(|(a, b)| a.clone() * b.clone())
+            .fold(F::ZERO, |acc, x| acc + x)
+    }
+
+    /// Adds another MLE element-wise
+    pub fn add(&self, other: &Self) -> Self
+    where
+        F: Add<Output = F> + Clone,
+    {
+        assert_eq!(self.len(), other.len(), "Dimension mismatch for addition");
+        
+        let coeffs = self.coeffs()
+            .iter()
+            .zip(other.coeffs().iter())
+            .map(|(a, b)| a.clone() + b.clone())
+            .collect();
+        
+        Self::new(coeffs)
+    }
+
+    /// Scales by a scalar
+    pub fn scale(&self, scalar: F) -> Self
+    where
+        F: Mul<Output = F> + Clone,
+    {
+        let coeffs = self.coeffs()
+            .iter()
+            .map(|coeff| coeff.clone() * scalar.clone())
+            .collect();
+        
+        Self::new(coeffs)
+    }
+}
+
+/// Field extension utilities for BabyBear → Fp4 promotion
+pub struct FieldExtension;
+
+impl FieldExtension {
+    /// Promotes BabyBear MLE to Fp4 MLE
+    pub fn promote_to_fp4(mle: &MLE<BabyBear>) -> MLE<Fp4> {
+        let coeffs: Vec<Fp4> = mle.coeffs().iter()
+            .map(|&coeff| Fp4::from(coeff))
+            .collect();
+        MLE::new(coeffs)
+    }
 }
 
 impl<F: PrimeCharacteristicRing + Clone> Index<usize> for MLE<F> {

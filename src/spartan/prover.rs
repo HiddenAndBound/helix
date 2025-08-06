@@ -29,10 +29,10 @@ impl SpartanProof {
     pub fn verify(&self, challenger: &mut crate::challenger::Challenger) {
         // Verify the outer sum-check proof
         self.outer_sumcheck_proof.verify(challenger);
-        
+
         // TODO: Add additional verification steps for a complete Spartan proof:
         // - Inner sum-check verifications
-        // - Polynomial commitment verifications  
+        // - Polynomial commitment verifications
         // - Final consistency checks
     }
 }
@@ -42,9 +42,9 @@ mod tests {
     use super::*;
     use crate::{
         challenger::Challenger,
+        polynomial::MLE,
         spartan::{sparse::SparseMLE, sumcheck::OuterSumCheckProof, univariate::UnivariatePoly},
         utils::{Fp, Fp4},
-        polynomial::MLE,
     };
     use p3_baby_bear::BabyBear;
     use p3_field::PrimeCharacteristicRing;
@@ -62,7 +62,7 @@ mod tests {
             UnivariatePoly::from_coeffs(Fp4::ONE, Fp4::ZERO),
         ];
         let final_evals = vec![Fp4::ZERO, Fp4::ONE, Fp4::ZERO];
-        
+
         OuterSumCheckProof::new(round_proofs, final_evals)
     }
 
@@ -109,7 +109,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_spartan_proof_verify_with_invalid_proof() {
-        let outer_proof = create_test_outer_sumcheck_proof();  
+        let outer_proof = create_test_outer_sumcheck_proof();
         let proof = SpartanProof::new(outer_proof);
         let mut challenger = create_test_challenger();
 
@@ -125,11 +125,11 @@ mod tests {
 
         // Generate a real outer sumcheck proof
         let outer_proof = OuterSumCheckProof::prove(
-            &matrix_a, 
-            &matrix_b, 
-            &matrix_c, 
-            &witness, 
-            &mut prover_challenger
+            &matrix_a,
+            &matrix_b,
+            &matrix_c,
+            &witness,
+            &mut prover_challenger,
         );
 
         // Create Spartan proof with the real sumcheck proof
@@ -138,7 +138,7 @@ mod tests {
         // Verify the Spartan proof
         let mut verifier_challenger = create_test_challenger();
         spartan_proof.verify(&mut verifier_challenger);
-        
+
         // If we reach here, verification passed
         assert!(true);
     }
@@ -167,7 +167,7 @@ mod tests {
     fn test_spartan_proof_equality() {
         let outer_proof1 = create_test_outer_sumcheck_proof();
         let outer_proof2 = create_test_outer_sumcheck_proof();
-        
+
         let proof1 = SpartanProof::new(outer_proof1);
         let proof2 = SpartanProof::new(outer_proof2);
 
@@ -178,7 +178,7 @@ mod tests {
     #[test]
     fn test_spartan_proof_with_different_outer_proofs() {
         let outer_proof1 = create_test_outer_sumcheck_proof();
-        
+
         // Create a different outer proof
         let round_proofs2 = vec![
             UnivariatePoly::from_coeffs(Fp4::ONE, Fp4::ONE),
@@ -186,7 +186,7 @@ mod tests {
         ];
         let final_evals2 = vec![Fp4::ONE, Fp4::ZERO, Fp4::ONE];
         let outer_proof2 = OuterSumCheckProof::new(round_proofs2, final_evals2);
-        
+
         let proof1 = SpartanProof::new(outer_proof1);
         let proof2 = SpartanProof::new(outer_proof2);
 
@@ -201,10 +201,9 @@ mod tests {
 
         // Test that the proof contains the expected outer sumcheck proof
         assert_eq!(*proof.outer_sumcheck_proof(), outer_proof);
-        
+
         // Test that the proof structure is as expected
         // (In a full implementation, we'd test additional components)
         // Note: We can only test public interface since fields are private
     }
 }
-
