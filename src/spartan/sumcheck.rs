@@ -1,7 +1,7 @@
 //! Comprehensive sum-check protocol implementation for Spartan zkSNARK.
 //!
 //! Provides three distinct sum-check protocols for different constraint types:
-//! 
+//!
 //! 1. **OuterSumCheck**: Proves `f(x) = A(x)·B(x) - C(x) = 0` over Boolean hypercube
 //! 2. **InnerSumCheck**: Proves `f(x) = ⟨A(x), B(x)⟩` for inner product constraints
 //! 3. **SparkSumCheck**: Proves `f(x) = A(x)·B(x)·C(x)` for triple product constraints
@@ -61,7 +61,7 @@ impl OuterSumCheckProof {
     }
 
     /// Generates a sum-check proof for f(x) = A(x)·B(x) - C(x).
-    /// 
+    ///
     /// Computes A·z, B·z, C·z then runs the sum-check protocol: for each round,
     /// computes a univariate polynomial, gets a random challenge, and folds.
     pub fn prove(
@@ -188,7 +188,7 @@ pub fn compute_round(
     for i in 0..1 << (rounds - round - 1) {
         // g(0): set current variable to 0
         round_coeffs[0] += eq[i] * (a[i << 1] * b[i << 1] - c[i << 1]);
-        
+
         // g(2): use multilinear polynomial identity
         round_coeffs[2] += eq[i]
             * ((a[i << 1] + a[i << 1 | 1].double()) * (b[i << 1] + b[i << 1 | 1].double())
@@ -221,7 +221,7 @@ pub fn compute_first_round(
     for i in 0..1 << (rounds - 1) {
         // g(0): set first variable to 0 (base field Fp promoted to Fp4)
         round_coeffs[0] += eq[i] * (a[i << 1] * b[i << 1] - c[i << 1]);
-        
+
         // g(2): use multilinear polynomial identity
         round_coeffs[2] += eq[i]
             * ((a[i << 1] + a[i << 1 | 1].double()) * (b[i << 1] + b[i << 1 | 1].double())
@@ -258,19 +258,11 @@ impl InnerSumCheckProof {
     }
 
     /// Generates a sum-check proof for f(x) = ⟨A(x), B(x)⟩.
-    /// 
+    ///
     /// Computes A·z and B·z then runs the sum-check protocol for inner products.
-    pub fn prove(
-        A: &SparseMLE,
-        B: &SparseMLE,
-        z: &MLE<Fp>,
-        challenger: &mut Challenger,
-    ) -> Self {
+    pub fn prove(A: &SparseMLE, B: &SparseMLE, z: &MLE<Fp>, challenger: &mut Challenger) -> Self {
         // Compute A·z and B·z (sparse matrix-MLE multiplications)
-        let (a, b) = (
-            A.multiply_by_mle(z).unwrap(),
-            B.multiply_by_mle(z).unwrap(),
-        );
+        let (a, b) = (A.multiply_by_mle(z).unwrap(), B.multiply_by_mle(z).unwrap());
         let rounds = a.n_vars();
 
         // Get random evaluation point from challenger (Fiat-Shamir)
@@ -354,10 +346,7 @@ impl InnerSumCheckProof {
         }
 
         // Final check: ⟨A(r), B(r)⟩ = final_claim
-        assert_eq!(
-            current_claim,
-            self.final_evals[0] * self.final_evals[1]
-        )
+        assert_eq!(current_claim, self.final_evals[0] * self.final_evals[1])
     }
 }
 
@@ -378,10 +367,10 @@ pub fn compute_inner_round(
     for i in 0..1 << (rounds - round - 1) {
         // g(0): set current variable to 0
         round_coeffs[0] += eq[i] * (a[i << 1] * b[i << 1]);
-        
+
         // g(2): use multilinear polynomial identity
-        round_coeffs[2] += eq[i]
-            * ((a[i << 1] + a[i << 1 | 1].double()) * (b[i << 1] + b[i << 1 | 1].double()));
+        round_coeffs[2] +=
+            eq[i] * ((a[i << 1] + a[i << 1 | 1].double()) * (b[i << 1] + b[i << 1 | 1].double()));
     }
 
     // g(1): derived from sum-check constraint
@@ -409,10 +398,10 @@ pub fn compute_inner_first_round(
     for i in 0..1 << (rounds - 1) {
         // g(0): set first variable to 0 (base field Fp promoted to Fp4)
         round_coeffs[0] += eq[i] * (a[i << 1] * b[i << 1]);
-        
+
         // g(2): use multilinear polynomial identity
-        round_coeffs[2] += eq[i]
-            * ((a[i << 1] + a[i << 1 | 1].double()) * (b[i << 1] + b[i << 1 | 1].double()));
+        round_coeffs[2] +=
+            eq[i] * ((a[i << 1] + a[i << 1 | 1].double()) * (b[i << 1] + b[i << 1 | 1].double()));
     }
 
     // g(1): derived from sum-check constraint
@@ -444,7 +433,7 @@ impl SparkSumCheckProof {
     }
 
     /// Generates a sum-check proof for f(x) = A(x)·B(x)·C(x) for Spark constraints.
-    /// 
+    ///
     /// Computes A·z, B·z, C·z then runs the sum-check protocol for triple products.
     pub fn prove(
         A: &SparseMLE,
@@ -472,7 +461,8 @@ impl SparkSumCheckProof {
         let mut round_challenges = Vec::new();
 
         // Handle first round separately (uses base field Fp for efficiency)
-        let round_proof = compute_spark_first_round(&a, &b, &c, &eq, &eq_point, current_claim, rounds);
+        let round_proof =
+            compute_spark_first_round(&a, &b, &c, &eq, &eq_point, current_claim, rounds);
 
         // Process first round proof
         round_proofs.push(round_proof.clone());
@@ -570,10 +560,10 @@ pub fn compute_spark_round(
     for i in 0..1 << (rounds - round - 1) {
         // g(0): set current variable to 0
         round_coeffs[0] += eq[i] * (a[i << 1] * b[i << 1] * c[i << 1]);
-        
+
         // g(2): use multilinear polynomial identity
         round_coeffs[2] += eq[i]
-            * ((a[i << 1] + a[i << 1 | 1].double()) 
+            * ((a[i << 1] + a[i << 1 | 1].double())
                 * (b[i << 1] + b[i << 1 | 1].double())
                 * (c[i << 1] + c[i << 1 | 1].double()));
     }
@@ -604,10 +594,10 @@ pub fn compute_spark_first_round(
     for i in 0..1 << (rounds - 1) {
         // g(0): set first variable to 0 (base field Fp promoted to Fp4)
         round_coeffs[0] += eq[i] * (a[i << 1] * b[i << 1] * c[i << 1]);
-        
+
         // g(2): use multilinear polynomial identity
         round_coeffs[2] += eq[i]
-            * ((a[i << 1] + a[i << 1 | 1].double()) 
+            * ((a[i << 1] + a[i << 1 | 1].double())
                 * (b[i << 1] + b[i << 1 | 1].double())
                 * (c[i << 1] + c[i << 1 | 1].double()));
     }
@@ -629,7 +619,7 @@ mod tests {
         eq::EqEvals,
         polynomial::MLE,
         spartan::sparse::SparseMLE,
-        utils::{Fp, Fp4}
+        utils::{Fp, Fp4},
     };
     use p3_baby_bear::BabyBear;
     use p3_field::PrimeCharacteristicRing;
@@ -723,7 +713,7 @@ mod tests {
 
         // Verify with fresh challenger (should have same randomness)
         let mut verifier_challenger = create_test_challenger();
-        
+
         // This should not panic for a valid proof
         proof.verify(&mut verifier_challenger);
     }
@@ -767,7 +757,7 @@ mod tests {
 
         // Verify with fresh challenger
         let mut verifier_challenger = create_test_challenger();
-        
+
         // This should not panic for a valid proof
         proof.verify(&mut verifier_challenger);
     }
@@ -811,7 +801,7 @@ mod tests {
 
         // Verify with fresh challenger
         let mut verifier_challenger = create_test_challenger();
-        
+
         // This should not panic for a valid proof
         proof.verify(&mut verifier_challenger);
     }
@@ -832,7 +822,7 @@ mod tests {
 
         // Check that polynomial has degree <= 2
         assert!(poly.degree() <= 2);
-        
+
         // Check that coefficients are in expected field
         assert!(poly.coefficients().len() >= 2);
         assert!(poly.coefficients().len() <= 3);
@@ -855,7 +845,7 @@ mod tests {
 
         // Check that polynomial has degree <= 2
         assert!(poly.degree() <= 2);
-        
+
         // Check that coefficients are in expected field
         assert!(poly.coefficients().len() >= 2);
         assert!(poly.coefficients().len() <= 3);
@@ -877,7 +867,7 @@ mod tests {
 
         // Check that polynomial has degree <= 2
         assert!(poly.degree() <= 2);
-        
+
         // Check that coefficients are in expected field
         assert!(poly.coefficients().len() >= 2);
         assert!(poly.coefficients().len() <= 3);
@@ -900,7 +890,7 @@ mod tests {
 
         // Check that polynomial has degree <= 2
         assert!(poly.degree() <= 2);
-        
+
         // Check that coefficients are in expected field
         assert!(poly.coefficients().len() >= 2);
         assert!(poly.coefficients().len() <= 3);
@@ -918,7 +908,7 @@ mod tests {
         for poly in &proof.round_proofs {
             let eval_0 = poly.evaluate(Fp4::ZERO);
             let eval_1 = poly.evaluate(Fp4::ONE);
-            
+
             // Evaluations should be valid field elements
             assert_ne!(eval_0, Fp4::from_u32(u32::MAX)); // Not a poison value
             assert_ne!(eval_1, Fp4::from_u32(u32::MAX)); // Not a poison value
@@ -942,22 +932,22 @@ mod tests {
         }
     }
 
-    #[test] 
+    #[test]
     fn test_empty_matrices_handling() {
         // Test behavior with matrices that would cause issues
         let mut small_coeffs = HashMap::new();
         small_coeffs.insert((0, 0), BabyBear::ONE);
-        
+
         let A = SparseMLE::new(small_coeffs.clone()).unwrap();
         let B = SparseMLE::new(small_coeffs.clone()).unwrap();
         let C = SparseMLE::new(small_coeffs.clone()).unwrap();
-        
+
         let z = MLE::new(vec![BabyBear::ONE]);
         let mut challenger = create_test_challenger();
 
         // This should work with minimal valid input
         let proof = OuterSumCheckProof::prove(&A, &B, &C, &z, &mut challenger);
-        
+
         assert!(!proof.round_proofs.is_empty());
         assert_eq!(proof.final_evals.len(), 3);
     }
@@ -979,7 +969,7 @@ mod tests {
     fn test_proof_determinism() {
         let (A, B, C) = create_test_sparse_matrices();
         let z = create_test_witness();
-        
+
         // Generate two proofs with the same input
         let mut challenger1 = create_test_challenger();
         let proof1 = OuterSumCheckProof::prove(&A, &B, &C, &z, &mut challenger1);
@@ -1023,7 +1013,7 @@ mod tests {
             let proof = OuterSumCheckProof::prove(&A, &B, &C, &z, &mut prover_challenger);
 
             let mut verifier_challenger = create_test_challenger();
-            
+
             // Verification should not panic (property: all valid proofs verify)
             proof.verify(&mut verifier_challenger);
         }

@@ -1,5 +1,6 @@
+use p3_baby_bear::BabyBear;
 use p3_field::PrimeCharacteristicRing;
-use std::ops::{Index, Range};
+use std::ops::{Add, Index, Mul, Range};
 
 use crate::utils::{Fp4, eq::EqEvals};
 
@@ -48,7 +49,7 @@ impl<F: PrimeCharacteristicRing + Clone> MLE<F> {
     /// For MLE f(x₀, x₁, ..., xₙ₋₁), this computes:
     /// g(x₁, ..., xₙ₋₁) = f(challenge, x₁, ..., xₙ₋₁)
     ///                  = (1 - challenge) * f(0, x₁, ..., xₙ₋₁) + challenge * f(1, x₁, ..., xₙ₋₁)
-    pub fn fold_in_place(self, challenge: Fp4) -> MLE<Fp4>
+    pub fn fold_in_place(&self, challenge: Fp4) -> MLE<Fp4>
     where
         Fp4: From<F>,
     {
@@ -100,18 +101,18 @@ impl<F: PrimeCharacteristicRing + Clone> MLE<F> {
     }
 
     /// Computes partial evaluation (binds variables from left)
-    pub fn partial_evaluate(&self, point: &[Fp4], num_vars: usize) -> MLE<Fp4>
+    pub fn partial_evaluate(&mut self, point: &[Fp4], num_vars: usize) -> MLE<Fp4>
     where
         Fp4: From<F>,
     {
         assert!(num_vars <= self.n_vars(), "Too many variables to bind");
-        
-        let mut current = FieldExtension::promote_to_fp4(self);
-        
-        for &challenge in point.iter().take(num_vars) {
+
+        let mut current = self.fold_in_place(point[0]);
+
+        for &challenge in point.iter().take(num_vars).skip(1) {
             current = current.fold_in_place(challenge);
         }
-        
+
         current
     }
 
@@ -120,8 +121,12 @@ impl<F: PrimeCharacteristicRing + Clone> MLE<F> {
     where
         F: Mul<Output = F> + Add<Output = F> + Clone,
     {
-        assert_eq!(self.len(), other.len(), "Dimension mismatch for dot product");
-        
+        assert_eq!(
+            self.len(),
+            other.len(),
+            "Dimension mismatch for dot product"
+        );
+
         self.coeffs()
             .iter()
             .zip(other.coeffs().iter())
@@ -135,13 +140,14 @@ impl<F: PrimeCharacteristicRing + Clone> MLE<F> {
         F: Add<Output = F> + Clone,
     {
         assert_eq!(self.len(), other.len(), "Dimension mismatch for addition");
-        
-        let coeffs = self.coeffs()
+
+        let coeffs = self
+            .coeffs()
             .iter()
             .zip(other.coeffs().iter())
             .map(|(a, b)| a.clone() + b.clone())
             .collect();
-        
+
         Self::new(coeffs)
     }
 
@@ -150,25 +156,13 @@ impl<F: PrimeCharacteristicRing + Clone> MLE<F> {
     where
         F: Mul<Output = F> + Clone,
     {
-        let coeffs = self.coeffs()
+        let coeffs = self
+            .coeffs()
             .iter()
             .map(|coeff| coeff.clone() * scalar.clone())
             .collect();
-        
+
         Self::new(coeffs)
-    }
-}
-
-/// Field extension utilities for BabyBear → Fp4 promotion
-pub struct FieldExtension;
-
-impl FieldExtension {
-    /// Promotes BabyBear MLE to Fp4 MLE
-    pub fn promote_to_fp4(mle: &MLE<BabyBear>) -> MLE<Fp4> {
-        let coeffs: Vec<Fp4> = mle.coeffs().iter()
-            .map(|&coeff| Fp4::from(coeff))
-            .collect();
-        MLE::new(coeffs)
     }
 }
 
@@ -416,7 +410,7 @@ mod tests {
     fn test_mle_index_single_element() {
         let coeffs = vec![BabyBear::from_u32(42)];
         let mle = MLE::new(coeffs);
-        
+
         assert_eq!(mle[0], BabyBear::from_u32(42));
     }
 
@@ -429,7 +423,7 @@ mod tests {
             BabyBear::from_u32(40),
         ];
         let mle = MLE::new(coeffs);
-        
+
         assert_eq!(mle[0], BabyBear::from_u32(10));
         assert_eq!(mle[1], BabyBear::from_u32(20));
         assert_eq!(mle[2], BabyBear::from_u32(30));
@@ -445,7 +439,7 @@ mod tests {
             BabyBear::from_u32(40),
         ];
         let mle = MLE::new(coeffs);
-        
+
         let slice = &mle[1..3];
         assert_eq!(slice.len(), 2);
         assert_eq!(slice[0], BabyBear::from_u32(20));
@@ -454,12 +448,9 @@ mod tests {
 
     #[test]
     fn test_mle_index_full_range() {
-        let coeffs = vec![
-            BabyBear::from_u32(100),
-            BabyBear::from_u32(200),
-        ];
+        let coeffs = vec![BabyBear::from_u32(100), BabyBear::from_u32(200)];
         let mle = MLE::new(coeffs);
-        
+
         let full_slice = &mle[0..2];
         assert_eq!(full_slice.len(), 2);
         assert_eq!(full_slice[0], BabyBear::from_u32(100));
@@ -475,10 +466,10 @@ mod tests {
             Fp4::from_u32(35),
         ];
         let mle = MLE::new(coeffs);
-        
+
         assert_eq!(mle[0], Fp4::from_u32(5));
         assert_eq!(mle[3], Fp4::from_u32(35));
-        
+
         let range_slice = &mle[1..3];
         assert_eq!(range_slice[0], Fp4::from_u32(15));
         assert_eq!(range_slice[1], Fp4::from_u32(25));

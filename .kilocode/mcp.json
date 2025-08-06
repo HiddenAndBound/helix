@@ -16,8 +16,8 @@
       ],
       "env": {
         "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}",
-        "GITHUB_TOOLSETS": "repos",
-        "GITHUB_READ_ONLY": "1"
+        "GITHUB_TOOLSETS": "repos,issues,prs",
+        "GITHUB_READ_ONLY": "true"
       }
     },
     "context7": {

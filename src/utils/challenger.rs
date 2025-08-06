@@ -80,4 +80,6 @@ impl Challenger {
     pub fn get_challenges(&mut self, n_challenges: usize) -> Vec<Fp4> {
         (0..n_challenges).map(|_| self.get_challenge()).collect()
     }
+
+    
 }
