@@ -9,7 +9,7 @@
 //! - Twist & Shout memory checking timestamps
 
 use crate::spartan::error::{SparseError, SparseResult};
-use crate::utils::{polynomial::MLE, Fp};
+use crate::utils::{Fp, polynomial::MLE};
 use p3_baby_bear::BabyBear;
 use p3_field::{PrimeCharacteristicRing, PrimeField32};
 use std::collections::HashMap;
@@ -68,7 +68,10 @@ impl SparseMLE {
             .max()
             .expect("Should be non-zero");
 
-        ((max_row + 1).next_power_of_two(), (max_col + 1).next_power_of_two())
+        (
+            (max_row + 1).next_power_of_two(),
+            (max_col + 1).next_power_of_two(),
+        )
     }
 
     /// Returns the number of non-zero entries.
@@ -119,22 +122,6 @@ impl SparseMLE {
         }
 
         Ok(MLE::new(result))
-    }
-
-    /// Creates sparse MLE from this matrix (flattened representation)
-    pub fn to_sparse_mle(&self) -> crate::spartan::mle::SparseMultilinearExtension {
-        let mut coeffs = HashMap::new();
-        let (rows, cols) = self.dimensions;
-        let n_vars = (rows * cols).next_power_of_two().trailing_zeros() as usize;
-        
-        for ((row, col), &value) in self.iter() {
-            if value != BabyBear::ZERO {
-                let index = row * cols + col;
-                coeffs.insert(index, value);
-            }
-        }
-        
-        crate::spartan::mle::SparseMultilinearExtension::new(coeffs, n_vars)
     }
 
     /// Multiplies this sparse matrix by a dense vector (legacy method).
@@ -282,9 +269,9 @@ impl TimeStamps {
     /// Creates timestamp structure, validating read_ts ≤ final_ts invariant.
     pub fn new(read_ts: Vec<BabyBear>, final_ts: Vec<BabyBear>) -> SparseResult<Self> {
         // read_ts and final_ts serve different purposes and can have different sizes:
-        // - read_ts[i] = timestamp before i-th memory access (size = padded accesses)  
+        // - read_ts[i] = timestamp before i-th memory access (size = padded accesses)
         // - final_ts[j] = final write count for address j (size = address space)
-        
+
         Ok(TimeStamps { read_ts, final_ts })
     }
 
@@ -417,10 +404,7 @@ mod tests {
         coeffs.insert((1, 1), BabyBear::from_u32(5));
 
         let sparse_mle = SparseMLE::new(coeffs).unwrap();
-        let vector = vec![
-            BabyBear::from_u32(1),
-            BabyBear::from_u32(2),
-        ];
+        let vector = vec![BabyBear::from_u32(1), BabyBear::from_u32(2)];
 
         let result = sparse_mle.multiply_by_vector(&vector).unwrap();
 
@@ -509,10 +493,7 @@ mod tests {
     fn test_spartan_metadata_new_valid() {
         let row = vec![BabyBear::ZERO, BabyBear::ONE];
         let col = vec![BabyBear::ONE, BabyBear::ZERO];
-        let val = vec![
-            BabyBear::from_u32(5),
-            BabyBear::from_u32(10),
-        ];
+        let val = vec![BabyBear::from_u32(5), BabyBear::from_u32(10)];
 
         let read_ts = vec![BabyBear::ZERO, BabyBear::ONE];
         let final_ts = vec![BabyBear::ONE, BabyBear::from_u32(2)];
@@ -583,16 +564,8 @@ mod tests {
 
     #[test]
     fn test_timestamps_new_valid() {
-        let read_ts = vec![
-            BabyBear::ZERO,
-            BabyBear::ONE,
-            BabyBear::from_u32(2),
-        ];
-        let final_ts = vec![
-            BabyBear::ONE,
-            BabyBear::from_u32(2),
-            BabyBear::from_u32(3),
-        ];
+        let read_ts = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u32(2)];
+        let final_ts = vec![BabyBear::ONE, BabyBear::from_u32(2), BabyBear::from_u32(3)];
 
         let timestamps = TimeStamps::new(read_ts, final_ts).unwrap();
         assert_eq!(timestamps.read_ts.len(), 3);
@@ -719,7 +692,7 @@ mod tests {
         assert_eq!(timestamps.read_ts[6], BabyBear::from_u32(3)); // After 3 accesses to addr 0
         assert_eq!(timestamps.read_ts[7], BabyBear::from_u32(4)); // After 4 accesses to addr 0
 
-        // Verify final timestamps show total accesses per address  
+        // Verify final timestamps show total accesses per address
         assert_eq!(timestamps.final_ts[0], BabyBear::from_u32(5)); // Address 0: 2 real + 3 dummy = 5 total
         assert_eq!(timestamps.final_ts[1], BabyBear::from_u32(2)); // Address 1 accessed twice
         assert_eq!(timestamps.final_ts[2], BabyBear::ONE); // Address 2 accessed once
