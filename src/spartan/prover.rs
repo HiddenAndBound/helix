@@ -97,8 +97,8 @@ impl SpartanProof {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::challenger::Challenger;
     use crate::spartan::R1CSInstance;
+    use crate::challenger::Challenger;
 
     #[test]
     fn test_spartan_prove_verify_simple_r1cs() {
@@ -107,17 +107,17 @@ mod tests {
         let instance = R1CSInstance::simple_test().unwrap();
         let mut challenger_prove = Challenger::new();
         let mut challenger_verify = Challenger::new();
-
+        
         // Generate proof
         let proof = SpartanProof::prove(instance, &mut challenger_prove);
-
+        
         // Verify proof - should succeed
         proof.verify(&mut challenger_verify);
-
+        
         // Verify that proof has expected structure (test by behavior since fields are private)
         let outer_proof = proof.outer_sumcheck_proof();
         let inner_proof = proof.inner_sumcheck_proof();
-
+        
         // Verify proofs are valid by successful verification
         // (Structure correctness is tested implicitly through successful prove/verify cycle)
     }
@@ -129,17 +129,17 @@ mod tests {
         let instance = R1CSInstance::multi_constraint_test().unwrap();
         let mut challenger_prove = Challenger::new();
         let mut challenger_verify = Challenger::new();
-
+        
         // Generate proof
         let proof = SpartanProof::prove(instance, &mut challenger_prove);
-
+        
         // Verify proof - should succeed
         proof.verify(&mut challenger_verify);
-
+        
         // Verify proof structure for multi-constraint instance
         let outer_proof = proof.outer_sumcheck_proof();
         let inner_proof = proof.inner_sumcheck_proof();
-
+        
         // Structure correctness is validated through successful verification
     }
 
@@ -147,15 +147,15 @@ mod tests {
     fn test_spartan_proof_deterministic_behavior() {
         // Same challenger seed should produce identical proofs
         let instance = R1CSInstance::simple_test().unwrap();
-
+        
         // Create two challengers with same initial state (both new)
         let mut challenger1 = Challenger::new();
         let mut challenger2 = Challenger::new();
-
+        
         // Generate proofs
         let proof1 = SpartanProof::prove(instance.clone(), &mut challenger1);
         let proof2 = SpartanProof::prove(instance, &mut challenger2);
-
+        
         // Proofs should be identical (deterministic with same challenger)
         // Since fields are private, we test structural equality via Clone + PartialEq
         assert_eq!(proof1.outer_sumcheck_proof(), proof2.outer_sumcheck_proof());
@@ -167,13 +167,13 @@ mod tests {
         // Test that outer sumcheck and inner sumcheck work together properly
         let instance = R1CSInstance::simple_test().unwrap();
         let mut challenger = Challenger::new();
-
+        
         let proof = SpartanProof::prove(instance, &mut challenger);
-
+        
         // Verify two-phase integration by testing that both phases complete successfully
         let outer_proof = proof.outer_sumcheck_proof();
         let inner_proof = proof.inner_sumcheck_proof();
-
+        
         // Both phases should exist and be non-empty (tested via successful completion)
         // The outer produces evaluation claims that are consumed by the inner phase
         // This integration is validated through the successful proof generation and verification
@@ -183,14 +183,14 @@ mod tests {
     fn test_spartan_proof_challenger_consistency() {
         // Test challenger state management across prove/verify
         let instance = R1CSInstance::simple_test().unwrap();
-
+        
         // Use same challenger for prove and verify (simulating Fiat-Shamir)
         let mut challenger = Challenger::new();
         let proof = SpartanProof::prove(instance, &mut challenger);
-
+        
         // Reset challenger to simulate verifier's independent transcript
         let mut verifier_challenger = Challenger::new();
-
+        
         // Verification should work with fresh challenger
         proof.verify(&mut verifier_challenger);
     }
@@ -200,19 +200,19 @@ mod tests {
         // Test that compute_bound_matrices integration works correctly
         let instance = R1CSInstance::simple_test().unwrap();
         let mut challenger = Challenger::new();
-
+        
         let proof = SpartanProof::prove(instance.clone(), &mut challenger);
-
+        
         // Verify that bound matrices computation succeeded during proving
         // (This is tested implicitly by successful proof generation)
-
-        // Test bound matrices computation directly
-        let r_x_point: Vec<crate::Fp4> = vec![]; // Simple test has 1 constraint, needs 0 variables (log₂(1) = 0)
+        
+        // Test bound matrices computation directly 
+        let r_x_point: Vec<crate::Fp4> = vec![];  // Simple test has 1 constraint, needs 0 variables (log₂(1) = 0)
         let result = instance.compute_bound_matrices(&r_x_point);
         assert!(result.is_ok());
-
+        
         let (bound_a, bound_b, bound_c) = result.unwrap();
-        assert_eq!(bound_a.len(), 8); // Column dimension
+        assert_eq!(bound_a.len(), 8);  // Column dimension
         assert_eq!(bound_b.len(), 8);
         assert_eq!(bound_c.len(), 8);
     }
@@ -222,42 +222,42 @@ mod tests {
         // Test that SpartanProof structure is consistent
         let instance = R1CSInstance::simple_test().unwrap();
         let mut challenger = Challenger::new();
-
+        
         let proof = SpartanProof::prove(instance, &mut challenger);
-
+        
         // Test proof creation and accessors
         let outer_proof = proof.outer_sumcheck_proof();
         let inner_proof = proof.inner_sumcheck_proof();
-
+        
         // Verify proof structure exists and is consistent
         // (Fields are private, so we test behavior instead of direct access)
-
+        
         // Test proof can be created manually
         let manual_proof = SpartanProof::new(outer_proof.clone(), inner_proof.clone());
         assert_eq!(manual_proof.outer_sumcheck_proof(), outer_proof);
         assert_eq!(manual_proof.inner_sumcheck_proof(), inner_proof);
     }
 
-    #[test]
+    #[test] 
     fn test_spartan_proof_with_different_r1cs_sizes() {
         // Test with both simple and multi-constraint instances
         let simple_instance = R1CSInstance::simple_test().unwrap();
         let multi_instance = R1CSInstance::multi_constraint_test().unwrap();
-
+        
         let mut challenger1 = Challenger::new();
         let mut challenger2 = Challenger::new();
-
+        
         // Both should generate valid proofs
         let simple_proof = SpartanProof::prove(simple_instance, &mut challenger1);
         let multi_proof = SpartanProof::prove(multi_instance, &mut challenger2);
-
+        
         // Both should verify successfully
         let mut verifier1 = Challenger::new();
         let mut verifier2 = Challenger::new();
-
+        
         simple_proof.verify(&mut verifier1);
         multi_proof.verify(&mut verifier2);
-
+        
         // Both proof types should have consistent structure and both verify successfully
         // Differences in constraint sizes are handled internally by the protocol
     }
@@ -267,12 +267,12 @@ mod tests {
         // Test that field promotions work correctly in the protocol
         let instance = R1CSInstance::simple_test().unwrap();
         let mut challenger = Challenger::new();
-
+        
         let proof = SpartanProof::prove(instance, &mut challenger);
-
+        
         // Field consistency is tested through successful proof generation and verification
         // The protocol handles Fp → Fp4 promotion correctly throughout
-
+        
         // Verify proof verification completes (tests field consistency throughout)
         let mut verifier = Challenger::new();
         proof.verify(&mut verifier);

@@ -2,6 +2,8 @@ use p3_field::PrimeCharacteristicRing;
 use std::ops::{Index, Range};
 
 use crate::utils::Fp4;
+
+#[derive(Clone)]
 pub struct EqEvals<'a> {
     pub point: &'a [Fp4],
     pub coeffs: Vec<Fp4>,
