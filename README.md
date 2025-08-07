@@ -1,76 +1,119 @@
 # Helix
 
-A Rust implementation of cryptographic primitives for zero-knowledge proof systems, focusing on multilinear extensions (MLEs), polynomial commitments, and Merkle tree constructions.
+A work-in-progress Rust implementation of the Spartan zkSNARK protocol for proving satisfiability of Rank-1 Constraint Systems (R1CS). Built on multilinear extensions (MLEs), sum-check protocols, and efficient sparse polynomial operations.
 
 ## Overview
 
-Helix provides core cryptographic building blocks for constructing efficient zero-knowledge proof systems. The library implements:
+Helix implements the Spartan zkSNARK protocol for proving satisfiability of Rank-1 Constraint Systems (R1CS). The library provides:
 
-- **Multilinear Extensions (MLEs)**: Polynomial representations supporting efficient evaluation over extension fields
-- **WHIR Commitment Scheme**: A polynomial commitment protocol with configurable rates  
-- **Merkle Trees**: Cryptographic hash trees with BLAKE3 for secure data commitment
-- **Equality Polynomials**: Efficient computation of equality check polynomials over hypercubes
-- **Challenger**: Fiat-Shamir transformation utilities for interactive proof protocols
+- **R1CS Constraint Systems**: Complete implementation with sparse matrix representation
+- **Sum-Check Protocols**: Outer and inner sum-check with Fiat-Shamir transformation
+- **Sparse Multilinear Extensions**: Memory-efficient O(nnz) polynomial operations
+- **Spartan Proof Structure**: Two-phase proving for R1CS satisfaction (with placeholder commitments)
+- **Multilinear Extensions (MLEs)**: Polynomial representations over extension fields
+- **Equality Polynomials**: Tensor product expansions for hypercube evaluations
+- **Supporting Utilities**: Challenger, Merkle trees, and field arithmetic
 
-## Features
+## Current Features
 
-- Built on the BabyBear finite field (p3-baby-bear)
-- Extension field arithmetic with 4-degree binomial extensions
-- BLAKE3 hash function integration for cryptographic security
-- Comprehensive test coverage with correctness verification
-- Memory-efficient polynomial evaluation algorithms
+- **Foundation**: Built on the BabyBear finite field (p3-baby-bear) with Fp4 extensions
+- **R1CS Systems**: Complete constraint system with sparse matrix operations
+- **Sum-Check Protocols**: Outer and inner protocols for constraint satisfaction proving
+- **Sparse Polynomials**: Memory-efficient O(nnz) operations instead of O(n²) dense representation
+- **Cryptographic Utilities**: BLAKE3-based Merkle trees and Fiat-Shamir challenger
+- **Comprehensive Testing**: Unit tests with mathematical correctness verification
+
+## Planned Features
+
+- **Polynomial Commitment Schemes**: Real cryptographic commitments (currently using placeholder)
+- **Zero-Knowledge**: Privacy-preserving proofs with witness hiding
+- **Performance Optimizations**: Parallelization and hardware acceleration
+- **Complete Verification**: Standalone verifier with public input handling
 
 ## Dependencies
 
-- `p3-baby-bear`: BabyBear finite field implementation
+- `p3-baby-bear`: BabyBear finite field implementation  
 - `p3-field`: Generic field arithmetic traits and utilities
+- `p3-monty-31`: Montgomery arithmetic optimizations
 - `blake3`: Fast cryptographic hash function
+- `serde` & `serde_json`: Serialization framework
 - `anyhow`: Error handling utilities
-- `serde`: Serialization framework
+
+### Development Dependencies
+- `proptest`: Property-based testing framework
 
 ## Core Components
 
-### Multilinear Extensions (`src/utils/polynomial.rs`)
+### R1CS Constraint Systems (`src/spartan/r1cs.rs`)
 
-The `MLE` struct represents multilinear polynomials that can be efficiently evaluated at points in extension fields:
+Create and verify Rank-1 Constraint Systems with sparse matrix representation:
 
 ```rust
+use helix::spartan::{R1CS, R1CSInstance, Witness};
+
+// Create a test R1CS instance: x * y = z
+let (r1cs, witness) = R1CS::simple_test_instance()?;
+let instance = R1CSInstance::new(r1cs, witness)?;
+
+// Verify constraints are satisfied
+assert!(instance.verify()?);
+```
+
+### Spartan Proof Generation (`src/spartan/prover.rs`)
+
+Generate proofs for R1CS satisfaction using sum-check protocols:
+
+```rust
+use helix::spartan::SpartanProof;
+use helix::challenger::Challenger;
+
+let instance = R1CSInstance::simple_test()?;
+let mut challenger = Challenger::new();
+
+// Generate Spartan proof (uses dummy commitments currently)
+let proof = SpartanProof::prove(instance, &mut challenger);
+
+// Verify the proof structure
+let mut verifier = Challenger::new(); 
+proof.verify(&mut verifier);
+```
+
+### Sum-Check Protocols (`src/spartan/sumcheck.rs`)
+
+Interactive proof protocols for polynomial constraints:
+
+```rust
+use helix::spartan::sumcheck::{OuterSumCheckProof, InnerSumCheckProof};
+
+// Outer sum-check proves R1CS constraint satisfaction
+// Inner sum-check verifies evaluation claims
+// Both use Fiat-Shamir for non-interactivity
+```
+
+### Sparse Multilinear Extensions (`src/spartan/sparse.rs`)
+
+Memory-efficient sparse polynomial operations:
+
+```rust
+use helix::spartan::sparse::SparseMLE;
+
+let sparse_mle = SparseMLE::new(sparse_coefficients)?;
+
+// Bind first half of variables for sum-check
+let bound_mle = sparse_mle.bind_first_half_variables(&eq_evals)?;
+```
+
+### Multilinear Extensions (`src/utils/polynomial.rs`)
+
+Dense multilinear polynomials with evaluation and folding:
+
+```rust
+use helix::utils::polynomial::MLE;
+
 let coeffs = vec![BabyBear::new(1), BabyBear::new(2), BabyBear::new(3), BabyBear::new(4)];
 let mle = MLE::new(coeffs);
 let point = vec![Fp4::from_u32(5), Fp4::from_u32(7)];
 let result = mle.evaluate(&point);
-```
-
-### WHIR Commitments (`src/prover.rs`)
-
-The `WHIRCommitment` struct implements a polynomial commitment scheme:
-
-```rust
-let code = vec![BabyBear::new(1), BabyBear::new(2)];
-let merkle_tree = MerkleTree::new(code.clone())?;
-let mut commitment = WHIRCommitment::new(code, merkle_tree, 2);
-commitment.commit(&domain_evals, None)?;
-```
-
-### Merkle Trees (`src/utils/merkle_tree.rs`)
-
-Secure commitment to vectors of field elements with path verification:
-
-```rust
-let leaves = vec![BabyBear::new(1), BabyBear::new(2), BabyBear::new(3), BabyBear::new(4)];
-let tree = MerkleTree::new(leaves)?;
-let path = tree.get_path(0);
-tree.verify_path(0, path)?;
-```
-
-### Equality Polynomials (`src/utils/eq.rs`)
-
-Efficient computation of equality check polynomials using tensor product expansions:
-
-```rust
-let point = vec![Fp4::from_u32(3), Fp4::from_u32(5)];
-let eq_evals = EqEvals::gen_from_point(&point);
-// eq_evals.coeffs contains the multilinear extension coefficients
 ```
 
 ## Building
@@ -86,21 +129,59 @@ cargo test
 ```
 
 The test suite includes comprehensive correctness verification for:
-- Multilinear extension evaluation algorithms
+- R1CS constraint satisfaction and witness validation
+- Sum-check protocol correctness (outer and inner phases)
+- Sparse polynomial operations and matrix bindings
+- Multilinear extension evaluation and folding algorithms
 - Equality polynomial tensor product expansions  
 - Merkle tree construction and path verification
 - Field arithmetic operations
+
+## Implementation Status
+
+This implementation provides a solid foundation for the Spartan zkSNARK protocol with several key components complete:
+
+### ✅ **Fully Implemented**
+- **R1CS Constraint Systems**: Complete with sparse matrix representation and witness handling
+- **Sum-Check Protocols**: Both outer (R1CS satisfaction) and inner (evaluation claims) protocols
+- **Sparse Multilinear Extensions**: Memory-efficient O(nnz) polynomial operations  
+- **Supporting Utilities**: MLE, equality polynomials, Merkle trees, Fiat-Shamir challenger
+- **Mathematical Foundations**: BabyBear field arithmetic with Fp4 extension field support
+
+### ⚠️ **Partially Implemented**  
+- **Spartan Prover**: Core proof structure exists but uses placeholder polynomial commitments
+- **Verification**: Basic verification logic present but lacks complete public input handling
+- **Polynomial Commitments**: Interface defined but only dummy implementation provided
+
+### ❌ **Not Yet Implemented**
+- **Real Polynomial Commitment Scheme**: Currently uses placeholder that accepts all proofs
+- **Zero-Knowledge Features**: No privacy guarantees, witness information is leaked
+- **Spark Protocol**: Referenced but not implemented (would handle commitment openings)
+- **Complete Verifier**: Standalone verifier module with full public input support
+- **Performance Optimizations**: No parallelization or hardware-specific optimizations
+
+### Security Notice
+
+⚠️ **This implementation is for educational and research purposes only.** The dummy polynomial commitment scheme provides no cryptographic security guarantees. Do not use in production without implementing a real commitment scheme.
 
 ## Architecture
 
 The library is organized into two main modules:
 
-- `prover`: High-level proof system components and commitment schemes
-- `utils`: Low-level cryptographic primitives and field operations
-  - `polynomial`: Multilinear extension implementations
-  - `eq`: Equality polynomial computations
-  - `merkle_tree`: Cryptographic commitment trees
-  - `challenger`: Fiat-Shamir challenge generation
+### `src/spartan/` - Spartan zkSNARK Protocol
+- `r1cs.rs`: R1CS constraint systems and witness handling
+- `prover.rs`: Spartan proof generation and verification logic  
+- `sumcheck.rs`: Sum-check protocols (outer, inner, and planned spark)
+- `sparse.rs`: Sparse multilinear extension operations
+- `commitment.rs`: Polynomial commitment trait (dummy implementation currently)
+- `univariate.rs`: Univariate polynomial utilities for sum-check rounds
+- `error.rs`: Spartan-specific error types
+
+### `src/utils/` - Supporting Cryptographic Primitives
+- `polynomial.rs`: Dense multilinear extension (MLE) implementations
+- `eq.rs`: Equality polynomial computations with tensor products
+- `merkle_tree.rs`: BLAKE3-based Merkle tree for commitments
+- `challenger.rs`: Fiat-Shamir challenge generation
 
 ## Field Configuration
 
@@ -112,8 +193,33 @@ The library uses type aliases for consistent field usage:
 ## Security
 
 - All cryptographic operations use the BLAKE3 hash function
-- Merkle trees require power-of-two leaf counts for security
+- Merkle trees require power-of-two leaf counts for security  
 - Field operations are constant-time where supported by underlying implementations
+- ⚠️ **Current limitation**: Dummy polynomial commitments provide no security
+
+## Future Vision
+
+This implementation serves as the foundation for a more comprehensive zero-knowledge proving system. The planned roadmap includes:
+
+### **WHIR Integration**
+Integration with the WHIR polynomial commitment scheme for ultra-fast verification (290-610 microseconds). WHIR's Reed-Solomon proximity testing approach would replace the current dummy commitments with cryptographically secure polynomial commitments.
+
+### **Twist & Shout Memory Checking**  
+Implementation of revolutionary memory checking protocols using one-hot addressing:
+- **Twist**: Read-write memory consistency with timestamps
+- **Shout**: Batch read-only lookups for instruction fetches
+- Both protocols integrate naturally with sum-check, avoiding expensive permutation arguments
+
+### **Complete System**
+The ultimate goal is a fully integrated system combining:
+- Spartan's transparent zkSNARK protocol (no trusted setup)
+- WHIR's blazing-fast polynomial commitment verification
+- Twist & Shout's efficient memory checking
+- Zero-knowledge features for privacy
+
+This combination would create a high-performance zkVM suitable for production use while maintaining the simplicity and auditability that makes these protocols attractive.
+
+For detailed technical specifications of the complete vision, see the [comprehensive implementation guide](context/total_plan/spartan-whir-twist-shout-guide.md).
 
 ## License
 
