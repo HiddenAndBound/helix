@@ -399,9 +399,8 @@ pub fn compute_inner_round_batched(
         // g(2): use multilinear polynomial identity
         round_coeffs[2] += (gamma * (a_bound[i << 1] + a_bound[i << 1 | 1].double())
             + gamma_squared * (b_bound[i << 1] + b_bound[i << 1 | 1].double())
-            + gamma_cubed
-                * (c_bound[i << 1] + c_bound[i << 1 | 1].double()))
-                * (Fp4::from(z[i << 1]) + Fp4::from(z[i << 1 | 1]).double());
+            + gamma_cubed * (c_bound[i << 1] + c_bound[i << 1 | 1].double()))
+            * (Fp4::from(z[i << 1]) + Fp4::from(z[i << 1 | 1]).double());
     }
 
     // g(1): derived from sum-check constraint
@@ -440,9 +439,8 @@ pub fn compute_inner_first_round_batched(
         // g(2): use multilinear polynomial identity
         round_coeffs[2] += (gamma * (a_bound[i << 1] + a_bound[i << 1 | 1].double())
             + gamma_squared * (b_bound[i << 1] + b_bound[i << 1 | 1].double())
-            + gamma_cubed
-                * (c_bound[i << 1] + c_bound[i << 1 | 1].double()))
-                * (Fp4::from(z[i << 1]) + Fp4::from(z[i << 1 | 1]).double());
+            + gamma_cubed * (c_bound[i << 1] + c_bound[i << 1 | 1].double()))
+            * (Fp4::from(z[i << 1]) + Fp4::from(z[i << 1 | 1]).double());
     }
 
     // g(1): derived from sum-check constraint
@@ -495,29 +493,17 @@ impl SparkSumCheckProof {
         let mut round_proofs = Vec::new();
         let mut round_challenges = Vec::new();
 
-        // Extract and clone initial MLEs
-        let mut val_a_folded = metadatas[0].val().clone();
-        let mut val_b_folded = metadatas[1].val().clone();
-        let mut val_c_folded = metadatas[2].val().clone();
-
-        let mut e_rx_a_folded = oracle_pairs[0].0.clone();
-        let mut e_ry_a_folded = oracle_pairs[0].1.clone();
-        let mut e_rx_b_folded = oracle_pairs[1].0.clone();
-        let mut e_ry_b_folded = oracle_pairs[1].1.clone();
-        let mut e_rx_c_folded = oracle_pairs[2].0.clone();
-        let mut e_ry_c_folded = oracle_pairs[2].1.clone();
-
         // Process first round
         let round_proof = compute_spark_first_round_batched(
-            &val_a_folded,
-            &val_b_folded,
-            &val_c_folded,
-            &e_rx_a_folded,
-            &e_ry_a_folded,
-            &e_rx_b_folded,
-            &e_ry_b_folded,
-            &e_rx_c_folded,
-            &e_ry_c_folded,
+            &metadatas[0].val(),
+            &metadatas[1].val(),
+            &metadatas[2].val(),
+            &oracle_pairs[0].0,
+            &oracle_pairs[0].1,
+            &oracle_pairs[1].0,
+            &oracle_pairs[1].1,
+            &oracle_pairs[2].0,
+            &oracle_pairs[2].1,
             gamma,
             current_claim,
             rounds,
@@ -531,15 +517,15 @@ impl SparkSumCheckProof {
         current_claim = round_proof.evaluate(round_challenge);
 
         // Fold MLEs for the first time
-        val_a_folded = val_a_folded.fold_in_place(round_challenge);
-        val_b_folded = val_b_folded.fold_in_place(round_challenge);
-        val_c_folded = val_c_folded.fold_in_place(round_challenge);
-        e_rx_a_folded = e_rx_a_folded.fold_in_place(round_challenge);
-        e_ry_a_folded = e_ry_a_folded.fold_in_place(round_challenge);
-        e_rx_b_folded = e_rx_b_folded.fold_in_place(round_challenge);
-        e_ry_b_folded = e_ry_b_folded.fold_in_place(round_challenge);
-        e_rx_c_folded = e_rx_c_folded.fold_in_place(round_challenge);
-        e_ry_c_folded = e_ry_c_folded.fold_in_place(round_challenge);
+        let mut val_a_folded = metadatas[0].val().fold_in_place(round_challenge);
+        let mut val_b_folded = metadatas[1].val().fold_in_place(round_challenge);
+        let mut val_c_folded = metadatas[2].val().fold_in_place(round_challenge);
+        let mut e_rx_a_folded = oracle_pairs[0].0.fold_in_place(round_challenge);
+        let mut e_ry_a_folded = oracle_pairs[0].1.fold_in_place(round_challenge);
+        let mut e_rx_b_folded = oracle_pairs[1].0.fold_in_place(round_challenge);
+        let mut e_ry_b_folded = oracle_pairs[1].1.fold_in_place(round_challenge);
+        let mut e_rx_c_folded = oracle_pairs[2].0.fold_in_place(round_challenge);
+        let mut e_ry_c_folded = oracle_pairs[2].1.fold_in_place(round_challenge);
 
         // Process remaining rounds
         for round in 1..rounds {
@@ -595,12 +581,7 @@ impl SparkSumCheckProof {
     }
 
     /// Verifies the inner sum-check proof. Panics if verification fails.
-    pub fn verify(
-        &self,
-        evaluation_claims: [Fp4; 3],
-        gamma: Fp4,
-        challenger: &mut Challenger,
-    ) {
+    pub fn verify(&self, evaluation_claims: [Fp4; 3], gamma: Fp4, challenger: &mut Challenger) {
         let rounds = self.round_proofs.len();
 
         // Recompute the batched claim
@@ -624,15 +605,24 @@ impl SparkSumCheckProof {
         }
 
         // Final check: batched evaluation of final values must match the final claim
-        let [val_a, e_rx_a, e_ry_a, val_b, e_rx_b, e_ry_b, val_c, e_rx_c, e_ry_c] = self.final_evals;
+        let [
+            val_a,
+            e_rx_a,
+            e_ry_a,
+            val_b,
+            e_rx_b,
+            e_ry_b,
+            val_c,
+            e_rx_c,
+            e_ry_c,
+        ] = self.final_evals;
 
         let final_eval_a = val_a * e_rx_a * e_ry_a;
         let final_eval_b = val_b * e_rx_b * e_ry_b;
         let final_eval_c = val_c * e_rx_c * e_ry_c;
 
-        let expected_claim = gamma * final_eval_a
-            + gamma.square() * final_eval_b
-            + gamma.cube() * final_eval_c;
+        let expected_claim =
+            gamma * final_eval_a + gamma.square() * final_eval_b + gamma.cube() * final_eval_c;
 
         assert_eq!(current_claim, expected_claim);
     }
@@ -1171,30 +1161,30 @@ mod tests {
     fn test_spark_sumcheck_prove_verify() {
         // Create dummy metadata and oracles for three matrices
         let read_ts = vec![Fp::ZERO, Fp::ONE];
-        let final_ts = vec![Fp::ONE, Fp::from(2u32)];
+        let final_ts = vec![Fp::ONE, Fp::from_u32(2u32)];
         let ts = TimeStamps::new(read_ts, final_ts).unwrap();
 
         let metadatas = [
             SpartanMetadata::new(
-                MLE::new(vec![Fp::from(1u32), Fp::from(2u32)]),
-                MLE::new(vec![Fp::from(0u32), Fp::from(1u32)]),
-                MLE::new(vec![Fp::from(1u32), Fp::from(0u32)]),
+                MLE::new(vec![Fp::from_u32(1u32), Fp::from_u32(2u32)]),
+                MLE::new(vec![Fp::from_u32(0u32), Fp::from_u32(1u32)]),
+                MLE::new(vec![Fp::from_u32(1u32), Fp::from_u32(0u32)]),
                 ts.clone(),
                 ts.clone(),
             )
             .unwrap(),
             SpartanMetadata::new(
-                MLE::new(vec![Fp::from(3u32), Fp::from(4u32)]),
-                MLE::new(vec![Fp::from(1u32), Fp::from(0u32)]),
-                MLE::new(vec![Fp::from(0u32), Fp::from(1u32)]),
+                MLE::new(vec![Fp::from_u32(3u32), Fp::from_u32(4u32)]),
+                MLE::new(vec![Fp::from_u32(1u32), Fp::from_u32(0u32)]),
+                MLE::new(vec![Fp::from_u32(0u32), Fp::from_u32(1u32)]),
                 ts.clone(),
                 ts.clone(),
             )
             .unwrap(),
             SpartanMetadata::new(
-                MLE::new(vec![Fp::from(5u32), Fp::from(6u32)]),
-                MLE::new(vec![Fp::from(0u32), Fp::from(0u32)]),
-                MLE::new(vec![Fp::from(1u32), Fp::from(1u32)]),
+                MLE::new(vec![Fp::from_u32(5u32), Fp::from_u32(6u32)]),
+                MLE::new(vec![Fp::from_u32(0u32), Fp::from_u32(0u32)]),
+                MLE::new(vec![Fp::from_u32(1u32), Fp::from_u32(1u32)]),
                 ts.clone(),
                 ts.clone(),
             )
@@ -1203,22 +1193,26 @@ mod tests {
 
         let oracle_pairs = [
             (
-                MLE::new(vec![Fp4::from(10u32), Fp4::from(11u32)]),
-                MLE::new(vec![Fp4::from(12u32), Fp4::from(13u32)]),
+                MLE::new(vec![Fp4::from_u32(10u32), Fp4::from_u32(11u32)]),
+                MLE::new(vec![Fp4::from_u32(12u32), Fp4::from_u32(13u32)]),
             ),
             (
-                MLE::new(vec![Fp4::from(14u32), Fp4::from(15u32)]),
-                MLE::new(vec![Fp4::from(16u32), Fp4::from(17u32)]),
+                MLE::new(vec![Fp4::from_u32(14u32), Fp4::from_u32(15u32)]),
+                MLE::new(vec![Fp4::from_u32(16u32), Fp4::from_u32(17u32)]),
             ),
             (
-                MLE::new(vec![Fp4::from(18u32), Fp4::from(19u32)]),
-                MLE::new(vec![Fp4::from(20u32), Fp4::from(21u32)]),
+                MLE::new(vec![Fp4::from_u32(18u32), Fp4::from_u32(19u32)]),
+                MLE::new(vec![Fp4::from_u32(20u32), Fp4::from_u32(21u32)]),
             ),
         ];
 
         // Dummy evaluation claims and gamma
-        let evaluation_claims = [Fp4::from(1u32), Fp4::from(2u32), Fp4::from(3u32)];
-        let gamma = Fp4::from(7u32);
+        let evaluation_claims = [
+            Fp4::from_u32(1u32),
+            Fp4::from_u32(2u32),
+            Fp4::from_u32(3u32),
+        ];
+        let gamma = Fp4::from_u32(7u32);
 
         // Create separate challengers for prover and verifier
         let mut prover_challenger = Challenger::new();
@@ -1234,11 +1228,7 @@ mod tests {
         );
 
         // Verify the proof
-        proof.verify(
-            evaluation_claims,
-            gamma,
-            &mut verifier_challenger,
-        );
+        proof.verify(evaluation_claims, gamma, &mut verifier_challenger);
 
         // The test passes if no assertions fail
     }
