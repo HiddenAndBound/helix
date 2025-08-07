@@ -30,8 +30,6 @@
 //! - Inner: g(x) = A(x)·B(x)  
 //! - Spark: g(x) = A(x)·B(x)·C(x)
 
-use std::io::SeekFrom;
-
 use p3_field::PrimeCharacteristicRing;
 
 use crate::{
@@ -40,7 +38,7 @@ use crate::{
     eq::EqEvals,
     polynomial::MLE,
     spartan::{
-        sparse::{SparseMLE, SpartanMetadata, TimeStamps},
+        spark::sparse::{SparseMLE, SpartanMetadata, TimeStamps},
         univariate::UnivariatePoly,
     },
 };
@@ -946,7 +944,7 @@ mod tests {
     use super::*;
     use crate::challenger::Challenger;
     use crate::spartan::R1CSInstance;
-    use crate::spartan::sparse::TimeStamps;
+    use crate::spartan::spark::sparse::TimeStamps;
 
     #[test]
     fn test_outer_sumcheck_prove_verify_simple() {
