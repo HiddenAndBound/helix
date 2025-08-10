@@ -402,6 +402,16 @@ impl TimeStamps {
 
         TimeStamps::new(read_ts, final_ts)
     }
+    
+    /// Returns a reference to the read timestamps
+    pub fn read_ts(&self) -> &[BabyBear] {
+        &self.read_ts
+    }
+    
+    /// Returns a reference to the final timestamps  
+    pub fn final_ts(&self) -> &[BabyBear] {
+        &self.final_ts
+    }
 }
 
 #[cfg(test)]

@@ -78,52 +78,175 @@ mod tests {
     use super::*;
     use p3_field::PrimeCharacteristicRing;
 
-    #[test]
-    fn test_fingerprints_generate_simple() {
-        // Simple test: 2 reads from a 3-entry table
-        let indices = vec![Fp::from_usize(0), Fp::from_usize(2)]; // Read from addr 0 and 2
-        let values = vec![Fp::from_usize(10), Fp::from_usize(30)]; // Values at those addresses
-        let table = vec![
+    #[test] 
+    fn test_memory_consistency_property() {
+        use crate::spartan::spark::sparse::TimeStamps;
+        
+        // Step 1: Create memory table and access pattern  
+        let memory_table = vec![
             Fp4::from(Fp::from_usize(10)), // table[0] = 10
             Fp4::from(Fp::from_usize(20)), // table[1] = 20
-            Fp4::from(Fp::from_usize(30)), // table[2] = 30
+            Fp4::from(Fp::from_usize(30)), // table[2] = 30  
+            Fp4::from(Fp::from_usize(40)), // table[3] = 40
         ];
-        let read_ts = vec![Fp::from_usize(1), Fp::from_usize(3)]; // Read timestamps
-        let final_ts = vec![
-            Fp::from_usize(2), // Final timestamp for addr 0
-            Fp::from_usize(0), // Final timestamp for addr 1 (not accessed)
-            Fp::from_usize(4), // Final timestamp for addr 2
+        
+        // Memory access pattern: read from addresses [0, 1, 0, 2]
+        let read_addresses_fp = vec![
+            Fp::from_usize(0), // Access address 0 first time
+            Fp::from_usize(1), // Access address 1 first time  
+            Fp::from_usize(0), // Access address 0 second time
+            Fp::from_usize(2), // Access address 2 first time
         ];
-        let gamma = Fp4::from(Fp::from_usize(7)); // Random challenge γ
-        let tau = Fp4::from(Fp::from_usize(13)); // Random challenge τ
+        let read_values = vec![
+            Fp::from_usize(10), // Value at address 0
+            Fp::from_usize(20), // Value at address 1
+            Fp::from_usize(10), // Value at address 0 (unchanged)
+            Fp::from_usize(30), // Value at address 2
+        ];
+        
+        // Step 2: Use TimeStamps::compute to generate correct timestamps
+        let max_address_space = 4; // Power of 2 containing addresses 0,1,2,3
+        let timestamps = TimeStamps::compute(&read_addresses_fp, max_address_space).unwrap();
+        
+        // Extract read_ts and final_ts from TimeStamps using getter methods
+        let read_timestamps: Vec<Fp> = timestamps.read_ts().iter().take(read_addresses_fp.len()).cloned().collect();
+        let final_timestamps: Vec<Fp> = timestamps.final_ts().to_vec();
+        
+        // Step 3: Set up challenges
+        let gamma = Fp4::from(Fp::from_usize(7));
+        let tau = Fp4::from(Fp::from_usize(11));
 
-        let fingerprints =
-            Fingerprints::generate(indices, values, table, read_ts, final_ts, gamma, tau);
+        // Step 4: Generate all four fingerprint multisets using correct timestamps
+        let fingerprints = Fingerprints::generate(
+            read_addresses_fp,
+            read_values,
+            memory_table,
+            read_timestamps, 
+            final_timestamps,
+            gamma,
+            tau,
+        );
 
-        // Check that all fingerprint vectors have expected lengths
-        assert_eq!(fingerprints.w_init.len(), 3); // Initial state for 3 table entries
-        assert_eq!(fingerprints.r.len(), 2); // 2 read operations
-        assert_eq!(fingerprints.w.len(), 2); // 2 write operations
-        assert_eq!(fingerprints.s.len(), 3); // Final state for 3 table entries
+        // Step 5: Compute products of the multisets
+        // Memory consistency property: ∏(I ∪ W) = ∏(R ∪ F)
+        
+        // Product of w_init ∪ w (initial state ∪ writes)
+        let mut product_initial_and_writes = Fp4::ONE;
+        for &val in &fingerprints.w_init {
+            product_initial_and_writes *= val;
+        }
+        for &val in &fingerprints.w {
+            product_initial_and_writes *= val;
+        }
+        
+        // Product of r ∪ s (reads ∪ final state)
+        let mut product_reads_and_final = Fp4::ONE;
+        for &val in &fingerprints.r {
+            product_reads_and_final *= val;
+        }
+        for &val in &fingerprints.s {
+            product_reads_and_final *= val;
+        }
+        
+        // Step 6: Test the core memory consistency property
+        // This should hold for any valid memory trace with correct timestamps
+        assert_eq!(product_initial_and_writes, product_reads_and_final,
+                   "Memory consistency failed: ∏(w_init ∪ w) ≠ ∏(r ∪ s)");
+        
+        // Step 7: Verify the fingerprint vectors have correct sizes
+        assert_eq!(fingerprints.w_init.len(), 4); // 4 memory locations
+        assert_eq!(fingerprints.r.len(), 4);      // 4 read operations
+        assert_eq!(fingerprints.w.len(), 4);      // 4 write operations
+        assert_eq!(fingerprints.s.len(), 4);      // 4 memory locations (final state)
+    }
 
-        // Verify some specific fingerprint calculations using h_γ(a,v,t) = a·γ² + v·γ + t - τ
-        let gamma_squared = gamma * gamma;
+    #[test]
+    fn test_larger_memory_trace() {
+        use crate::spartan::spark::sparse::TimeStamps;
+        
+        // Step 1: Create a larger memory trace with multiple operations
+        // Memory table: 8 locations with initial values 
+        let memory_table = vec![
+            Fp4::from(Fp::from_usize(100)), // table[0] = 100
+            Fp4::from(Fp::from_usize(200)), // table[1] = 200  
+            Fp4::from(Fp::from_usize(300)), // table[2] = 300
+            Fp4::from(Fp::from_usize(400)), // table[3] = 400
+            Fp4::from(Fp::from_usize(500)), // table[4] = 500
+            Fp4::from(Fp::from_usize(600)), // table[5] = 600
+            Fp4::from(Fp::from_usize(700)), // table[6] = 700
+            Fp4::from(Fp::from_usize(800)), // table[7] = 800
+        ];
+        
+        // Complex memory access pattern: [0, 1, 0, 2, 3, 1, 4, 0]
+        let read_addresses_fp = vec![
+            Fp::from_usize(0), // Access address 0 first time
+            Fp::from_usize(1), // Access address 1 first time  
+            Fp::from_usize(0), // Access address 0 second time
+            Fp::from_usize(2), // Access address 2 first time
+            Fp::from_usize(3), // Access address 3 first time
+            Fp::from_usize(1), // Access address 1 second time
+            Fp::from_usize(4), // Access address 4 first time
+            Fp::from_usize(0), // Access address 0 third time
+        ];
+        let read_values = vec![
+            Fp::from_usize(100), // Value at address 0
+            Fp::from_usize(200), // Value at address 1
+            Fp::from_usize(100), // Value at address 0 (unchanged)
+            Fp::from_usize(300), // Value at address 2
+            Fp::from_usize(400), // Value at address 3
+            Fp::from_usize(200), // Value at address 1 (unchanged)
+            Fp::from_usize(500), // Value at address 4
+            Fp::from_usize(100), // Value at address 0 (unchanged)
+        ];
+        
+        // Step 2: Use TimeStamps::compute to generate correct timestamps
+        let max_address_space = 8; // Power of 2 containing all addresses
+        let timestamps = TimeStamps::compute(&read_addresses_fp, max_address_space).unwrap();
+        
+        // Extract read_ts and final_ts from TimeStamps using getter methods
+        let read_timestamps: Vec<Fp> = timestamps.read_ts().iter().take(read_addresses_fp.len()).cloned().collect();
+        let final_timestamps: Vec<Fp> = timestamps.final_ts().to_vec();
+        
+        // Step 3: Set up challenges 
+        let gamma = Fp4::from(Fp::from_usize(13));
+        let tau = Fp4::from(Fp::from_usize(17));
 
-        // w_init[0] should be: (0·γ² + 10·γ + 0) - τ = (0·49 + 10·7 + 0) - 13 = 70 - 13 = 57
-        let addr_0_fp = Fp::ZERO;
-        let value_0_fp4 = Fp4::from(Fp::from_usize(10));
-        let expected_w_init_0 = gamma_squared * addr_0_fp + value_0_fp4 * gamma - tau;
-        assert_eq!(fingerprints.w_init[0], expected_w_init_0);
+        // Step 4: Generate all four fingerprint multisets using correct timestamps
+        let fingerprints = Fingerprints::generate(
+            read_addresses_fp,
+            read_values, 
+            memory_table,
+            read_timestamps,
+            final_timestamps,
+            gamma,
+            tau,
+        );
 
-        // r[0] should be: (0·γ² + 10·γ + 1) - τ = (0·49 + 10·7 + 1) - 13 = 71 - 13 = 58
-        let read_ts_0_fp = Fp::from_usize(1);
-        let value_0_fp = Fp::from_usize(10);
-        let expected_r_0 = gamma_squared * addr_0_fp + gamma * value_0_fp + read_ts_0_fp - tau;
-        assert_eq!(fingerprints.r[0], expected_r_0);
-
-        // w[0] should be: (0·γ² + 10·γ + 2) - τ = (0·49 + 10·7 + 2) - 13 = 72 - 13 = 59
-        let write_ts_0_fp = Fp::from_usize(2);
-        let expected_w_0 = gamma_squared * addr_0_fp + gamma * value_0_fp + write_ts_0_fp - tau;
-        assert_eq!(fingerprints.w[0], expected_w_0);
+        // Step 5: Compute products of the multisets
+        let mut product_initial_and_writes = Fp4::ONE;
+        for &val in &fingerprints.w_init {
+            product_initial_and_writes *= val;
+        }
+        for &val in &fingerprints.w {
+            product_initial_and_writes *= val;
+        }
+        
+        let mut product_reads_and_final = Fp4::ONE;
+        for &val in &fingerprints.r {
+            product_reads_and_final *= val;
+        }
+        for &val in &fingerprints.s {
+            product_reads_and_final *= val;
+        }
+        
+        // Step 6: Test the core memory consistency property
+        assert_eq!(product_initial_and_writes, product_reads_and_final,
+                   "Memory consistency failed: ∏(w_init ∪ w) ≠ ∏(r ∪ s)");
+        
+        // Step 7: Verify the fingerprint vectors have correct sizes
+        assert_eq!(fingerprints.w_init.len(), 8); // 8 memory locations
+        assert_eq!(fingerprints.r.len(), 8);      // 8 read operations
+        assert_eq!(fingerprints.w.len(), 8);      // 8 write operations  
+        assert_eq!(fingerprints.s.len(), 8);      // 8 memory locations (final state)
     }
 }
