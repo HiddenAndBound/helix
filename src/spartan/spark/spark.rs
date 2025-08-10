@@ -3,11 +3,38 @@
 //! This module provides functionality to generate e_rx and e_ry oracles for the Spark
 //! protocol, enabling efficient opening of polynomial commitments to sparse multilinear
 //! extension polynomials.
+//!
+//! ## Key Components
+//! 
+//! - [`SparkOracles`]: Struct containing separate e_rx and e_ry oracles for matrices A, B, and C
+//! - [`generate_spark_opening_oracles`]: Main function to generate all oracles from evaluation point
+//! - [`generate_single_oracle_pair`]: Utility function to generate oracles for a single matrix
 
 use crate::spartan::error::{SparseError, SparseResult};
 use crate::spartan::spark::sparse::SpartanMetadata;
 use crate::utils::{Fp4, eq::EqEvals, polynomial::MLE};
 use p3_field::PrimeField32;
+
+/// Spark oracles for polynomial commitment opening across all three constraint matrices.
+///
+/// Contains separate e_rx and e_ry oracles for matrices A, B, and C, where:
+/// - e_rx oracles map row indices to rx equality polynomial evaluations
+/// - e_ry oracles map column indices to ry equality polynomial evaluations
+#[derive(Debug, Clone)]
+pub struct SparkOracles {
+    /// e_rx oracle for constraint matrix A
+    pub e_rx_a: MLE<Fp4>,
+    /// e_ry oracle for constraint matrix A
+    pub e_ry_a: MLE<Fp4>,
+    /// e_rx oracle for constraint matrix B
+    pub e_rx_b: MLE<Fp4>,
+    /// e_ry oracle for constraint matrix B
+    pub e_ry_b: MLE<Fp4>,
+    /// e_rx oracle for constraint matrix C
+    pub e_rx_c: MLE<Fp4>,
+    /// e_ry oracle for constraint matrix C
+    pub e_ry_c: MLE<Fp4>,
+}
 
 /// Generates e_rx and e_ry oracles for Spark opening of polynomial commitments.
 ///
@@ -24,7 +51,7 @@ use p3_field::PrimeField32;
 /// * `evaluation_point` - Concatenated evaluation point [rx || ry] from sum-check protocol
 ///
 /// # Returns
-/// Array of 3 tuples, each containing (e_rx, e_ry) oracles as MLE<Fp4> for matrices A, B, C
+/// SparkOracles struct containing separate e_rx and e_ry oracles for matrices A, B, C
 ///
 /// # Errors
 /// - `ValidationError` if evaluation_point has odd length (cannot split into rx/ry)
@@ -44,7 +71,7 @@ pub fn generate_spark_opening_oracles(
     metadata_b: &SpartanMetadata,
     metadata_c: &SpartanMetadata,
     evaluation_point: &[Fp4],
-) -> SparseResult<[(MLE<Fp4>, MLE<Fp4>); 3]> {
+) -> SparseResult<SparkOracles> {
     // Validate evaluation point can be split into rx and ry
     if evaluation_point.len() % 2 != 0 {
         return Err(SparseError::ValidationError(format!(
@@ -63,20 +90,43 @@ pub fn generate_spark_opening_oracles(
     let eq_rx = EqEvals::gen_from_point(rx_point);
     let eq_ry = EqEvals::gen_from_point(ry_point);
 
-    // Process each metadata to create oracle pairs
-    let oracle_a = generate_oracle_pair(metadata_a, &eq_rx, &eq_ry)?;
-    let oracle_b = generate_oracle_pair(metadata_b, &eq_rx, &eq_ry)?;
-    let oracle_c = generate_oracle_pair(metadata_c, &eq_rx, &eq_ry)?;
-
-    Ok([oracle_a, oracle_b, oracle_c])
+    // Generate oracles for all three matrices
+    generate_oracle_pair(metadata_a, metadata_b, metadata_c, &eq_rx, &eq_ry)
 }
 
-/// Helper function to generate e_rx and e_ry oracle pair for a single metadata.
+/// Generates e_rx and e_ry oracle pairs for all three constraint matrices.
+///
+/// For each position i in each metadata:
+/// - e_rx[i] = eq_rx[row[i]] (equality polynomial evaluated at row index)
+/// - e_ry[i] = eq_ry[col[i]] (equality polynomial evaluated at column index)
+fn generate_oracle_pair(
+    metadata_a: &SpartanMetadata,
+    metadata_b: &SpartanMetadata,
+    metadata_c: &SpartanMetadata,
+    eq_rx: &EqEvals,
+    eq_ry: &EqEvals,
+) -> SparseResult<SparkOracles> {
+    // Generate oracle pairs for each metadata
+    let (e_rx_a, e_ry_a) = generate_single_oracle_pair(metadata_a, eq_rx, eq_ry)?;
+    let (e_rx_b, e_ry_b) = generate_single_oracle_pair(metadata_b, eq_rx, eq_ry)?;
+    let (e_rx_c, e_ry_c) = generate_single_oracle_pair(metadata_c, eq_rx, eq_ry)?;
+
+    Ok(SparkOracles {
+        e_rx_a,
+        e_ry_a,
+        e_rx_b,
+        e_ry_b,
+        e_rx_c,
+        e_ry_c,
+    })
+}
+
+/// Generates e_rx and e_ry oracle pair for a single metadata.
 ///
 /// For each position i in the metadata:
 /// - e_rx[i] = eq_rx[row[i]] (equality polynomial evaluated at row index)
 /// - e_ry[i] = eq_ry[col[i]] (equality polynomial evaluated at column index)
-fn generate_oracle_pair(
+pub fn generate_single_oracle_pair(
     metadata: &SpartanMetadata,
     eq_rx: &EqEvals,
     eq_ry: &EqEvals,
@@ -168,16 +218,14 @@ mod tests {
         )
         .unwrap();
 
-        // Verify we get 3 oracle pairs
-        assert_eq!(result.len(), 3);
-
-        // Each oracle pair should have MLEs with length matching metadata
-        assert_eq!(result[0].0.len(), metadata_a.len()); // e_rx for A
-        assert_eq!(result[0].1.len(), metadata_a.len()); // e_ry for A
-        assert_eq!(result[1].0.len(), metadata_b.len()); // e_rx for B
-        assert_eq!(result[1].1.len(), metadata_b.len()); // e_ry for B
-        assert_eq!(result[2].0.len(), metadata_c.len()); // e_rx for C
-        assert_eq!(result[2].1.len(), metadata_c.len()); // e_ry for C
+        // Verify we get SparkOracles with all 6 oracle fields
+        // Each oracle should have MLEs with length matching metadata
+        assert_eq!(result.e_rx_a.len(), metadata_a.len()); // e_rx for A
+        assert_eq!(result.e_ry_a.len(), metadata_a.len()); // e_ry for A
+        assert_eq!(result.e_rx_b.len(), metadata_b.len()); // e_rx for B
+        assert_eq!(result.e_ry_b.len(), metadata_b.len()); // e_ry for B
+        assert_eq!(result.e_rx_c.len(), metadata_c.len()); // e_rx for C
+        assert_eq!(result.e_ry_c.len(), metadata_c.len()); // e_ry for C
     }
 
     #[test]
@@ -201,8 +249,8 @@ mod tests {
         let expected_e_rx_0 = Fp4::from_u32(2);
         let expected_e_ry_0 = Fp4::ONE - Fp4::from_u32(3); // (1-3) = -2
 
-        assert_eq!(result[0].0.coeffs()[0], expected_e_rx_0);
-        assert_eq!(result[0].1.coeffs()[0], expected_e_ry_0);
+        assert_eq!(result.e_rx_a.coeffs()[0], expected_e_rx_0);
+        assert_eq!(result.e_ry_a.coeffs()[0], expected_e_ry_0);
     }
 
     #[test]
@@ -230,7 +278,7 @@ mod tests {
         let eq_ry = EqEvals::gen_from_point(&ry_point);
 
         // Should fail because row=2 and col=3 are out of bounds for 2-element EqEvals
-        let result = generate_oracle_pair(&metadata, &eq_rx, &eq_ry);
+        let result = generate_single_oracle_pair(&metadata, &eq_rx, &eq_ry);
         assert!(matches!(result, Err(SparseError::IndexOutOfBounds { .. })));
     }
 
@@ -260,9 +308,12 @@ mod tests {
                 .unwrap();
 
         // Verify structure is correct
-        assert_eq!(result.len(), 3);
-        assert_eq!(result[0].0.len(), 2); // Two non-zero entries in metadata
-        assert_eq!(result[0].1.len(), 2);
+        assert_eq!(result.e_rx_a.len(), 2); // Two non-zero entries in metadata
+        assert_eq!(result.e_ry_a.len(), 2);
+        assert_eq!(result.e_rx_b.len(), 2); // Same metadata used for B
+        assert_eq!(result.e_ry_b.len(), 2);
+        assert_eq!(result.e_rx_c.len(), 2); // Same metadata used for C
+        assert_eq!(result.e_ry_c.len(), 2);
     }
 
     #[test]
@@ -289,8 +340,13 @@ mod tests {
         let expected_e_ry = vec![eq_ry[0], eq_ry[1], eq_ry[0], eq_ry[1]];
 
         for i in 0..4 {
-            assert_eq!(result[0].0.coeffs()[i], expected_e_rx[i]);
-            assert_eq!(result[0].1.coeffs()[i], expected_e_ry[i]);
+            assert_eq!(result.e_rx_a.coeffs()[i], expected_e_rx[i]);
+            assert_eq!(result.e_ry_a.coeffs()[i], expected_e_ry[i]);
+            // All three matrices use the same metadata, so they should have the same values
+            assert_eq!(result.e_rx_b.coeffs()[i], expected_e_rx[i]);
+            assert_eq!(result.e_ry_b.coeffs()[i], expected_e_ry[i]);
+            assert_eq!(result.e_rx_c.coeffs()[i], expected_e_rx[i]);
+            assert_eq!(result.e_ry_c.coeffs()[i], expected_e_ry[i]);
         }
     }
 }
