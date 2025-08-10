@@ -19,6 +19,15 @@ pub struct ProductTree {
     layer_right: Vec<Vec<Fp4>>,
 }
 
+impl ProductTree {
+    pub fn new(layer_left: Vec<Vec<Fp4>>, layer_right: Vec<Vec<Fp4>>) -> Self {
+        Self {
+            layer_left,
+            layer_right,
+        }
+    }
+}
+
 impl Fingerprints {
     pub fn generate(
         indices: Vec<Fp>,
@@ -44,7 +53,7 @@ impl Fingerprints {
             let addr_fp = Fp::from_usize(addr);
             // w_init: (addr, value, t=0): h_γ(addr,value,0) = addr·γ² + value·γ + 0
             w_init[addr] = gamma_squared * addr_fp + value * gamma - tau;
-            // s: (addr, final_value, final_ts): h_γ(addr,value,final_ts) = addr·γ² + value·γ + final_ts  
+            // s: (addr, final_value, final_ts): h_γ(addr,value,final_ts) = addr·γ² + value·γ + final_ts
             // Assume final value is same as initial value from table for read-only memory
             s[addr] = gamma_squared * addr_fp + value * gamma + final_ts[addr] - tau;
         }
@@ -88,7 +97,8 @@ mod tests {
         let gamma = Fp4::from(Fp::from_usize(7)); // Random challenge γ
         let tau = Fp4::from(Fp::from_usize(13)); // Random challenge τ
 
-        let fingerprints = Fingerprints::generate(indices, values, table, read_ts, final_ts, gamma, tau);
+        let fingerprints =
+            Fingerprints::generate(indices, values, table, read_ts, final_ts, gamma, tau);
 
         // Check that all fingerprint vectors have expected lengths
         assert_eq!(fingerprints.w_init.len(), 3); // Initial state for 3 table entries
@@ -98,7 +108,7 @@ mod tests {
 
         // Verify some specific fingerprint calculations using h_γ(a,v,t) = a·γ² + v·γ + t - τ
         let gamma_squared = gamma * gamma;
-        
+
         // w_init[0] should be: (0·γ² + 10·γ + 0) - τ = (0·49 + 10·7 + 0) - 13 = 70 - 13 = 57
         let addr_0_fp = Fp::ZERO;
         let value_0_fp4 = Fp4::from(Fp::from_usize(10));
