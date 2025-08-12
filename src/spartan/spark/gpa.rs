@@ -144,6 +144,16 @@ impl ProductTree {
             self.layer_right.last().expect("Will be non-empty")[0],
         )
     }
+
+    /// Returns the left layer data at the specified depth
+    pub fn get_layer_left(&self, depth: usize) -> &Vec<Fp4> {
+        &self.layer_left[depth]
+    }
+
+    /// Returns the right layer data at the specified depth  
+    pub fn get_layer_right(&self, depth: usize) -> &Vec<Fp4> {
+        &self.layer_right[depth]
+    }
 }
 
 impl Fingerprints {

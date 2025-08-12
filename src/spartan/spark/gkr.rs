@@ -1,8 +1,6 @@
-use crate::Fp;
 use crate::Fp4;
-use crate::challenger;
 use crate::challenger::Challenger;
-use crate::spartan::{CubicSumCheckProof, BatchedCubicSumCheckProof};
+use crate::spartan::sumcheck::BatchedCubicSumCheckProof;
 use crate::spartan::spark::gpa::ProductTree;
 use crate::utils::polynomial::MLE;
 use crate::utils::eq::EqEvals;
@@ -55,10 +53,10 @@ impl GKRProof {
         for layer_depth in (0..depth).rev() {
             // Create MLEs from ProductTree layer data for all trees
             let left_mles: Vec<MLE<Fp4>> = circuits.iter()
-                .map(|tree| MLE::new(tree.layer_left[layer_depth].clone()))
+                .map(|tree| MLE::new(tree.get_layer_left(layer_depth).clone()))
                 .collect();
             let right_mles: Vec<MLE<Fp4>> = circuits.iter()
-                .map(|tree| MLE::new(tree.layer_right[layer_depth].clone()))
+                .map(|tree| MLE::new(tree.get_layer_right(layer_depth).clone()))
                 .collect();
                 
             // Generate equality polynomials for current layer
@@ -94,6 +92,47 @@ impl GKRProof {
             .collect();
             
         Self::new(layer_proofs, final_products)
+    }
+
+    /// Verifies the batched GKR proof
+    pub fn verify(&self, expected_products: &[Fp4], challenger: &mut Challenger) -> bool {
+        if self.final_products.len() != expected_products.len() {
+            return false;
+        }
+
+        // Verify that claimed final products match expected products
+        for (claimed, &expected) in self.final_products.iter().zip(expected_products.iter()) {
+            if *claimed != expected {
+                return false;
+            }
+        }
+
+        let depth = self.layer_proofs.len();
+        let num_trees = expected_products.len();
+        let mut random_point = Vec::new();
+        
+        // Initial claims from final layer (should match final products)
+        let r_final = challenger.get_challenge();
+        random_point.push(r_final);
+        
+        let mut current_claims = expected_products.to_vec();
+        
+        // Verify each layer proof
+        for layer_proof in &self.layer_proofs {
+            // Verify the batched cubic sumcheck proof for this layer
+            layer_proof.verify(&current_claims, challenger);
+            
+            // Get random challenge for next layer
+            let r = challenger.get_challenge();
+            random_point.push(r);
+            
+            // Compute next layer claims from final evaluations
+            current_claims = layer_proof.final_evals.iter()
+                .map(|&(left_eval, right_eval)| (Fp4::ONE - r) * left_eval + r * right_eval)
+                .collect();
+        }
+        
+        true
     }
 }
 
