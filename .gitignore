@@ -3,3 +3,7 @@
 /.claude
 /.kilocode
 /spartan_plan
+
+browser*
+
+*.md

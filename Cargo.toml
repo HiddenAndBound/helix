@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.98"
 blake3 = "1.8.2"
+itertools = "0.13.0"
 p3-baby-bear = "0.3.0"
 p3-field = "0.3.0"
 p3-monty-31 = "=0.3.0"

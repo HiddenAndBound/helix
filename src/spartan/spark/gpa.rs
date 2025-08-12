@@ -1,10 +1,11 @@
-use crate::{Fp, Fp4};
+use crate::{Fp, Fp4, spartan::spark::gkr::GKRProof};
 use p3_field::PrimeCharacteristicRing;
 
 //Offline Memory Check
 pub struct OfflineMemoryCheck {
     fingerprints: Vec<Fingerprints>,
     product_trees: Vec<ProductTree>,
+    gpa_proofs: Vec<GKRProof>,
 }
 
 pub struct Fingerprints {
@@ -36,8 +37,8 @@ impl ProductTree {
         } else {
             0
         };
-        let root_value = if depth > 0 && !layer_left[0].is_empty() {
-            layer_left[0][0]
+        let root_value = if depth > 0 && !layer_left[depth - 1].is_empty() {
+            layer_left[depth - 1][0]
         } else {
             Fp4::ZERO
         };
@@ -135,6 +136,13 @@ impl ProductTree {
     /// Returns the input size
     pub fn input_size(&self) -> usize {
         self.input_size
+    }
+
+    pub fn get_final_layer_claims(&self) -> (Fp4, Fp4) {
+        (
+            self.layer_left.last().expect("Will be non-empty")[0],
+            self.layer_right.last().expect("Will be non-empty")[0],
+        )
     }
 }
 
