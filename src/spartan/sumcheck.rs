@@ -1443,8 +1443,8 @@ mod tests {
     pub struct BatchedCubicSumCheckProof {
         /// Univariate polynomials for each round of the sum-check protocol.
         pub round_proofs: Vec<UnivariatePoly>,
-        /// Final evaluations for all claims: [left_0(r), right_0(r), ..., left_N-1(r), right_N-1(r)]
-        pub final_evals: Vec<Fp4>,
+        /// Final evaluations for all claims: [(left_0(r), right_0(r)), ..., (left_N-1(r), right_N-1(r))]
+        pub final_evals: Vec<(Fp4, Fp4)>,
         /// Number of claims batched in this proof
         pub num_claims: usize,
     }
@@ -1453,13 +1453,13 @@ mod tests {
         /// Creates a new batched cubic sum-check proof.
         pub fn new(
             round_proofs: Vec<UnivariatePoly>,
-            final_evals: Vec<Fp4>,
+            final_evals: Vec<(Fp4, Fp4)>,
             num_claims: usize,
         ) -> Self {
             assert_eq!(
                 final_evals.len(),
-                num_claims * 2,
-                "Final evaluations must contain 2 values per claim (left and right)"
+                num_claims,
+                "Final evaluations must contain one tuple per claim (left and right)"
             );
 
             Self {
@@ -1610,10 +1610,9 @@ mod tests {
             }
 
             // Extract final evaluations for all claims
-            let mut final_evals = Vec::with_capacity(num_claims * 2);
+            let mut final_evals = Vec::with_capacity(num_claims);
             for (left, right) in left_folded.iter().zip(right_folded.iter()) {
-                final_evals.push(left[0]);
-                final_evals.push(right[0]);
+                final_evals.push((left[0], right[0]));
             }
 
             BatchedCubicSumCheckProof::new(round_proofs, final_evals, num_claims)
@@ -1668,9 +1667,7 @@ mod tests {
 
             // Final check: batched evaluation of final values must match the final claim
             let mut expected_claim = Fp4::ZERO;
-            for i in 0..self.num_claims {
-                let left_eval = self.final_evals[2 * i];
-                let right_eval = self.final_evals[2 * i + 1];
+            for (i, &(left_eval, right_eval)) in self.final_evals.iter().enumerate() {
                 let gamma_power = gamma.exp_u64(i as u64 + 1);
                 expected_claim += gamma_power * (left_eval * right_eval);
             }
@@ -1831,7 +1828,7 @@ mod tests {
             batched_proof.verify(&[actual_sum], &mut verifier);
 
             assert_eq!(batched_proof.num_claims, 1);
-            assert_eq!(batched_proof.final_evals.len(), 2);
+            assert_eq!(batched_proof.final_evals.len(), 1);
         }
 
         #[test]
@@ -1884,7 +1881,7 @@ mod tests {
             batched_proof.verify(&claimed_sums, &mut verifier);
 
             assert_eq!(batched_proof.num_claims, 3);
-            assert_eq!(batched_proof.final_evals.len(), 6); // 2 values per claim
+            assert_eq!(batched_proof.final_evals.len(), 3); // 1 tuple per claim
         }
 
         #[test]
@@ -1924,7 +1921,7 @@ mod tests {
             batched_proof.verify(&claimed_sums, &mut verifier);
 
             assert_eq!(batched_proof.num_claims, num_claims);
-            assert_eq!(batched_proof.final_evals.len(), num_claims * 2);
+            assert_eq!(batched_proof.final_evals.len(), num_claims);
         }
 
         #[test]
