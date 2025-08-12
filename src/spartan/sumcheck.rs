@@ -1016,6 +1016,9 @@ impl BatchedCubicSumCheckProof {
 
         let rounds = left_polys[0].n_vars();
 
+        // Error case: polynomials must have at least 1 variable for sum-check
+        assert!(rounds > 0, "BatchedCubicSumCheckProof requires polynomials with at least 1 variable");
+
         // Validate all polynomials have consistent dimensions
         for i in 1..num_claims {
             assert_eq!(
@@ -1130,15 +1133,13 @@ impl BatchedCubicSumCheckProof {
     /// # Arguments
     /// * `claimed_sums` - Vector of claimed sum values for each claim
     /// * `challenger` - Challenger for Fiat-Shamir randomness
-    pub fn verify(&self, claimed_sums: &[Fp4], challenger: &mut Challenger) {
-        assert_eq!(
-            claimed_sums.len(),
-            self.num_claims,
-            "Number of claimed sums must match number of claims in proof"
-        );
+    pub fn verify(&self, claimed_sums: &[Fp4], challenger: &mut Challenger) -> bool {
+        if claimed_sums.len() != self.num_claims {
+            return false;
+        }
 
         if self.num_claims == 0 {
-            return;
+            return true;
         }
 
         let rounds = self.round_proofs.len();
@@ -1160,11 +1161,11 @@ impl BatchedCubicSumCheckProof {
 
             // Check sum-check relation: current_claim = (1-r_i) * g_i(0) + r_i * g_i(1)
             let eq_point = challenger.get_challenge();
-            assert_eq!(
-                current_claim,
-                (Fp4::ONE - eq_point) * round_poly.evaluate(Fp4::ZERO)
-                    + eq_point * round_poly.evaluate(Fp4::ONE)
-            );
+            let expected_claim = (Fp4::ONE - eq_point) * round_poly.evaluate(Fp4::ZERO)
+                + eq_point * round_poly.evaluate(Fp4::ONE);
+            if current_claim != expected_claim {
+                return false;
+            }
 
             challenger.observe_fp4_elems(&round_poly.coefficients());
             let challenge = challenger.get_challenge();
@@ -1179,10 +1180,7 @@ impl BatchedCubicSumCheckProof {
             expected_claim += gamma_power * (left_eval * right_eval);
         }
 
-        assert_eq!(
-            current_claim, expected_claim,
-            "Final batched evaluation check failed"
-        );
+        current_claim == expected_claim
     }
 }
 

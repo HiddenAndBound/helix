@@ -37,8 +37,8 @@ impl ProductTree {
         } else {
             0
         };
-        let root_value = if depth > 0 && !layer_left[depth - 1].is_empty() {
-            layer_left[depth - 1][0]
+        let root_value = if depth > 0 && !layer_left[0].is_empty() {
+            layer_left[0][0] * layer_right[0][0]
         } else {
             Fp4::ZERO
         };

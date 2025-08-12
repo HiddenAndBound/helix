@@ -49,8 +49,9 @@ impl GKRProof {
             })
             .collect();
         
-        // Process each layer from leaves towards root (depth-1 down to 0)
-        for layer_depth in (0..depth).rev() {
+        // Process each layer from leaves towards root (depth-1 down to 1)
+        // Skip the root layer (depth 0) as it has only 1 element
+        for layer_depth in (1..depth).rev() {
             // Create MLEs from ProductTree layer data for all trees
             let left_mles: Vec<MLE<Fp4>> = circuits.iter()
                 .map(|tree| MLE::new(tree.get_layer_left(layer_depth).clone()))
@@ -107,8 +108,6 @@ impl GKRProof {
             }
         }
 
-        let depth = self.layer_proofs.len();
-        let num_trees = expected_products.len();
         let mut random_point = Vec::new();
         
         // Initial claims from final layer (should match final products)
@@ -120,7 +119,9 @@ impl GKRProof {
         // Verify each layer proof
         for layer_proof in &self.layer_proofs {
             // Verify the batched cubic sumcheck proof for this layer
-            layer_proof.verify(&current_claims, challenger);
+            if !layer_proof.verify(&current_claims, challenger) {
+                return false;
+            }
             
             // Get random challenge for next layer
             let r = challenger.get_challenge();
@@ -148,12 +149,6 @@ mod tests {
         let mut challenger = Challenger::new();
         
         // Create a simple tree with 4 leaves: [1, 2, 3, 4]
-        let leaves = vec![
-            Fp4::from_u32(1),
-            Fp4::from_u32(2), 
-            Fp4::from_u32(3),
-            Fp4::from_u32(4),
-        ];
         
         // Build tree layers manually
         // Layer 1 (leaves): left=[1,3], right=[2,4]
@@ -179,7 +174,7 @@ mod tests {
         // Verify proof structure
         assert_eq!(proof.final_products.len(), 1);
         assert_eq!(proof.final_products[0], expected_product);
-        assert_eq!(proof.layer_proofs.len(), 2); // 2 layers (root and leaf)
+        assert_eq!(proof.layer_proofs.len(), 1); // 1 layer (leaf only, root is skipped)
         
         // Verify the proof
         let mut verifier = Challenger::new();
