@@ -18,15 +18,15 @@ pub struct Fingerprints {
 pub struct ProductTree {
     /// Left halves for each layer (root to leaves)
     /// layer_left[0] is root layer, layer_left[depth-1] is leaf layer
-    layer_left: Vec<Vec<Fp4>>,
+    pub layer_left: Vec<Vec<Fp4>>,
     /// Right halves for each layer (root to leaves)  
-    layer_right: Vec<Vec<Fp4>>,
+    pub layer_right: Vec<Vec<Fp4>>,
     /// Tree depth (log₂ of input size)
-    depth: usize,
+    pub depth: usize,
     /// Original input size (power of 2)
-    input_size: usize,
+    pub input_size: usize,
     /// Final product value (root of tree)
-    root_value: Fp4,
+    pub root_value: Fp4,
 }
 
 impl ProductTree {

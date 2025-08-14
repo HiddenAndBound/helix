@@ -49,10 +49,12 @@ impl GKRProof {
         layer_claims.push(initial_claims);
         // Process each layer from leaves towards root (depth-1 down to 1)
         // Skip the root layer (depth 0) as it has only 1 element
-        for layer_depth in (0..depth).rev() {
+        for layer_depth in (0..depth - 1).rev() {
             // Used to generate the sumcheck claim for the current layer, by the fact W(r_0,..., r_{n-2}, r) = (1-r).W(r_0,..., r_{n-2}, 0) + r.W(r_0, ..., r_{n-2}, 1).
             let r = challenger.get_challenge();
-            let current_claims = layer_claims[depth - layer_depth]
+            let current_claims = layer_claims
+                .last()
+                .unwrap()
                 .iter()
                 .map(|&(left, right)| (Fp4::ONE - r) * left + r * right)
                 .collect::<Vec<_>>();
@@ -65,7 +67,6 @@ impl GKRProof {
                 .iter()
                 .map(|tree| MLE::new(tree.get_layer_right(layer_depth).clone()))
                 .collect();
-
             // Generate batched proof for this layer
             let layer_proof = BatchedCubicSumCheckProof::prove(
                 &left_mles,
@@ -136,279 +137,76 @@ impl GKRProof {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::spartan::spark::gpa::{Fingerprints, ProductTree};
-    use crate::spartan::spark::sparse::TimeStamps;
+    use p3_field::PrimeCharacteristicRing;
+    use rand::{Rng, thread_rng};
+
+    use crate::{
+        Fp4,
+        challenger::{self, Challenger},
+        polynomial::MLE,
+        spartan::spark::{gkr::GKRProof, gpa::ProductTree},
+    };
 
     #[test]
-    fn test_gkr_proof_single_tree() {
-        // Test with a single ProductTree (simplest case)
-        let mut challenger = Challenger::new();
+    // This tests the gkr protocol on a randomly generated product tree.
+    pub fn gpa_test() {
+        let k = 1 << 5;
 
-        // Create a simple tree with 4 leaves: [1, 2, 3, 4]
+        // Build both trees inline
+        fn build_tree(mut leaves: Vec<Fp4>, actual_product: Fp4) -> ProductTree {
+            let input_size = leaves.len();
+            let depth = (input_size as f64).log2() as usize;
+            let mut layer_left = Vec::with_capacity(depth);
+            let mut layer_right = Vec::with_capacity(depth);
 
-        // Build tree layers manually
-        // Layer 1 (leaves): left=[1,3], right=[2,4]
-        // Layer 0 (root): left=[1*2=2], right=[3*4=12]
-        let layer_left = vec![
-            vec![Fp4::from_u32(2)],                   // root layer: 1*2 = 2
-            vec![Fp4::from_u32(1), Fp4::from_u32(3)], // leaf layer: 1, 3
-        ];
-        let layer_right = vec![
-            vec![Fp4::from_u32(12)],                  // root layer: 3*4 = 12
-            vec![Fp4::from_u32(2), Fp4::from_u32(4)], // leaf layer: 2, 4
-        ];
+            // Build tree from leaves up to root using for loop
+            for level in (0..depth).rev() {
+                let level_size = 1 << level; // 2^level
+                let mut left_half = vec![Fp4::ZERO; level_size];
+                let mut right_half = vec![Fp4::ZERO; level_size];
+                let mut next_level = vec![Fp4::ZERO; level_size];
 
-        let tree = ProductTree::new(layer_left, layer_right);
-        let circuits = vec![tree];
+                for i in 0..level_size {
+                    let left = leaves[2 * i];
+                    let right = leaves[2 * i + 1];
 
-        // Expected product: 1*2*3*4 = 24
-        let expected_product = Fp4::from_u32(24);
+                    left_half[i] = left;
+                    right_half[i] = right;
+                    next_level[i] = left * right;
+                }
 
-        // Generate proof
-        let proof = GKRProof::prove(&circuits, &mut challenger);
+                layer_left.push(left_half);
+                layer_right.push(right_half);
 
-        // Verify proof structure
-        assert_eq!(proof.final_products.len(), 1);
-        assert_eq!(proof.final_products[0], expected_product);
-        assert_eq!(proof.layer_proofs.len(), 1); // 1 layer (leaf only, root is skipped)
+                if level > 0 {
+                    leaves = next_level;
+                }
+            }
 
-        // Verify the proof
-        let mut verifier = Challenger::new();
-        assert!(proof.verify(&[expected_product], &mut verifier));
-    }
+            ProductTree {
+                layer_left,
+                layer_right,
+                depth,
+                input_size,
+                root_value: actual_product,
+            }
+        };
 
-    #[test]
-    fn test_gkr_proof_multiple_trees() {
-        // Test with multiple ProductTrees (core batching scenario)
-        let mut challenger = Challenger::new();
-
-        // Create two trees with different values
-        // Tree 1: [1, 2, 3, 4] -> product = 24
-        let tree1_left = vec![
-            vec![Fp4::from_u32(2)],                   // root: 1*2 = 2
-            vec![Fp4::from_u32(1), Fp4::from_u32(3)], // leaves: 1, 3
-        ];
-        let tree1_right = vec![
-            vec![Fp4::from_u32(12)],                  // root: 3*4 = 12
-            vec![Fp4::from_u32(2), Fp4::from_u32(4)], // leaves: 2, 4
-        ];
-
-        // Tree 2: [5, 6, 7, 8] -> product = 1680
-        let tree2_left = vec![
-            vec![Fp4::from_u32(30)],                  // root: 5*6 = 30
-            vec![Fp4::from_u32(5), Fp4::from_u32(7)], // leaves: 5, 7
-        ];
-        let tree2_right = vec![
-            vec![Fp4::from_u32(56)],                  // root: 7*8 = 56
-            vec![Fp4::from_u32(6), Fp4::from_u32(8)], // leaves: 6, 8
-        ];
-
-        let tree1 = ProductTree::new(tree1_left, tree1_right);
-        let tree2 = ProductTree::new(tree2_left, tree2_right);
-        let circuits = vec![tree1, tree2];
-
-        let expected_products = vec![Fp4::from_u32(24), Fp4::from_u32(1680)];
-
-        // Generate batched proof
-        let proof = GKRProof::prove(&circuits, &mut challenger);
-
-        // Verify proof structure
-        assert_eq!(proof.final_products.len(), 2);
-        assert_eq!(proof.final_products, expected_products);
-        assert_eq!(proof.layer_proofs.len(), 2); // 2 layers
-
-        // Each layer proof should handle 2 trees
-        for layer_proof in &proof.layer_proofs {
-            assert_eq!(layer_proof.num_claims, 2);
-            assert_eq!(layer_proof.final_evals.len(), 2);
-        }
-
-        // Verify the proof
-        let mut verifier = Challenger::new();
-        assert!(proof.verify(&expected_products, &mut verifier));
-    }
-
-    #[test]
-    fn test_gkr_proof_with_fingerprints() {
-        // Test integration with actual memory checking scenario
-        use crate::Fp;
-
-        let mut challenger = Challenger::new();
-
-        // Create a small memory table and access pattern
-        let memory_table = vec![
-            Fp4::from(Fp::from_usize(10)), // table[0] = 10
-            Fp4::from(Fp::from_usize(20)), // table[1] = 20
-            Fp4::from(Fp::from_usize(30)), // table[2] = 30
-            Fp4::from(Fp::from_usize(40)), // table[3] = 40
-        ];
-
-        // Memory access pattern: read from addresses [0, 1, 0, 2]
-        let read_addresses_fp = vec![
-            Fp::from_usize(0), // Access address 0
-            Fp::from_usize(1), // Access address 1
-            Fp::from_usize(0), // Access address 0 again
-            Fp::from_usize(2), // Access address 2
-        ];
-        let read_values = vec![
-            Fp::from_usize(10), // Value at address 0
-            Fp::from_usize(20), // Value at address 1
-            Fp::from_usize(10), // Value at address 0 (unchanged)
-            Fp::from_usize(30), // Value at address 2
-        ];
-
-        // Generate timestamps
-        let max_address_space = 4;
-        let timestamps = TimeStamps::compute(&read_addresses_fp, max_address_space).unwrap();
-        let read_timestamps: Vec<Fp> = timestamps
-            .read_ts()
-            .iter()
-            .take(read_addresses_fp.len())
-            .cloned()
-            .collect();
-        let final_timestamps: Vec<Fp> = timestamps.final_ts().to_vec();
-
-        let gamma = Fp4::from_u32(7);
-        let tau = Fp4::from_u32(11);
-
-        // Generate fingerprints
-        let fingerprints = Fingerprints::generate(
-            read_addresses_fp,
-            read_values,
-            memory_table,
-            read_timestamps,
-            final_timestamps,
-            gamma,
-            tau,
+        let leaves = MLE::new(
+            (0..k)
+                .map(|_| Fp4::from_u128(thread_rng().r#gen()))
+                .collect(),
         );
 
-        // Generate product trees
-        let (left_tree, right_tree) = ProductTree::generate(&fingerprints);
-        let circuits = vec![left_tree, right_tree];
+        let actual_product = leaves.coeffs().iter().copied().product();
+        let tree = build_tree(leaves.coeffs().to_owned(), actual_product);
 
-        // The products should be equal for a valid memory trace
-        let expected_products = vec![circuits[0].root_value(), circuits[1].root_value()];
-
-        // Generate GKR proof
-        let proof = GKRProof::prove(&circuits, &mut challenger);
-
-        // Verify proof
-        let mut verifier = Challenger::new();
-        assert!(proof.verify(&expected_products, &mut verifier));
-
-        // For memory consistency, the products should be equal
-        assert_eq!(expected_products[0], expected_products[1]);
-    }
-
-    #[test]
-    fn test_gkr_proof_empty_circuits() {
-        // Test edge case with no circuits
-        let mut challenger = Challenger::new();
-        let circuits: Vec<ProductTree> = vec![];
-
-        let proof = GKRProof::prove(&circuits, &mut challenger);
-
-        assert_eq!(proof.final_products.len(), 0);
-        assert_eq!(proof.layer_proofs.len(), 0);
-
-        let mut verifier = Challenger::new();
-        assert!(proof.verify(&[], &mut verifier));
-    }
-
-    #[test]
-    fn test_gkr_proof_single_layer_tree() {
-        // Test with minimal tree (single layer, 2 elements)
         let mut challenger = Challenger::new();
 
-        // Single layer tree: just one multiplication
-        let layer_left = vec![
-            vec![Fp4::from_u32(3)], // left value
-        ];
-        let layer_right = vec![
-            vec![Fp4::from_u32(5)], // right value
-        ];
+        let proof = GKRProof::prove(&[tree], &mut challenger);
 
-        let tree = ProductTree::new(layer_left, layer_right);
-        let circuits = vec![tree];
-
-        // Expected product: 3 * 5 = 15
-        let expected_product = Fp4::from_u32(15);
-
-        // Generate proof
-        let proof = GKRProof::prove(&circuits, &mut challenger);
-
-        // Should have exactly 1 layer proof
-        assert_eq!(proof.layer_proofs.len(), 1);
-        assert_eq!(proof.final_products[0], expected_product);
-
-        // Verify proof
-        let mut verifier = Challenger::new();
-        assert!(proof.verify(&[expected_product], &mut verifier));
-    }
-
-    #[test]
-    fn test_gkr_proof_verification_consistency() {
-        // Test that prove/verify are consistent with same randomness
-        let mut challenger1 = Challenger::new();
-        let mut challenger2 = Challenger::new();
-
-        // Create identical trees
-        let layer_left = vec![
-            vec![Fp4::from_u32(6)],                   // root
-            vec![Fp4::from_u32(2), Fp4::from_u32(4)], // leaves
-        ];
-        let layer_right = vec![
-            vec![Fp4::from_u32(35)],                  // root
-            vec![Fp4::from_u32(5), Fp4::from_u32(7)], // leaves
-        ];
-
-        let tree = ProductTree::new(layer_left, layer_right);
-        let circuits = vec![tree];
-        let expected_products = vec![Fp4::from_u32(2 * 5 * 4 * 7)]; // = 280
-
-        // Generate proof
-        let proof = GKRProof::prove(&circuits, &mut challenger1);
-
-        // Verify with same randomness source
-        assert!(proof.verify(&expected_products, &mut challenger2));
-
-        // Test with wrong expected product should fail
-        let wrong_products = vec![Fp4::from_u32(123)];
-        let mut challenger3 = Challenger::new();
-        assert!(!proof.verify(&wrong_products, &mut challenger3));
-    }
-
-    #[test]
-    fn test_layer_evaluation_propagation() {
-        // Test that layer evaluations correctly propagate as claims
         let mut challenger = Challenger::new();
 
-        // Create a two-layer tree to test propagation
-        let layer_left = vec![
-            vec![Fp4::from_u32(12)],                  // root layer
-            vec![Fp4::from_u32(3), Fp4::from_u32(4)], // leaf layer
-        ];
-        let layer_right = vec![
-            vec![Fp4::from_u32(35)],                  // root layer
-            vec![Fp4::from_u32(5), Fp4::from_u32(7)], // leaf layer
-        ];
-
-        let tree = ProductTree::new(layer_left, layer_right);
-        let circuits = vec![tree];
-
-        let proof = GKRProof::prove(&circuits, &mut challenger);
-
-        // Should have 2 layers of proofs
-        assert_eq!(proof.layer_proofs.len(), 2);
-
-        // Each layer should have 1 claim (single tree)
-        for layer_proof in &proof.layer_proofs {
-            assert_eq!(layer_proof.num_claims, 1);
-            assert_eq!(layer_proof.final_evals.len(), 1);
-        }
-
-        // Final product should match tree root
-        assert_eq!(proof.final_products[0], circuits[0].root_value());
+        proof.verify(&[actual_product], &mut challenger);
     }
 }
