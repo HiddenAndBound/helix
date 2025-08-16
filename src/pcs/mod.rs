@@ -1,5 +1,5 @@
 use crate::{
-    Fp,
+    Fp, Fp4,
     challenger::{self, Challenger},
     commitment::PolynomialCommitment,
     merkle_tree::{self, MerklePath, MerkleTree},
@@ -7,14 +7,14 @@ use crate::{
     spartan::univariate::UnivariatePoly,
 };
 use p3_baby_bear::BabyBear;
-use p3_field::PrimeCharacteristicRing;
+use p3_field::{PrimeCharacteristicRing, PrimeField, PrimeField32, TwoAdicField};
 pub struct Basefold;
 
 type Commitment = [u8; 32];
 type Encoding = Vec<Fp>;
 
 const RATE: usize = 2;
-
+const HALF: Fp = Fp::new(134217727);
 pub struct Proof {
     pub sum_check_rounds: Vec<UnivariatePoly>,
     pub paths: Vec<Vec<MerklePath>>,
@@ -59,4 +59,19 @@ impl Basefold {
     ) {
         unimplemented!("Basefold::evaluate is not yet implemented");
     }
+}
+pub fn fold_pair(codewords: (Fp, Fp), random_challenge: Fp4, twiddle: Fp) -> Fp4 {
+    let (l, r) = codewords;
+
+    (random_challenge * (l + r) * HALF * twiddle) + (l - r) * HALF
+}
+
+pub fn fold(mle: MLE<Fp>, random_challenge: Fp4, roots: &[Fp]) -> MLE<Fp4> {
+    let half_size = mle.len() >> 1;
+    let mut folded = vec![Fp4::ZERO; half_size];
+    for i in 0..half_size {
+        folded[i] = fold_pair((mle[i], mle[i + half_size]), random_challenge, roots[i])
+    }
+
+    MLE::new(folded)
 }
