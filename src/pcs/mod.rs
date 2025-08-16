@@ -59,6 +59,10 @@ impl Basefold {
     ) {
         unimplemented!("Basefold::evaluate is not yet implemented");
     }
+
+    pub fn verify() {
+        unimplemented!()
+    }
 }
 pub fn fold_pair(codewords: (Fp, Fp), random_challenge: Fp4, twiddle: Fp) -> Fp4 {
     let (l, r) = codewords;
