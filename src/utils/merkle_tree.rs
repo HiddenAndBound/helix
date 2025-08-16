@@ -6,6 +6,7 @@ use p3_field::RawDataSerializable;
 /// The tree is constructed from a vector of leaves, each of type `BabyBear`.
 /// The tree uses the BLAKE3 hash function and stores all nodes in a flat vector.
 /// The root of the tree is accessible via the `root` field.
+pub type MerklePath = Vec<[u8; 32]>;
 pub struct MerkleTree {
     /// The root hash of the Merkle tree (top node).
     pub root: [u8; 32],

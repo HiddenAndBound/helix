@@ -3,7 +3,7 @@ mod prover;
 mod r1cs;
 mod spark;
 mod sumcheck;
-mod univariate;
+pub mod univariate;
 
 pub use r1cs::{R1CS, R1CSInstance, Witness};
 pub use sumcheck::{CubicSumCheckProof, compute_cubic_first_round, compute_cubic_round};
