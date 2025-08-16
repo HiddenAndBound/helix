@@ -27,7 +27,7 @@ impl MerkleTree {
     ///
     /// # Panics
     /// Panics if the number of leaves is not a power of two.
-    pub fn new(leaves: Vec<BabyBear>) -> Result<Self> {
+    pub fn new(leaves: &[BabyBear]) -> Result<Self> {
         // Ensure the number of leaves is a power of two for a complete binary tree
         assert!(
             leaves.len().is_power_of_two(),

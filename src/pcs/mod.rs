@@ -1,32 +1,36 @@
-use crate::{Fp, commitment::PolynomialCommitment, polynomial::MLE};
-
-pub struct Basefold{
-
+use crate::{
+    Fp,
+    commitment::PolynomialCommitment,
+    merkle_tree::{self, MerkleTree},
+    polynomial::MLE,
 };
+use p3_baby_bear::BabyBear;
+use p3_field::PrimeCharacteristicRing;
+pub struct Basefold;
 
-impl PolynomialCommitment<Fp> for Basefold {
-    type Commitment = [u8; 32];
+type Commitment = [u8; 32];
+type Encoding = Vec<Fp>;
 
-    type Proof = ();
+const RATE: usize = 2;
+impl Basefold {
+    pub fn commit(poly: &MLE<Fp>, roots: Vec<Vec<Fp>>) -> (MerkleTree, Commitment, Encoding) {
+        assert!(
+            poly.len().is_power_of_two(),
+            "MLE's coefficients need to be a power of 2"
+        );
+        let mut buffer = vec![Fp::ZERO; poly.len() * RATE];
+        buffer[0..poly.len()].copy_from_slice(poly.coeffs());
 
-    type Error = ();
+        assert!(
+            roots.len() > buffer.len().trailing_zeros() as usize,
+            "Root table not large enough to encode the MLE."
+        );
 
-    fn commit(polynomial: &MLE<Fp>) -> Result<Self::Commitment, Self::Error> {}
+        BabyBear::forward_fft(&mut buffer, &roots);
 
-    fn open(
-        polynomial: &crate::polynomial::MLE<Fp>,
-        point: &[crate::Fp4],
-        commitment: &Self::Commitment,
-    ) -> Result<Self::Proof, Self::Error> {
-        todo!()
-    }
+        let merkle_tree = MerkleTree::new(&buffer).unwrap();
+        let commitment = merkle_tree.root();
 
-    fn verify(
-        commitment: &Self::Commitment,
-        point: &[crate::Fp4],
-        value: crate::Fp4,
-        proof: &Self::Proof,
-    ) -> Result<bool, Self::Error> {
-        todo!()
+        (merkle_tree, commitment, buffer)
     }
 }
