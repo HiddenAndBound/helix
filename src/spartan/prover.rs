@@ -7,7 +7,8 @@ use crate::{
     Fp4,
     challenger::Challenger,
     spartan::{
-        R1CSInstance, {InnerSumCheckProof, OuterSumCheckProof},
+        R1CSInstance,
+        sumcheck::{InnerSumCheckProof, OuterSumCheckProof},
     },
 };
 

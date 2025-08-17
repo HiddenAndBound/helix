@@ -1,7 +1,7 @@
 use crate::Fp4;
 use crate::challenger::Challenger;
-use crate::spartan::BatchedCubicSumCheckProof;
 use crate::spartan::spark::gpa::ProductTree;
+use crate::spartan::sumcheck::BatchedCubicSumCheckProof;
 use crate::utils::eq::EqEvals;
 use crate::utils::polynomial::MLE;
 
