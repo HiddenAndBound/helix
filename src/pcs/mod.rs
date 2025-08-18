@@ -60,7 +60,7 @@ impl Basefold {
         unimplemented!("Basefold::evaluate is not yet implemented");
     }
 
-    pub fn verify() {
+    pub fn verify(evaluation: Fp, eval_point: &[Fp], commitment: Commitment, challenger: &mut Challenger) {
         unimplemented!()
     }
 }

@@ -940,7 +940,7 @@ pub fn compute_cubic_first_round(
 }
 
 /// Sum-check proof for polynomial commitment scheme evaluation claims.
-/// 
+///
 /// Proves that a multilinear polynomial p evaluates to a claimed value at a point z
 /// by converting the evaluation claim into a sum-check protocol:
 /// p(z) = ∑_{x∈{0,1}^d} p(x) * eq_z(x) = claimed_evaluation
@@ -1009,14 +1009,8 @@ impl PCSSumCheckProof {
 
         // Process remaining rounds (1 to d-1)
         for round in 1..rounds {
-            let round_proof = compute_pcs_round(
-                &poly_fold,
-                &eq,
-                point,
-                current_claim,
-                round,
-                rounds,
-            );
+            let round_proof =
+                compute_pcs_round(&poly_fold, &eq, point, current_claim, round, rounds);
 
             challenger.observe_fp4_elems(&round_proof.coefficients());
             let round_challenge = challenger.get_challenge();
@@ -1069,12 +1063,9 @@ impl PCSSumCheckProof {
 
         // Final check: verify that the final evaluation matches the claim
         // This requires that p(r) * eq_z(r) = final_claim where r is the challenge vector
-        let eq_final = EqEvals::gen_from_point(point).evaluate_at_point(&round_challenges);
-        assert_eq!(current_claim, self.final_eval * eq_final);
+        assert_eq!(current_claim, self.final_eval);
     }
 }
-
-
 
 /// Batched cubic sum-check proof for handling multiple cubic claims efficiently.
 ///
@@ -1349,6 +1340,58 @@ pub fn compute_batched_cubic_round(
         (current_claim - batched_coeffs[0] * (Fp4::ONE + eq_point[0])) / eq_point[0];
 
     let mut round_proof = UnivariatePoly::new(batched_coeffs).unwrap();
+    round_proof.interpolate().unwrap();
+
+    round_proof
+}
+
+/// Computes the univariate polynomial for the first PCS sum-check round.
+/// Uses base field (Fp) arithmetic for efficiency, outputs in extension field (Fp4).
+/// Evaluates at 0 and 1 only (degree-1 polynomial).
+pub fn compute_pcs_first_round(
+    poly: &MLE<Fp>,
+    eq: &EqEvals,
+    point: &[Fp4],
+    current_claim: Fp4,
+    rounds: usize,
+) -> UnivariatePoly {
+    // Evaluate at X = 0 and X = 1 only
+    let mut round_coeffs = vec![Fp4::ZERO; 2];
+
+    for i in 0..1 << (rounds - 1) {
+        // g(0): set first variable to 0
+        round_coeffs[0] += Fp4::from(eq[i] * poly[i << 1]);
+    }
+
+    round_coeffs[1] = (current_claim - round_coeffs[0] * (Fp4::ONE + point[0])) / point[0];
+
+    let mut round_proof = UnivariatePoly::new(round_coeffs).unwrap();
+    round_proof.interpolate().unwrap();
+
+    round_proof
+}
+
+/// Computes the univariate polynomial for subsequent PCS sum-check rounds.
+/// Works in extension field (Fp4) for all computations.
+/// Evaluates at 0 and 1 only (degree-1 polynomial).
+pub fn compute_pcs_round(
+    poly: &MLE<Fp4>,
+    eq: &EqEvals,
+    point: &[Fp4],
+    current_claim: Fp4,
+    round: usize,
+    rounds: usize,
+) -> UnivariatePoly {
+    // Evaluate at X = 0 and X = 1 only
+    let mut round_coeffs = vec![Fp4::ZERO; 2];
+
+    for i in 0..1 << (rounds - round - 1) {
+        // g(0): set current variable to 0
+        round_coeffs[0] += Fp4::from(eq[i]) * poly[i << 1];
+    }
+
+    round_coeffs[1] = (current_claim - round_coeffs[0] * (Fp4::ONE + point[0])) / point[0];
+    let mut round_proof = UnivariatePoly::new(round_coeffs).unwrap();
     round_proof.interpolate().unwrap();
 
     round_proof
@@ -1847,59 +1890,4 @@ mod tests {
 
         // The test passes if no assertions fail
     }
-}
-
-/// Computes the univariate polynomial for the first PCS sum-check round.
-/// Uses base field (Fp) arithmetic for efficiency, outputs in extension field (Fp4).
-/// Evaluates at 0 and 1 only (degree-1 polynomial).
-pub fn compute_pcs_first_round(
-    poly: &MLE<Fp>,
-    eq: &EqEvals,
-    _point: &[Fp4],
-    _current_claim: Fp4,
-    rounds: usize,
-) -> UnivariatePoly {
-    // Evaluate at X = 0 and X = 1 only
-    let mut round_coeffs = vec![Fp4::ZERO; 2];
-
-    for i in 0..1 << (rounds - 1) {
-        // g(0): set first variable to 0
-        round_coeffs[0] += Fp4::from(eq[i] * poly[i << 1]);
-
-        // g(1): set first variable to 1  
-        round_coeffs[1] += Fp4::from(eq[i] * poly[i << 1 | 1]);
-    }
-
-    let mut round_proof = UnivariatePoly::new(round_coeffs).unwrap();
-    round_proof.interpolate().unwrap();
-
-    round_proof
-}
-
-/// Computes the univariate polynomial for subsequent PCS sum-check rounds.
-/// Works in extension field (Fp4) for all computations.
-/// Evaluates at 0 and 1 only (degree-1 polynomial).
-pub fn compute_pcs_round(
-    poly: &MLE<Fp4>,
-    eq: &EqEvals,
-    _point: &[Fp4],
-    _current_claim: Fp4,
-    _round: usize,
-    rounds: usize,
-) -> UnivariatePoly {
-    // Evaluate at X = 0 and X = 1 only
-    let mut round_coeffs = vec![Fp4::ZERO; 2];
-
-    for i in 0..1 << (rounds - 1) {
-        // g(0): set current variable to 0
-        round_coeffs[0] += Fp4::from(eq[i]) * poly[i << 1];
-
-        // g(1): set current variable to 1
-        round_coeffs[1] += Fp4::from(eq[i]) * poly[i << 1 | 1];
-    }
-
-    let mut round_proof = UnivariatePoly::new(round_coeffs).unwrap();
-    round_proof.interpolate().unwrap();
-
-    round_proof
 }
