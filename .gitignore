@@ -5,6 +5,6 @@
 /spartan_plan
 
 browser*
-
+/.*
 *.md
 planning/.DS_Store

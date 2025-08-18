@@ -44,7 +44,6 @@ impl SpartanProof {
     pub fn prove(instance: R1CSInstance, challenger: &mut Challenger) -> Self {
         let z = &instance.witness_mle();
         let (A, B, C) = (&instance.r1cs.a, &instance.r1cs.b, &instance.r1cs.c);
-
         // Phase 1: OuterSumCheck - proves R1CS constraint satisfaction
         // Generates evaluation claims A(r_x), B(r_x), C(r_x) at random point r_x
         let outer_sum_check = OuterSumCheckProof::prove(A, B, C, z, challenger);
