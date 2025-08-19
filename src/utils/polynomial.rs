@@ -4,7 +4,7 @@ use std::ops::{Add, Index, Mul, Range};
 
 use crate::utils::{Fp4, eq::EqEvals};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MLE<F: PrimeCharacteristicRing + Clone> {
     coeffs: Vec<F>,
 }

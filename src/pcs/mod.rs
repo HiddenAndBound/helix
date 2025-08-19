@@ -79,8 +79,7 @@ impl Basefold {
         let mut merkle_trees = Vec::new();
         let mut encodings = Vec::<Vec<Fp4>>::new();
 
-
-        let mut current_poly;
+        let mut current_poly = MLE::default();
         for round in 0..rounds {
             let mut g_0 = Fp4::ZERO;
 
@@ -107,10 +106,10 @@ impl Basefold {
                 ),
             };
 
-            //If we are in the first round 
+            //If we are in the first round
             current_poly = match round {
                 0 => poly.fold_in_place(r),
-                _ => current_poly.fold_in_place(r)
+                _ => current_poly.fold_in_place(r),
             };
 
             let current_merkle_tree = MerkleTree::new(&current_encoding)?;
@@ -189,9 +188,10 @@ where
     folded
 }
 
-struct RoundData{
-        commitments: Vec<Commitment>,
-        merkle_trees: Vec<MerkleTree>,
-        encodings: Vec<Encoding>,
-    };
-    
+struct RoundData {
+    commitments: Vec<Commitment>,
+    merkle_trees: Vec<MerkleTree>,
+    encodings: Vec<Encoding>,
+}
+
+impl RoundData {}
