@@ -1,6 +1,10 @@
+use std::array;
+
 use anyhow::{Error, Result};
 use p3_baby_bear::BabyBear;
-use p3_field::RawDataSerializable;
+use p3_field::{PrimeCharacteristicRing, RawDataSerializable};
+
+use crate::Fp4;
 /// A Merkle tree structure for cryptographic proofs.
 ///
 /// The tree is constructed from a vector of leaves, each of type `BabyBear`.
@@ -28,7 +32,7 @@ impl MerkleTree {
     ///
     /// # Panics
     /// Panics if the number of leaves is not a power of two.
-    pub fn new(leaves: &[BabyBear]) -> Result<Self> {
+    pub fn new<D: RawDataSerializable + Copy>(leaves: &[D]) -> Result<Self> {
         // Ensure the number of leaves is a power of two for a complete binary tree
         assert!(
             leaves.len().is_power_of_two(),
@@ -38,11 +42,10 @@ impl MerkleTree {
         let depth = length.trailing_zeros();
         // Allocate space for all nodes (leaves + internal nodes)
         let mut nodes = vec![[0u8; 32]; 2 * leaves.len() - 1];
-
         // Hash each leaf and store in the first `length` positions
         for (leaf, node) in leaves.iter().zip(&mut nodes) {
             // Serialize the leaf and hash it
-            *node = blake3::hash(&leaf.into_bytes()).into();
+            *node = blake3::hash(&leaf.into_bytes().into_iter().collect::<Vec<u8>>()).into();
         }
 
         // Build the tree layer by layer, hashing pairs of nodes to form parents
