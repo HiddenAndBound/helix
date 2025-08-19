@@ -81,5 +81,23 @@ impl Challenger {
         (0..n_challenges).map(|_| self.get_challenge()).collect()
     }
 
+pub fn get_index(&mut self, n: u32) -> usize {
+        let challenge_bytes: [u8; 8] = self.state.finalize().as_bytes()[0..8]
+            .try_into()
+            .expect("Hash output is 32 bytes, should be able to get array of size 8");
+
+        let index = u64::from_le_bytes(challenge_bytes) as usize;
+
+        // Re-seed the hasher with the generated index
+        self.state.reset();
+        self.state.update(&challenge_bytes);
+        self.round += 1;
+
+        index & ((1 << n) - 1)
+    }
+
+    pub fn get_indices(&mut self, n: u32, num_queries: usize) -> Vec<usize> {
+        (0..num_queries).map(|_| self.get_index(n)).collect()
+    }
     
 }
