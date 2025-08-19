@@ -17,22 +17,22 @@ impl Challenger {
     }
 
     pub fn observe_field_elem(&mut self, input: &BabyBear) {
+        self.state.update(&self.round.to_le_bytes());
         self.state.update(&input.into_bytes());
         self.round += 1;
-        self.state.update(&self.round.to_le_bytes());
     }
 
     pub fn observe_field_elems(&mut self, input: &[BabyBear]) {
-        self.state = Hasher::new();
+        self.state.update(&self.round.to_le_bytes());
         for element in input {
             self.state.update(&element.into_bytes());
         }
+       
         self.round += 1;
-        self.state.update(&self.round.to_le_bytes());
     }
 
     pub fn observe_fp4_elems(&mut self, input: &[crate::utils::Fp4]) {
-        self.state = Hasher::new();
+        self.state.update(&self.round.to_le_bytes());
         for element in input {
             // Hash each coefficient of the Fp4 element
             for coeff in element.as_slice() {
@@ -41,7 +41,13 @@ impl Challenger {
             }
         }
         self.round += 1;
+    }
+
+    pub fn observe_commitment(&mut self, input: &[u8; 32]) {
         self.state.update(&self.round.to_le_bytes());
+        self.state.update(input);
+        self.round += 1;
+      
     }
 
     pub fn get_challenge(&mut self) -> crate::utils::Fp4 {
@@ -67,8 +73,8 @@ impl Challenger {
         let challenge_fp4 =
             Fp4::from_basis_coefficients_slice(&coeffs).expect("Should be of the expected length");
 
-        // Update state with the challenge for next round
-        self.state.reset();
+        // Observe the challenge for the next round
+        self.state.update(&self.round.to_le_bytes());
         for coeff in &coeffs {
             self.state.update(&coeff.into_bytes());
         }
@@ -88,10 +94,11 @@ pub fn get_index(&mut self, n: u32) -> usize {
 
         let index = u64::from_le_bytes(challenge_bytes) as usize;
 
-        // Re-seed the hasher with the generated index
-        self.state.reset();
+        // Observe the generated index for the next round
+        self.state.update(&self.round.to_le_bytes());
         self.state.update(&challenge_bytes);
         self.round += 1;
+
 
         index & ((1 << n) - 1)
     }
