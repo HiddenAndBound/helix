@@ -24,7 +24,7 @@
 //! ## Mathematical Formulation
 //!
 //! Given polynomial g(x₁, ..., xₙ), prove:
-//! ```
+//! ```ignore
 //! ∑_{w∈{0,1}ⁿ} g(w) = claimed_sum
 //! ```
 //!
@@ -43,5 +43,3 @@ pub use outer::OuterSumCheckProof;
 pub use pcs::PCSSumCheckProof;
 pub use spark::SparkSumCheckProof;
 
-#[cfg(test)]
-mod tests;

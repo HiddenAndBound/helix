@@ -97,8 +97,9 @@ pub fn encode_mle(poly: &MLE<Fp>, roots: &[Vec<Fp>], rate: usize) -> Encoding {
     let mut buffer = vec![Fp::ZERO; poly.len() * rate];
     buffer[0..poly.len()].copy_from_slice(poly.coeffs());
 
-    assert!(
-        roots.len() > buffer.len().trailing_zeros() as usize,
+    assert_eq!(
+        roots.len(),
+        buffer.len().trailing_zeros() as usize - 1,
         "Root table not large enough to encode the MLE."
     );
 

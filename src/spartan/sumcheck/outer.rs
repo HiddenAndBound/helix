@@ -46,6 +46,13 @@ impl OuterSumCheckProof {
         );
         let rounds = a.n_vars();
 
+        if rounds == 0 {
+            return OuterSumCheckProof::new(
+                vec![],
+                [a[0].into(), b[0].into(), c[0].into()],
+            );
+        }
+
         // Get random evaluation point from challenger (Fiat-Shamir)
         let eq_point = challenger.get_challenges(rounds);
 
