@@ -144,12 +144,17 @@ impl MerkleTree {
         path
     }
 
-    pub fn verify_path(&self, index: usize, path: Vec<[u8; 32]>) -> Result<()> {
-        assert!(index < 1 << self.depth, "Index out of range.");
-        let mut current_hash = self.nodes[index];
+    //TODO: Assert path length is equal to claimed tree depth
+    pub fn verify_path(
+        leaf: [u8; 32],
+        index: usize,
+        path: &[[u8; 32]],
+        root: [u8; 32],
+    ) -> Result<()> {
+        let mut current_hash = leaf;
         let mut current_index = index;
 
-        for (_level, sibling_hash) in path.into_iter().enumerate() {
+        for (_level, &sibling_hash) in path.into_iter().enumerate() {
             // Determine if current node is left or right child
             let is_left = current_index & 1 == 0;
 
@@ -165,7 +170,7 @@ impl MerkleTree {
         }
 
         // Verify that the final computed hash matches the root
-        if current_hash == self.root {
+        if current_hash == root {
             Ok(())
         } else {
             Err(Error::msg("Merkle path verification failed"))
