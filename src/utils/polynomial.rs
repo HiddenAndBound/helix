@@ -58,17 +58,14 @@ impl<F: PrimeCharacteristicRing + Clone> MLE<F> {
             return MLE::new(vec![Fp4::from(self.coeffs[0].clone())]);
         }
 
-        let half_len = self.coeffs.len() / 2;
+        let half_len = self.coeffs.len()>>1;
         let mut folded_coeffs = Vec::with_capacity(half_len);
 
         // For each coefficient pair (low, high) where low corresponds to x₀=0 and high to x₀=1
         // In hypercube layout, we pair coefficients that differ only in the lowest bit
         for i in 0..half_len {
-            let low_idx = i * 2; // Even indices: x₀=0
-            let high_idx = i * 2 + 1; // Odd indices: x₀=1
-
-            let low = Fp4::from(self.coeffs[low_idx].clone()); // f(..., x₀=0) promoted to Fp4
-            let high = Fp4::from(self.coeffs[high_idx].clone()); // f(..., x₀=1) promoted to Fp4
+            let low = Fp4::from(self.coeffs[i << 1].clone()); // f(..., x₀=0) promoted to Fp4
+            let high = Fp4::from(self.coeffs[(i << 1) | 1].clone()); // f(..., x₀=1) promoted to Fp4
 
             // Compute (1 - challenge) * low + challenge * high
             let folded = low * (Fp4::ONE - challenge) + high * challenge;

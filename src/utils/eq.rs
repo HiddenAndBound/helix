@@ -56,14 +56,11 @@ impl<'a> EqEvals<'a> {
 
         // For each coefficient pair (low, high) where low corresponds to x₀=0 and high to x₀=1
         for i in 0..half_len {
-            let low_idx = i * 2; // Even indices: x₀=0
-            let high_idx = i * 2 + 1; // Odd indices: x₀=1
-
-            let low = self.coeffs[low_idx]; // eq(..., x₀=0)
-            let high = self.coeffs[high_idx]; // eq(..., x₀=1)
+            let low = self.coeffs[(i<<1)]; // eq(..., x₀=0)
+            let high = self.coeffs[(i<<1)|1]; // eq(..., x₀=1)
 
             // Compute (1 - challenge) * low + challenge * high
-            let folded = low - high;
+            let folded = low + high;
             folded_coeffs.push(folded);
         }
 

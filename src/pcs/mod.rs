@@ -1,66 +1,6 @@
 //! # BaseFold Polynomial Commitment Scheme
 //!
-//! BaseFold is a field-agnostic polynomial commitment scheme that combines Reed-Solomon encoding,
-//! FRI-like folding techniques, and deep integration with sum-check protocols. It is specifically
-//! designed for the Spartan zkSNARK protocol implemented in Helix.
-//!
-//! ## Protocol Overview
-//!
-//! BaseFold operates through three main phases:
-//!
-//! 1. **Commitment Phase**: A multilinear polynomial is Reed-Solomon encoded via FFT, then
-//!    committed using a Merkle tree over the encoded codewords.
-//!
-//! 2. **Evaluation Phase**: To prove that a polynomial P evaluates to value v at point r,
-//!    the protocol runs multiple sum-check rounds, folding both the encoding and polynomial
-//!    in each round to reduce the problem size exponentially.
-//!
-//! 3. **Verification Phase**: The verifier checks the sum-check transcripts and makes random
-//!    queries to the folded encodings to detect any inconsistencies via Reed-Solomon distance properties.
-//!
-//! ## Mathematical Foundation
-//!
-//! ### Reed-Solomon Encoding
-//! The protocol begins by encoding a polynomial P(x₁,...,xₙ) of degree 2ⁿ over the base field Fp
-//! using Reed-Solomon codes. The polynomial coefficients are extended via forward FFT evaluation
-//! at roots of unity, creating an error-correcting code with rate 1/2.
-//!
-//! ### Dual Folding Process  
-//! Each sum-check round performs dual folding:
-//! - **Encoding folding**: E_{i+1} = fold(E_i, r_i, ω_i) using challenge r_i and twiddle factors ω_i
-//! - **Polynomial folding**: P_{i+1} = P_i.fold_in_place(r_i) reducing variable count by 1
-//!
-//! This maintains the invariant that the folded encoding corresponds to the folded polynomial.
-//!
-//! ### Field Extension Usage
-//! - Base field Fp (BabyBear ≈ 2³¹) for initial polynomial coefficients and encoding
-//! - Extension field Fp4 for challenges, evaluations, and sum-check operations
-//! - This prevents small subgroup attacks and ensures sufficient randomness
-//!
-//! ## Integration with Spartan
-//!
-//! BaseFold is not a generic PCS but specifically designed for Spartan's needs:
-//! - Sum-check rounds correspond to Spartan's outer sum-check reducing R1CS constraints
-//! - Folding structure matches the batching of multiple polynomial evaluation claims  
-//! - Field arithmetic is optimized for the BabyBear field used throughout Helix
-//! - The protocol handles the specific polynomial structure arising from constraint matrices
-//!
-//! ## Security Properties
-//!
-//! The security of BaseFold relies on:
-//! - **Reed-Solomon minimum distance**: Ensures high detection probability for encoding corruption
-//! - **Merkle tree binding**: Commitments are cryptographically binding under hash assumptions  
-//! - **Sum-check soundness**: Interactive protocol ensures polynomial evaluation correctness
-//! - **Challenge unpredictability**: Fiat-Shamir challenges prevent adaptive attacks
-//!
-//! Soundness error: ≈ (query_count * rounds) / |Fp4| with QUERIES = 144 providing ≈ 2⁻¹⁰⁰ security.
-//!
-//! ## Current Limitations and Future Work
-//!
-//! - **Missing optimizations**: Hash pruning, oracle skipping, early stopping not implemented
-//! - **Fixed parameters**: Query count (144) and rate (2) are hardcoded constants  
-//! - **Performance**: Rate customization and adaptive query selection planned
-//! - **Integration**: Currently uses placeholder Merkle tree implementation
+//! BaseFold is a field-agnostic polynomial commitment scheme designed for the Spartan zkSNARK protocol.
 //!
 //! ## Example Usage
 //!
@@ -74,7 +14,7 @@
 //! let roots = generate_fft_roots(); // FFT roots for encoding
 //! let (commitment, prover_data) = Basefold::commit(&poly, roots);
 //!
-//! // Generate evaluation proof  
+//! // Generate evaluation proof
 //! let eval_point = vec![Fp4::from_u32(5), Fp4::from_u32(7)];
 //! let evaluation = poly.evaluate(&eval_point);
 //! let mut challenger = Challenger::new();
@@ -89,9 +29,11 @@
 
 use anyhow::{Ok, Result};
 use p3_field::{ExtensionField, Field, PackedValue, PrimeCharacteristicRing};
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 
 use crate::pcs::utils::{
-    Commitment, Encoding, create_hash_leaves_from_pairs, create_hash_leaves_from_pairs_ref,
+    Commitment, Encoding, RATE, create_hash_leaves_from_pairs, create_hash_leaves_from_pairs_ref,
     encode_mle, fold, fold_pair, get_codewords, get_merkle_paths, hash_field_pair,
 };
 use crate::{
@@ -105,20 +47,15 @@ use crate::{
 
 mod utils;
 
-/// Configuration parameters for the BaseFold polynomial commitment scheme.
+/// Configuration parameters for BaseFold PCS.
 #[derive(Debug, Clone)]
 pub struct BaseFoldConfig {
     /// Number of random queries for soundness verification.
-    /// Higher values provide better security but slower verification.
     pub queries: usize,
-
     /// Reed-Solomon encoding rate (expansion factor).
-    /// Rate of 2 means 2x expansion for rate-1/2 Reed-Solomon code.
     pub rate: usize,
-
     /// Enable parallel processing for folding operations.
     pub enable_parallel: bool,
-
     /// Enable optimizations like hash pruning and early stopping.
     pub enable_optimizations: bool,
 }
@@ -126,8 +63,8 @@ pub struct BaseFoldConfig {
 impl Default for BaseFoldConfig {
     fn default() -> Self {
         Self {
-            queries: 144, // Provides ≈2^-100 security
-            rate: 2,      // Rate-1/2 Reed-Solomon encoding
+            queries: 144,
+            rate: 2,
             enable_parallel: false,
             enable_optimizations: false,
         }
@@ -141,22 +78,12 @@ impl BaseFoldConfig {
     }
 
     /// Sets the number of queries for soundness verification.
-    ///
-    /// # Security Impact
-    /// Soundness error ≈ queries / |Fp4|. With |Fp4| ≈ 2^124:
-    /// - 144 queries → ≈2^-100 security
-    /// - 80 queries → ≈2^-80 security
-    /// - 256 queries → ≈2^-128 security
     pub fn with_queries(mut self, queries: usize) -> Self {
         self.queries = queries;
         self
     }
 
     /// Sets the Reed-Solomon encoding rate.
-    ///
-    /// # Parameters
-    /// - `rate = 2`: Rate-1/2 encoding (recommended)
-    /// - `rate = 4`: Rate-1/4 encoding (higher redundancy)
     pub fn with_rate(mut self, rate: usize) -> Self {
         self.rate = rate;
         self
@@ -199,11 +126,9 @@ impl BaseFoldConfig {
         if self.queries == 0 {
             anyhow::bail!("Query count must be greater than 0");
         }
-
         if self.rate == 0 || !self.rate.is_power_of_two() {
             anyhow::bail!("Rate must be a positive power of 2");
         }
-
         Ok(())
     }
 }
@@ -218,55 +143,24 @@ pub const QUERIES: usize = 144;
 
 //TODO: Hash pruning, hash leaves together, oracle skipping, early stopping, rate_customisation.
 
-/// A cryptographic commitment to a polynomial using the BaseFold scheme.
-///
-/// The commitment is the root of a Merkle tree built over Reed-Solomon encoded codewords.
-/// This provides a succinct, binding commitment to the polynomial that can be efficiently
-/// opened at any evaluation point.
-///
-/// # Mathematical Structure  
-/// Given polynomial P(x₁,...,xₙ) with coefficients [c₀, c₁, ..., c₂ⁿ⁻₁]:
-/// 1. Reed-Solomon encode via FFT: E = FFT(P, roots)
-/// 2. Hash pairs: leaves[i] = H(E[2i], E[2i+1])
-/// 3. Build Merkle tree: commitment = MerkleRoot(leaves)
-///
-/// The commitment size is constant (32 bytes) regardless of polynomial degree.
+/// A cryptographic commitment to a polynomial using BaseFold.
 #[derive(Debug)]
 pub struct BasefoldCommitment {
     /// The Merkle root serving as the cryptographic commitment.
-    /// This 32-byte hash binds the prover to the specific Reed-Solomon encoding
-    /// of their polynomial under the collision-resistance of Blake3.
     pub commitment: Commitment,
 }
 
-/// Prover-specific data required for generating evaluation proofs in the BaseFold scheme.
-///
-/// This structure contains the polynomial's Reed-Solomon encoding and its corresponding
-/// Merkle tree, which together enable the prover to generate convincing evaluation proofs.
-/// The data must be stored after the commitment phase to later produce proofs.
-///
-/// # Security Considerations
-/// - The encoding must correspond exactly to the committed polynomial
-/// - The Merkle tree must be built over the same encoding used in the commitment
-/// - Inconsistency between these components will result in verification failure
+/// Prover-specific data required for generating evaluation proofs.
 #[derive(Debug)]
 pub struct ProverData {
     /// Merkle tree built over the Reed-Solomon encoded codewords.
-    ///
-    /// The tree structure enables efficient proof generation by providing
-    /// authentication paths for queried positions. Each leaf corresponds
-    /// to a hash of paired codewords from the encoding.
     pub merkle_tree: MerkleTree,
 
     /// Reed-Solomon encoding of the polynomial coefficients.
-    ///
-    /// This is the result of applying forward FFT to the polynomial coefficients
-    /// using provided roots of unity. The encoding has length 2 * poly.len() due
-    /// to the rate-1/2 Reed-Solomon code, providing error-correction capabilities.
     pub encoding: Encoding,
 }
 
-/// A zero-knowledge evaluation proof generated by the BaseFold scheme.
+/// Evaluation proof demonstrating polynomial evaluation correctness.
 ///
 /// This proof demonstrates that a committed polynomial P evaluates to a specific value v
 /// at a given point r, i.e., P(r) = v. The proof combines sum-check transcripts with
@@ -286,31 +180,15 @@ pub struct ProverData {
 #[derive(Debug)]
 pub struct EvalProof {
     /// Univariate polynomials from each sum-check round.
-    ///
-    /// Each polynomial g_i(X) is of degree ≤ 1 and represents the sum-check
-    /// reduction for round i. The coefficients are generated via the sum-check
-    /// protocol and must satisfy the verifier's consistency equation.
     pub sum_check_rounds: Vec<UnivariatePoly>,
 
-    /// Merkle authentication paths for queried positions in each round.
-    ///
-    /// paths[i][j] contains the Merkle path for the j-th query in round i.
-    /// These paths prove that the corresponding codewords in `codewords`
-    /// are authentic parts of the committed encoding.
+    /// Merkle authentication paths for queried positions.
     pub paths: Vec<Vec<MerklePath>>,
 
-    /// Merkle root commitments for each folding round after round 0.
-    ///
-    /// commitments[i] is the Merkle root of the (i+1)-th folded encoding.
-    /// The initial commitment is provided separately as it's computed during
-    /// the commitment phase, not the evaluation proof generation.
+    /// Merkle root commitments for each folding round.
     pub commitments: Vec<Commitment>,
 
-    /// Reed-Solomon codeword pairs for each query in each round.
-    ///
-    /// codewords[i][j] = (left, right) contains the paired codewords for
-    /// the j-th query in round i. These pairs are folded during verification
-    /// to check consistency with the next round's encoding.
+    /// Reed-Solomon codeword pairs for each query.
     pub codewords: Vec<Vec<(Fp4, Fp4)>>,
 }
 
@@ -359,7 +237,9 @@ impl Basefold {
             anyhow::bail!("Polynomial size must be a power of 2, got {}", poly.len());
         }
 
-        let required_depth = poly.n_vars();
+        //Roots table should have twiddles for 1..n_vars-1 i.e.
+        let required_depth = poly.n_vars() - 1;
+
         if roots.len() < required_depth {
             anyhow::bail!(
                 "Insufficient FFT roots: need depth {}, got {}",
@@ -367,7 +247,6 @@ impl Basefold {
                 roots.len()
             );
         }
-
         let encoding = encode_mle(poly, roots, config.rate);
 
         let (left, right) = encoding.split_at(encoding.len() / 2);
@@ -593,8 +472,8 @@ impl Basefold {
         Fp4: ExtensionField<F>,
     {
         let mut g_0: Fp4 = Fp4::ZERO;
-
-        for i in 0..1 << (poly.n_vars() - round - 1) {
+        let rounds = eval_point.len();
+        for i in 0..1 << (rounds - round - 1) {
             g_0 += eq[i] * poly[i << 1]
         }
 
@@ -762,7 +641,8 @@ impl Basefold {
             Self::verify_sum_check_round(
                 &proof.sum_check_rounds[round],
                 &mut current_claim,
-                eval_point[round],
+                &eval_point,
+                round,
                 challenger,
             )?;
             random_point.push(challenger.get_challenge()); // Get the challenge 'r' after observing coefficients
@@ -856,22 +736,23 @@ impl Basefold {
     fn verify_sum_check_round(
         round_poly: &UnivariatePoly,
         current_claim: &mut Fp4,
-        eval_point_round: Fp4,
+        eval_point: &[Fp4],
+        round: usize,
         challenger: &mut Challenger,
     ) -> anyhow::Result<()> {
-        let expected = (Fp4::ONE - eval_point_round) * round_poly.evaluate(Fp4::ZERO)
-            + eval_point_round * round_poly.evaluate(Fp4::ONE);
+        let expected = (Fp4::ONE - eval_point[round]) * round_poly.evaluate(Fp4::ZERO)
+            + eval_point[round] * round_poly.evaluate(Fp4::ONE);
 
         if *current_claim != expected {
             anyhow::bail!(
-                "Sum-check verification failed: claim {:?} != expected {:?}",
+                "Sum-check verification failed in round {round}: claim {:?} != expected {:?}",
                 *current_claim,
                 expected
             );
         }
 
-        challenger.observe_fp4_elems(&round_poly.coefficients());
         *current_claim = round_poly.evaluate(challenger.get_challenge());
+        challenger.observe_fp4_elems(&round_poly.coefficients());
         Ok(())
     }
 }
@@ -934,3 +815,45 @@ fn check_fold(
     Ok(())
 }
 
+#[test]
+fn test_basefold() -> Result<(), anyhow::Error> {
+    // Test the BaseFold commitment scheme
+    let mut rng = StdRng::seed_from_u64(0);
+    let mut challenger = Challenger::new();
+
+    const N_VARS: usize = 6;
+    let roots = Fp::roots_of_unity_table(1 << (N_VARS + 1));
+    let mle = MLE::new(
+        (0..1 << N_VARS)
+            .map(|_| Fp::from_u32(rng.r#gen()))
+            .collect(),
+    );
+
+    let eval_point: Vec<Fp4> = (0..N_VARS).map(|_| Fp4::from_u128(rng.r#gen())).collect();
+    let evaluation = mle.evaluate(&eval_point);
+    let config = BaseFoldConfig::new();
+    let (commitment, prover_data) = Basefold::commit(&mle, &roots, &config).unwrap();
+    let eval_proof = Basefold::evaluate(
+        &mle,
+        &eval_point,
+        &mut challenger,
+        evaluation,
+        prover_data,
+        &roots,
+        &config,
+    )
+    .unwrap();
+
+    let mut challenger = Challenger::new();
+    let verification_result = Basefold::verify(
+        eval_proof,
+        evaluation,
+        &eval_point,
+        commitment,
+        &roots,
+        &mut challenger,
+        &config,
+    )?;
+
+    Ok(())
+}

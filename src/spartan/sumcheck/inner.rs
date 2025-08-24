@@ -214,3 +214,4 @@ pub fn compute_inner_first_round_batched(
 
     round_proof
 }
+
