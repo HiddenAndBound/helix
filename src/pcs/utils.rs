@@ -261,7 +261,7 @@ pub fn get_codewords<F: Into<Fp4> + Copy>(queries: &[usize], encoding: &[F]) -> 
         .iter()
         .copied()
         .map(|i| {
-            if i > halfsize {
+            if i >= halfsize {
                 (encoding[i ^ halfsize].into(), encoding[i].into())
             } else {
                 (encoding[i].into(), encoding[i ^ halfsize].into())
@@ -320,7 +320,7 @@ pub fn get_merkle_paths(queries: &[usize], merkle_tree: &MerkleTree) -> Vec<Merk
         .map(|i| {
             // As pairs that differ in their most dominant bit are hashed together, we only index leaf nodes by the trailing bits.
             // Thus in the case an index is above the halfsize, meaning its leading bit is 1, we toggle that bit to get the valid and appropriate index.
-            if i > halfsize {
+            if i >= halfsize {
                 merkle_tree.get_path(i ^ halfsize)
             } else {
                 merkle_tree.get_path(i)
