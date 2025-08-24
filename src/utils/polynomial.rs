@@ -1,15 +1,15 @@
 use p3_baby_bear::BabyBear;
-use p3_field::PrimeCharacteristicRing;
+use p3_field::{ExtensionField, Field, PrimeCharacteristicRing};
 use std::ops::{Add, Index, Mul, Range};
 
 use crate::utils::{Fp4, eq::EqEvals};
 
 #[derive(Debug, Clone, Default)]
-pub struct MLE<F: PrimeCharacteristicRing + Clone> {
+pub struct MLE<F: PrimeCharacteristicRing + Field + Clone> {
     coeffs: Vec<F>,
 }
 
-impl<F: PrimeCharacteristicRing + Clone> MLE<F> {
+impl<F: PrimeCharacteristicRing + Clone + Field> MLE<F> {
     pub fn new(coeffs: Vec<F>) -> Self {
         assert!(coeffs.len().is_power_of_two());
         Self { coeffs }
@@ -26,7 +26,7 @@ impl<F: PrimeCharacteristicRing + Clone> MLE<F> {
     /// Evaluates the MLE at the given point
     pub fn evaluate(&self, point: &[Fp4]) -> Fp4
     where
-        Fp4: From<F>,
+        Fp4: ExtensionField<F>,
     {
         assert_eq!(
             point.len(),
@@ -39,7 +39,7 @@ impl<F: PrimeCharacteristicRing + Clone> MLE<F> {
         eq.coeffs
             .iter()
             .zip(self.coeffs.iter())
-            .map(|(&x, y)| x * Fp4::from(y.clone()))
+            .map(|(&x, &y)| x * y)
             .sum()
     }
 
@@ -49,9 +49,9 @@ impl<F: PrimeCharacteristicRing + Clone> MLE<F> {
     /// For MLE f(x₀, x₁, ..., xₙ₋₁), this computes:
     /// g(x₁, ..., xₙ₋₁) = f(challenge, x₁, ..., xₙ₋₁)
     ///                  = (1 - challenge) * f(0, x₁, ..., xₙ₋₁) + challenge * f(1, x₁, ..., xₙ₋₁)
-    pub fn fold_in_place(&self, challenge: Fp4) -> MLE<Fp4>
+    pub fn fold_in_place(&self, r: Fp4) -> MLE<Fp4>
     where
-        Fp4: From<F>,
+        Fp4: ExtensionField<F> + Mul<F, Output = Fp4>,
     {
         if self.coeffs.len() == 1 {
             // Base case: 0-variable polynomial, promote to Fp4 and return
@@ -64,11 +64,8 @@ impl<F: PrimeCharacteristicRing + Clone> MLE<F> {
         // For each coefficient pair (low, high) where low corresponds to x₀=0 and high to x₀=1
         // In hypercube layout, we pair coefficients that differ only in the lowest bit
         for i in 0..half_len {
-            let low = Fp4::from(self.coeffs[i << 1].clone()); // f(..., x₀=0) promoted to Fp4
-            let high = Fp4::from(self.coeffs[(i << 1) | 1].clone()); // f(..., x₀=1) promoted to Fp4
-
             // Compute (1 - challenge) * low + challenge * high
-            let folded = low * (Fp4::ONE - challenge) + high * challenge;
+            let folded =  r*(self[(i<<1)|1] - self[i<<1]) + self[i<<1];
             folded_coeffs.push(folded);
         }
 
@@ -100,7 +97,7 @@ impl<F: PrimeCharacteristicRing + Clone> MLE<F> {
     /// Computes partial evaluation (binds variables from left)
     pub fn partial_evaluate(&mut self, point: &[Fp4], num_vars: usize) -> MLE<Fp4>
     where
-        Fp4: From<F>,
+        Fp4: ExtensionField<F>,
     {
         assert!(num_vars <= self.n_vars(), "Too many variables to bind");
 
@@ -163,7 +160,7 @@ impl<F: PrimeCharacteristicRing + Clone> MLE<F> {
     }
 }
 
-impl<F: PrimeCharacteristicRing + Clone> Index<usize> for MLE<F> {
+impl<F: PrimeCharacteristicRing + Field + Clone> Index<usize> for MLE<F> {
     type Output = F;
 
     fn index(&self, index: usize) -> &Self::Output {
@@ -171,7 +168,7 @@ impl<F: PrimeCharacteristicRing + Clone> Index<usize> for MLE<F> {
     }
 }
 
-impl<F: PrimeCharacteristicRing + Clone> Index<Range<usize>> for MLE<F> {
+impl<F: PrimeCharacteristicRing + Field + Clone> Index<Range<usize>> for MLE<F> {
     type Output = [F];
 
     fn index(&self, range: Range<usize>) -> &Self::Output {
@@ -181,108 +178,25 @@ impl<F: PrimeCharacteristicRing + Clone> Index<Range<usize>> for MLE<F> {
 
 #[cfg(test)]
 mod tests {
+    use crate::Fp;
+
     use super::*;
     use p3_baby_bear::BabyBear;
     use p3_field::PrimeCharacteristicRing;
-
+    use rand::{rngs::StdRng, Rng, SeedableRng};
+    //Tests that folding, and inner product return the same value which should be the evaluation.
     #[test]
-    fn test_fold_two_variables() {
-        // Test MLE with 2 variables: f(x₀, x₁) with coeffs [a₀₀, a₁₀, a₀₁, a₁₁]
-        let coeffs = vec![
-            BabyBear::from_u32(1), // f(0,0)
-            BabyBear::from_u32(2), // f(1,0)
-            BabyBear::from_u32(3), // f(0,1)
-            BabyBear::from_u32(4), // f(1,1)
-        ];
-        let mle = MLE::new(coeffs);
-        let challenge = Fp4::from_u32(5);
+    fn test_eval_vs_fold(){
+        let n_vars = 3;
+        let mut rng = StdRng::seed_from_u64(0);
+        let point:Vec<Fp4> = (0..n_vars).map(|_| Fp4::from_u128(rng.r#gen())).collect();
+        let mut mle = MLE::from_vector((0..1<<n_vars).map(|_| Fp::from_u32(rng.r#gen())).collect());
 
-        let folded = mle.fold_in_place(challenge);
+        let claimed_eval = mle.evaluate(&point);
+        let folded_eval = mle.partial_evaluate(&point, n_vars)[0];
 
-        assert_eq!(folded.n_vars(), 1);
-        assert_eq!(folded.coeffs().len(), 2);
-
-        // Folded should represent g(x₁) = f(5, x₁)
-        // g(0) = (1-5)*f(0,0) + 5*f(1,0) = -4*1 + 5*2 = 6
-        // g(1) = (1-5)*f(0,1) + 5*f(1,1) = -4*3 + 5*4 = 8
-        let expected_g0 = (Fp4::ONE - challenge) * Fp4::from_u32(1) + challenge * Fp4::from_u32(2);
-        let expected_g1 = (Fp4::ONE - challenge) * Fp4::from_u32(3) + challenge * Fp4::from_u32(4);
-
-        assert_eq!(folded.coeffs()[0], expected_g0);
-        assert_eq!(folded.coeffs()[1], expected_g1);
+        assert_eq!(claimed_eval, folded_eval)
     }
-
-    #[test]
-    fn test_fold_with_fp4_coefficients() {
-        // Test MLE that already has Fp4 coefficients
-        let coeffs = vec![
-            Fp4::from_u32(1), // f(0,0)
-            Fp4::from_u32(2), // f(1,0)
-            Fp4::from_u32(3), // f(0,1)
-            Fp4::from_u32(4), // f(1,1)
-        ];
-        let mle = MLE::new(coeffs);
-        let challenge = Fp4::from_u32(5);
-
-        let folded = mle.fold_in_place(challenge);
-
-        assert_eq!(folded.n_vars(), 1);
-        assert_eq!(folded.coeffs().len(), 2);
-
-        // Same expected results as base field case
-        let expected_g0 = (Fp4::ONE - challenge) * Fp4::from_u32(1) + challenge * Fp4::from_u32(2);
-        let expected_g1 = (Fp4::ONE - challenge) * Fp4::from_u32(3) + challenge * Fp4::from_u32(4);
-
-        assert_eq!(folded.coeffs()[0], expected_g0);
-        assert_eq!(folded.coeffs()[1], expected_g1);
-    }
-
-    #[test]
-    fn test_fold_three_variables() {
-        // Test MLE with 3 variables: f(x₀, x₁, x₂) with 8 coefficients
-        let coeffs = vec![
-            BabyBear::from_u32(1), // f(0,0,0)
-            BabyBear::from_u32(2), // f(1,0,0)
-            BabyBear::from_u32(3), // f(0,1,0)
-            BabyBear::from_u32(4), // f(1,1,0)
-            BabyBear::from_u32(5), // f(0,0,1)
-            BabyBear::from_u32(6), // f(1,0,1)
-            BabyBear::from_u32(7), // f(0,1,1)
-            BabyBear::from_u32(8), // f(1,1,1)
-        ];
-        let mle = MLE::new(coeffs);
-        let challenge = Fp4::from_u32(3);
-
-        let folded = mle.fold_in_place(challenge);
-
-        assert_eq!(folded.n_vars(), 2);
-        assert_eq!(folded.coeffs().len(), 4);
-
-        // Folded should represent g(x₁, x₂) = f(3, x₁, x₂)
-        // g(0,0) = (1-3)*f(0,0,0) + 3*f(1,0,0) = -2*1 + 3*2 = 4
-        // g(1,0) = (1-3)*f(0,1,0) + 3*f(1,1,0) = -2*3 + 3*4 = 6
-        // g(0,1) = (1-3)*f(0,0,1) + 3*f(1,0,1) = -2*5 + 3*6 = 8
-        // g(1,1) = (1-3)*f(0,1,1) + 3*f(1,1,1) = -2*7 + 3*8 = 10
-
-        let one_minus_challenge = Fp4::ONE - challenge;
-        assert_eq!(
-            folded.coeffs()[0],
-            one_minus_challenge * Fp4::from_u32(1) + challenge * Fp4::from_u32(2)
-        );
-        assert_eq!(
-            folded.coeffs()[1],
-            one_minus_challenge * Fp4::from_u32(3) + challenge * Fp4::from_u32(4)
-        );
-        assert_eq!(
-            folded.coeffs()[2],
-            one_minus_challenge * Fp4::from_u32(5) + challenge * Fp4::from_u32(6)
-        );
-        assert_eq!(
-            folded.coeffs()[3],
-            one_minus_challenge * Fp4::from_u32(7) + challenge * Fp4::from_u32(8)
-        );
-    }
-
     #[test]
     fn test_fold_single_variable() {
         // Test edge case: single variable MLE

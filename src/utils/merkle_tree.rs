@@ -174,7 +174,7 @@ impl MerkleTree {
         if current_hash == root {
             Ok(())
         } else {
-            Err(Error::msg("Merkle path verification failed"))
+            Err(Error::msg(format!("Merkle path verification failed for index {index}")))
         }
     }
 }

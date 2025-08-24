@@ -3,7 +3,7 @@ use std::ops::{Index, Range};
 
 use crate::utils::Fp4;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct EqEvals<'a> {
     pub point: &'a [Fp4],
     pub coeffs: Vec<Fp4>,
@@ -90,6 +90,22 @@ impl<'a> Index<Range<usize>> for EqEvals<'a> {
 mod tests {
     use super::*;
     use p3_field::PrimeCharacteristicRing;
+    use rand::{rngs::StdRng, Rng, SeedableRng};
+
+
+    //Tests whether given eq = eq(r_0,..., r_{n-1}; x_0,..., x_{n-1}), fold_in_place returns eq(r_1,...,r_{n-1}; x_1, ..., x_{n-1})
+    #[test]
+    fn test_fold_in_place(){
+
+        let mut rng = StdRng::seed_from_u64(0);
+        let point = (0..4).map(|_| Fp4::from_u128(rng.r#gen())).collect::<Vec<Fp4>>();
+        let mut eq = EqEvals::gen_from_point(&point);
+        eq.fold_in_place();
+        
+        let mut eq_0 = EqEvals::gen_from_point(&point[1..]);
+
+        assert_eq!(eq, eq_0)
+    }
 
     #[test]
     fn test_gen_from_point_empty() {
@@ -373,30 +389,6 @@ mod tests {
         assert_eq!(sum, Fp4::ONE);
     }
 
-    #[test]
-    fn test_fold_in_place() {
-        // Test folding a 2-variable equality polynomial
-        let point = vec![Fp4::from_u32(3), Fp4::from_u32(5)];
-        let mut eq = EqEvals::gen_from_point(&point);
-
-        assert_eq!(eq.n_vars, 2);
-        assert_eq!(eq.coeffs.len(), 4);
-
-        // Store original coefficients for verification
-        let orig_coeffs = eq.coeffs.clone();
-
-        // Fold the polynomial (binds the first variable)
-        eq.fold_in_place();
-
-        // After folding, should have 1 variable and 2 coefficients
-        assert_eq!(eq.n_vars, 1);
-        assert_eq!(eq.coeffs.len(), 2);
-
-        // Verify the folding was done correctly
-        // For folding without challenge, it computes: low - high for each pair
-        assert_eq!(eq.coeffs[0], orig_coeffs[0] - orig_coeffs[1]);
-        assert_eq!(eq.coeffs[1], orig_coeffs[2] - orig_coeffs[3]);
-    }
 
     #[test]
     fn test_fold_in_place_single_var() {

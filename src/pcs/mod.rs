@@ -343,29 +343,32 @@ impl Basefold {
             mut current_poly,
         ) = Self::initialize_evaluation_proof_context(evaluation, poly.n_vars());
 
-        let eq = EqEvals::gen_from_point(&eval_point[1..]);
+        let mut eq = EqEvals::gen_from_point(&eval_point[1..]);
         let rounds = poly.n_vars();
 
         //Commit phase
         for round in 0..rounds {
-            let (round_proof, r) = match round {
+            let round_proof= match round {
                 0 => Self::process_sum_check_round(
                     poly,
                     &eval_point,
                     &mut current_claim,
-                    challenger,
                     round,
-                    &eq,
+                    &mut eq,
                 ),
                 _ => Self::process_sum_check_round(
                     &current_poly,
                     &eval_point,
                     &mut current_claim,
-                    challenger,
                     round,
-                    &eq,
+                    &mut eq,
                 ),
             };
+
+             challenger.observe_fp4_elems(&round_proof.coefficients());
+
+            eq.fold_in_place();
+            let r = challenger.get_challenge();
 
             let (current_encoding, current_poly_folded) = Self::fold_encoding_and_polynomial(
                 round,
@@ -463,10 +466,9 @@ impl Basefold {
         poly: &MLE<F>,
         eval_point: &[Fp4],
         current_claim: &mut Fp4,
-        challenger: &mut Challenger,
         round: usize,
-        eq: &EqEvals,
-    ) -> (UnivariatePoly, Fp4)
+        eq: &mut EqEvals,
+    ) -> UnivariatePoly
     where
         F: PrimeCharacteristicRing + Field,
         Fp4: ExtensionField<F>,
@@ -477,15 +479,12 @@ impl Basefold {
             g_0 += eq[i] * poly[i << 1]
         }
 
-        let g1: Fp4 = (*current_claim - g_0 * (Fp4::ONE - eval_point[round])) / eval_point[0];
+        let g1: Fp4 = (*current_claim - g_0 * (Fp4::ONE - eval_point[round])) / eval_point[round];
 
         let round_coeffs = vec![g_0, g1 - g_0];
         let round_proof = UnivariatePoly::new(round_coeffs).unwrap();
 
-        challenger.observe_fp4_elems(&round_proof.coefficients());
-
-        let r = challenger.get_challenge();
-        (round_proof, r)
+        round_proof
     }
 
     fn fold_encoding_and_polynomial(
@@ -552,7 +551,7 @@ impl Basefold {
         let (left, right) = current_encoding.split_at(current_encoding.len() / 2);
 
         let leaves: Vec<[u8; 32]> = create_hash_leaves_from_pairs_ref(left, right);
-        let current_merkle_tree = MerkleTree::from_field(&current_encoding)?;
+        let current_merkle_tree = MerkleTree::from_hash(&leaves)?;
         let current_commitment = current_merkle_tree.root();
 
         commitments.push(current_commitment);
@@ -638,14 +637,20 @@ impl Basefold {
         let mut random_point = Vec::new();
         //Commit phase
         for round in 0..rounds {
+        
+            let round_poly = &proof.sum_check_rounds[round];
             Self::verify_sum_check_round(
-                &proof.sum_check_rounds[round],
+                round_poly,
                 &mut current_claim,
                 &eval_point,
                 round,
                 challenger,
             )?;
-            random_point.push(challenger.get_challenge()); // Get the challenge 'r' after observing coefficients
+
+            challenger.observe_fp4_elems(&round_poly.coefficients());
+            let r = challenger.get_challenge();
+            current_claim = round_poly.evaluate(r);
+            random_point.push(r);
             challenger.observe_commitment(&proof.commitments[round]);
         }
 
@@ -749,10 +754,7 @@ impl Basefold {
                 *current_claim,
                 expected
             );
-        }
-
-        *current_claim = round_poly.evaluate(challenger.get_challenge());
-        challenger.observe_fp4_elems(&round_poly.coefficients());
+        }   
         Ok(())
     }
 }

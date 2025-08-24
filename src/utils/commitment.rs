@@ -1,6 +1,6 @@
 use crate::utils::polynomial::MLE;
 use crate::utils::{Fp, Fp4};
-use p3_field::PrimeCharacteristicRing;
+use p3_field::{Field, PrimeCharacteristicRing};
 
 /// A trait for polynomial commitment schemes used in the Spartan protocol.
 ///
@@ -8,7 +8,7 @@ use p3_field::PrimeCharacteristicRing;
 /// polynomial commitments. It is designed to be implemented by actual
 /// cryptographic commitment schemes, but for now we use a dummy implementation
 /// that always accepts.
-pub trait PolynomialCommitment<F: PrimeCharacteristicRing + Clone> {
+pub trait PolynomialCommitment<F: PrimeCharacteristicRing + Field + Clone> {
     /// The type of commitment to a polynomial
     type Commitment: Clone + std::fmt::Debug;
 
