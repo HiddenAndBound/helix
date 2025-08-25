@@ -868,4 +868,24 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_fold(){
+        let mut rng = StdRng::seed_from_u64(0);
+        let challenge = Fp::from_u32(rng.r#gen());
+
+        let poly = MLE::new((0..1<<4).map(|_| Fp::from_u32(rng.r#gen())).collect());
+        let roots = Fp::roots_of_unity_table(1 << 5); 
+
+        let mut encoding = encode_mle(&poly, &roots, 2);
+        let folded = fold(&encoding, Fp4::from(challenge), &roots[0]);
+
+        let mut test_fold = poly.fold_in_place(Fp4::from(challenge));
+        let test_fold = MLE::new(test_fold.coeffs().iter().map(|c| <Fp4 as ExtensionField<Fp>>::as_base(c).unwrap()).collect());
+        let mut test_encoding = encode_mle(&test_fold, &roots[1..], 2);
+        assert_eq!(folded.len(), test_encoding.len());
+        for i in 0..folded.len(){
+            print!("{:?} {:?} \n", <Fp4 as ExtensionField<Fp>>::as_base(&folded[i]).unwrap(), test_encoding[i]);
+        }
+    }
 }
