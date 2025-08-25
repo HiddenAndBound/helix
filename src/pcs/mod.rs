@@ -45,7 +45,7 @@ use crate::{
     spartan::univariate::UnivariatePoly,
 };
 
-mod utils;
+pub mod utils;
 
 /// Configuration parameters for BaseFold PCS.
 #[derive(Debug, Clone)]
@@ -885,7 +885,8 @@ mod tests {
         let mut test_encoding = encode_mle(&test_fold, &roots[1..], 2);
         assert_eq!(folded.len(), test_encoding.len());
         for i in 0..folded.len(){
-            print!("{:?} {:?} \n", <Fp4 as ExtensionField<Fp>>::as_base(&folded[i]).unwrap(), test_encoding[i]);
+            assert!(<Fp4 as ExtensionField<Fp>>::is_in_basefield(&folded[i]));
+            assert_eq!(<Fp4 as ExtensionField<Fp>>::as_base(&folded[i]).unwrap(), test_encoding[i], "failed at {i}");
         }
     }
 }

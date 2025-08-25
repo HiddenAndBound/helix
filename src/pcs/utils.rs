@@ -115,8 +115,8 @@ pub fn encode_mle(poly: &MLE<Fp>, roots: &[Vec<Fp>], rate: usize) -> Encoding {
 ///
 /// # Mathematical Process
 /// Given codewords (a₀, a₁), challenge r, and twiddle ω:
-/// 1. Compute g₀ = (a₀ - a₁) * (1/2)
-/// 2. Compute g₁ = (a₀ + a₁) * (1/2) * ω
+/// 1. Compute g₀ = (a₀ + a₁) * (1/2)
+/// 2. Compute g₁ = (a₀ - a₁) * (1/2) * ω
 /// 3. Return folded = r * (g₀ + g₁) + g₀ = g₀ + r * g₁
 ///
 /// This preserves the polynomial evaluation structure while folding the encoding.
@@ -150,8 +150,8 @@ where
     Fp4: ExtensionField<F>,
 {
     let (a0, a1) = codewords;
-    let (g0, g1) = ((a0 - a1) * HALF, (a0 + a1) * HALF * twiddle);
-    r * (g0 + g1) + g0
+    let (g0, g1) = ((a0 + a1) * HALF, (a0 - a1) * HALF * twiddle);
+    r*(g1 - g0) + g0
 }
 
 /// Folds an entire Reed-Solomon encoding by applying pairwise folding operations.
