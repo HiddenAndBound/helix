@@ -27,7 +27,7 @@ impl Challenger {
         for element in input {
             self.state.update(&element.into_bytes());
         }
-       
+
         self.round += 1;
     }
 
@@ -47,7 +47,6 @@ impl Challenger {
         self.state.update(&self.round.to_le_bytes());
         self.state.update(input);
         self.round += 1;
-      
     }
 
     pub fn get_challenge(&mut self) -> crate::utils::Fp4 {
@@ -87,7 +86,7 @@ impl Challenger {
         (0..n_challenges).map(|_| self.get_challenge()).collect()
     }
 
-pub fn get_index(&mut self, n: u32) -> usize {
+    pub fn get_index(&mut self, n: u32) -> usize {
         let challenge_bytes: [u8; 8] = self.state.finalize().as_bytes()[0..8]
             .try_into()
             .expect("Hash output is 32 bytes, should be able to get array of size 8");
@@ -99,12 +98,10 @@ pub fn get_index(&mut self, n: u32) -> usize {
         self.state.update(&challenge_bytes);
         self.round += 1;
 
-
         index & ((1 << n) - 1)
     }
 
     pub fn get_indices(&mut self, n: u32, num_queries: usize) -> Vec<usize> {
         (0..num_queries).map(|_| self.get_index(n)).collect()
     }
-    
 }

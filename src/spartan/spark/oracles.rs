@@ -5,7 +5,7 @@
 //! extension polynomials.
 //!
 //! ## Key Components
-//! 
+//!
 //! - [`SparkOracles`]: Struct containing separate e_rx and e_ry oracles for matrices A, B, and C
 //! - [`generate_spark_opening_oracles`]: Main function to generate all oracles from evaluation point
 //! - [`generate_single_oracle_pair`]: Utility function to generate oracles for a single matrix

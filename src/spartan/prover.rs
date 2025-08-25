@@ -92,4 +92,3 @@ impl SpartanProof {
         // - Final point evaluation verification
     }
 }
-

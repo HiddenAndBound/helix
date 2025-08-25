@@ -124,12 +124,12 @@ impl MerkleTree {
     /// Returns a merkle path for the given index.
     pub fn get_path(&self, index: usize) -> Vec<[u8; 32]> {
         assert!(index < 1 << self.depth, "Index out of range.");
-		(0..self.depth)
-			.map(|j| {
-				let node_index = (((1 << j) - 1) << (self.depth + 1 - j)) | (index >> j) ^ 1;
-				self.nodes[node_index]
-			})
-			.collect()
+        (0..self.depth)
+            .map(|j| {
+                let node_index = (((1 << j) - 1) << (self.depth + 1 - j)) | (index >> j) ^ 1;
+                self.nodes[node_index]
+            })
+            .collect()
     }
 
     //TODO: Assert path length is equal to claimed tree depth
@@ -161,7 +161,9 @@ impl MerkleTree {
         if current_hash == root {
             Ok(())
         } else {
-            Err(Error::msg(format!("Merkle path verification failed for index {index}")))
+            Err(Error::msg(format!(
+                "Merkle path verification failed for index {index}"
+            )))
         }
     }
 }
@@ -172,7 +174,7 @@ mod tests {
 
     #[test]
     fn test_merkle_tree() {
-        let leaves = (0..1u8<<5).map(|i| [ i; 32]).collect::<Vec<_>>();
+        let leaves = (0..1u8 << 5).map(|i| [i; 32]).collect::<Vec<_>>();
         let tree = MerkleTree::from_hash(&leaves).unwrap();
         let path = tree.get_path(15);
         MerkleTree::verify_path(leaves[15], 15, &path, tree.root).unwrap();

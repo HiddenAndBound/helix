@@ -58,14 +58,14 @@ impl<F: PrimeCharacteristicRing + Clone + Field> MLE<F> {
             return MLE::new(vec![Fp4::from(self.coeffs[0].clone())]);
         }
 
-        let half_len = self.coeffs.len()>>1;
+        let half_len = self.coeffs.len() >> 1;
         let mut folded_coeffs = Vec::with_capacity(half_len);
 
         // For each coefficient pair (low, high) where low corresponds to x₀=0 and high to x₀=1
         // In hypercube layout, we pair coefficients that differ only in the lowest bit
         for i in 0..half_len {
             // Compute (1 - challenge) * low + challenge * high
-            let folded =  r*(self[(i<<1)|1] - self[i<<1]) + self[i<<1];
+            let folded = r * (self[(i << 1) | 1] - self[i << 1]) + self[i << 1];
             folded_coeffs.push(folded);
         }
 
@@ -183,14 +183,18 @@ mod tests {
     use super::*;
     use p3_baby_bear::BabyBear;
     use p3_field::PrimeCharacteristicRing;
-    use rand::{rngs::StdRng, Rng, SeedableRng};
+    use rand::{Rng, SeedableRng, rngs::StdRng};
     //Tests that folding, and inner product return the same value which should be the evaluation.
     #[test]
-    fn test_eval_vs_fold(){
+    fn test_eval_vs_fold() {
         let n_vars = 3;
         let mut rng = StdRng::seed_from_u64(0);
-        let point:Vec<Fp4> = (0..n_vars).map(|_| Fp4::from_u128(rng.r#gen())).collect();
-        let mut mle = MLE::from_vector((0..1<<n_vars).map(|_| Fp::from_u32(rng.r#gen())).collect());
+        let point: Vec<Fp4> = (0..n_vars).map(|_| Fp4::from_u128(rng.r#gen())).collect();
+        let mut mle = MLE::from_vector(
+            (0..1 << n_vars)
+                .map(|_| Fp::from_u32(rng.r#gen()))
+                .collect(),
+        );
 
         let claimed_eval = mle.evaluate(&point);
         let folded_eval = mle.partial_evaluate(&point, n_vars)[0];

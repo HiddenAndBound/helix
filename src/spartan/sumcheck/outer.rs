@@ -47,10 +47,7 @@ impl OuterSumCheckProof {
         let rounds = a.n_vars();
 
         if rounds == 0 {
-            return OuterSumCheckProof::new(
-                vec![],
-                [a[0].into(), b[0].into(), c[0].into()],
-            );
+            return OuterSumCheckProof::new(vec![], [a[0].into(), b[0].into(), c[0].into()]);
         }
 
         // Get random evaluation point from challenger (Fiat-Shamir)
@@ -223,17 +220,20 @@ mod tests {
     use std::collections::HashMap;
 
     /// Creates a random R1CS instance (A, B, C, z) where (Az) ∘ (Bz) = Cz
-    /// 
+    ///
     /// # Arguments
     /// * `n_vars` - Number of variables (log₂ of vector/matrix dimensions)
     /// * `seed` - Optional seed for deterministic randomness
-    /// 
+    ///
     /// # Returns
     /// Tuple of (A, B, C, z) where all matrices are sparse and witness is dense
-    fn create_random_r1cs_instance(n_vars: usize, seed: Option<u64>) -> (SparseMLE, SparseMLE, SparseMLE, MLE<BabyBear>) {
+    fn create_random_r1cs_instance(
+        n_vars: usize,
+        seed: Option<u64>,
+    ) -> (SparseMLE, SparseMLE, SparseMLE, MLE<BabyBear>) {
         let size = 1 << n_vars; // 2^n_vars
         let mut rng_state = seed.unwrap_or(12345);
-        
+
         // Simple linear congruential generator for deterministic randomness
         let mut next_rand = || -> u32 {
             rng_state = (rng_state.wrapping_mul(1664525).wrapping_add(1013904223)) & 0xFFFFFFFF;
@@ -244,7 +244,8 @@ mod tests {
         let mut a_coeffs = HashMap::new();
         for i in 0..size {
             for j in 0..size {
-                if next_rand() % 10 < 3 { // 30% chance
+                if next_rand() % 10 < 3 {
+                    // 30% chance
                     let val = (next_rand() % 100) + 1; // Values 1-100
                     a_coeffs.insert((i, j), BabyBear::from_u32(val));
                 }
@@ -259,7 +260,8 @@ mod tests {
         let mut b_coeffs = HashMap::new();
         for i in 0..size {
             for j in 0..size {
-                if next_rand() % 10 < 3 { // 30% chance
+                if next_rand() % 10 < 3 {
+                    // 30% chance
                     let val = (next_rand() % 100) + 1; // Values 1-100
                     b_coeffs.insert((i, j), BabyBear::from_u32(val));
                 }
@@ -286,7 +288,9 @@ mod tests {
         let bz = b.multiply_by_mle(&z).unwrap();
 
         // Compute (Az) ∘ (Bz) (Hadamard product)
-        let hadamard_product: Vec<BabyBear> = az.coeffs().iter()
+        let hadamard_product: Vec<BabyBear> = az
+            .coeffs()
+            .iter()
             .zip(bz.coeffs().iter())
             .map(|(&a_val, &b_val)| a_val * b_val)
             .collect();
@@ -303,7 +307,7 @@ mod tests {
                 }
             }
         }
-        
+
         // Ensure C is not empty
         if c_coeffs.is_empty() {
             c_coeffs.insert((0, 0), BabyBear::ONE);
@@ -315,7 +319,9 @@ mod tests {
     }
 
     /// Creates a simple deterministic R1CS instance for testing
-    fn create_simple_r1cs_instance(n_vars: usize) -> (SparseMLE, SparseMLE, SparseMLE, MLE<BabyBear>) {
+    fn create_simple_r1cs_instance(
+        n_vars: usize,
+    ) -> (SparseMLE, SparseMLE, SparseMLE, MLE<BabyBear>) {
         let size = 1 << n_vars;
 
         // Create identity matrices for A and B
@@ -330,9 +336,7 @@ mod tests {
         let b = SparseMLE::new(b_coeffs).unwrap();
 
         // Create simple witness: z[i] = i + 1
-        let z_coeffs: Vec<BabyBear> = (1..=size)
-            .map(|i| BabyBear::from_u32(i as u32))
-            .collect();
+        let z_coeffs: Vec<BabyBear> = (1..=size).map(|i| BabyBear::from_u32(i as u32)).collect();
         let z = MLE::new(z_coeffs);
 
         // Since A = B = I, we have Az = Bz = z
@@ -349,7 +353,12 @@ mod tests {
     }
 
     /// Validates that the R1CS constraint (Az) ∘ (Bz) = Cz holds
-    fn validate_r1cs_constraint(a: &SparseMLE, b: &SparseMLE, c: &SparseMLE, z: &MLE<BabyBear>) -> bool {
+    fn validate_r1cs_constraint(
+        a: &SparseMLE,
+        b: &SparseMLE,
+        c: &SparseMLE,
+        z: &MLE<BabyBear>,
+    ) -> bool {
         let az = a.multiply_by_mle(z).unwrap();
         let bz = b.multiply_by_mle(z).unwrap();
         let cz = c.multiply_by_mle(z).unwrap();
@@ -368,10 +377,12 @@ mod tests {
     fn test_prover_verifier_flow() {
         // Test with a small 1-variable instance (2x2 matrices)
         let (a, b, c, z) = create_simple_r1cs_instance(1);
-        
+
         // Verify the R1CS constraint holds
-        assert!(validate_r1cs_constraint(&a, &b, &c, &z), 
-                "R1CS constraint (Az) ∘ (Bz) = Cz should hold");
+        assert!(
+            validate_r1cs_constraint(&a, &b, &c, &z),
+            "R1CS constraint (Az) ∘ (Bz) = Cz should hold"
+        );
 
         // Run the prover-verifier protocol
         let mut prover_challenger = Challenger::new();
@@ -389,10 +400,12 @@ mod tests {
     fn test_prover_verifier_flow_2vars() {
         // Test with a 2-variable instance (4x4 matrices)
         let (a, b, c, z) = create_simple_r1cs_instance(2);
-        
+
         // Verify the R1CS constraint holds
-        assert!(validate_r1cs_constraint(&a, &b, &c, &z), 
-                "R1CS constraint should hold for 2-variable instance");
+        assert!(
+            validate_r1cs_constraint(&a, &b, &c, &z),
+            "R1CS constraint should hold for 2-variable instance"
+        );
 
         // Run the prover-verifier protocol
         let mut prover_challenger = Challenger::new();
@@ -410,10 +423,13 @@ mod tests {
         // Test with random instances
         for n_vars in 1..=2 {
             let (a, b, c, z) = create_random_r1cs_instance(n_vars, Some(42 + n_vars as u64));
-            
+
             // Verify the R1CS constraint holds
-            assert!(validate_r1cs_constraint(&a, &b, &c, &z), 
-                    "R1CS constraint should hold for random {}-variable instance", n_vars);
+            assert!(
+                validate_r1cs_constraint(&a, &b, &c, &z),
+                "R1CS constraint should hold for random {}-variable instance",
+                n_vars
+            );
 
             // Run the prover-verifier protocol
             let mut prover_challenger = Challenger::new();
@@ -430,14 +446,14 @@ mod tests {
     #[test]
     fn test_helper_functions() {
         // Test the helper functions work correctly
-        
+
         // Test simple instance
         let (a, b, c, z) = create_simple_r1cs_instance(1);
         assert_eq!(a.dimensions(), (2, 2));
         assert_eq!(z.len(), 2);
         assert!(validate_r1cs_constraint(&a, &b, &c, &z));
 
-        // Test random instance 
+        // Test random instance
         let (a, b, c, z) = create_random_r1cs_instance(1, Some(123));
         assert_eq!(a.dimensions(), (2, 2));
         assert_eq!(z.len(), 2);

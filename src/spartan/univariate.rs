@@ -1,7 +1,7 @@
 use super::error::{SumCheckError, SumCheckResult};
 use crate::Fp4;
-use std::fmt;
 use p3_field::PrimeCharacteristicRing;
+use std::fmt;
 
 /// Univariate polynomials of degree 1-2 with degree-based coefficient indexing.
 /// Degree 1: f(x) = a + bx, coeffs [a, b]. Degree 2: f(x) = a + bx + cx², coeffs [a, b, c].
@@ -31,7 +31,9 @@ impl UnivariatePoly {
 
     /// Creates degree-2 polynomial f(x) = a + bx + cx² from coefficients.
     pub fn from_coeffs_deg2(a: Fp4, b: Fp4, c: Fp4) -> Self {
-        UnivariatePoly { coeffs: vec![a, b, c] }
+        UnivariatePoly {
+            coeffs: vec![a, b, c],
+        }
     }
 
     /// Interpolates from evaluation points to coefficients in place.
@@ -41,32 +43,32 @@ impl UnivariatePoly {
             2 => {
                 let f_0 = self.coeffs[0]; // f(0) = a
                 let f_1 = self.coeffs[1]; // f(1) = a + b
-                
+
                 let a = f_0; // Constant coefficient
                 let b = f_1 - f_0; // Linear coefficient
-                
+
                 self.coeffs[0] = a;
                 self.coeffs[1] = b;
                 Ok(())
-            },
+            }
             3 => {
                 let f_0 = self.coeffs[0]; // f(0) = a
                 let f_1 = self.coeffs[1]; // f(1) = a + b + c
                 let f_2 = self.coeffs[2]; // f(2) = a + 2b + 4c
-                
+
                 // System: a = f_0, a + b + c = f_1, a + 2b + 4c = f_2
                 let a = f_0;
                 let c = (f_2 + f_0 - f_1 - f_1) / Fp4::from_u32(2); // (f_2 - 2*f_1 + f_0) / 2
                 let b = f_1 - f_0 - c;
-                
+
                 self.coeffs[0] = a;
                 self.coeffs[1] = b;
                 self.coeffs[2] = c;
                 Ok(())
-            },
+            }
             _ => Err(SumCheckError::ValidationError(
-                "Interpolation requires 2-3 evaluation points".to_string()
-            ))
+                "Interpolation requires 2-3 evaluation points".to_string(),
+            )),
         }
     }
 
@@ -76,12 +78,12 @@ impl UnivariatePoly {
             2 => {
                 // f(x) = a + bx
                 self.coeffs[0] + self.coeffs[1] * x
-            },
+            }
             3 => {
                 // f(x) = a + x(b + cx) using Horner's method
                 self.coeffs[0] + x * (self.coeffs[1] + self.coeffs[2] * x)
-            },
-            _ => panic!("Invalid polynomial degree")
+            }
+            _ => panic!("Invalid polynomial degree"),
         }
     }
 
@@ -122,14 +124,14 @@ impl fmt::Display for UnivariatePoly {
                 let a = self.coeffs[0];
                 let b = self.coeffs[1];
                 write!(f, "{} + {}*x", a, b)
-            },
+            }
             3 => {
                 let a = self.coeffs[0];
                 let b = self.coeffs[1];
                 let c = self.coeffs[2];
                 write!(f, "{} + {}*x + {}*x^2", a, b, c)
-            },
-            _ => write!(f, "Invalid polynomial")
+            }
+            _ => write!(f, "Invalid polynomial"),
         }
     }
 }
@@ -161,8 +163,13 @@ mod univariate_tests {
             result.unwrap_err(),
             SumCheckError::ValidationError(_)
         ));
-        
-        let coeffs = vec![Fp4::from_u32(1), Fp4::from_u32(2), Fp4::from_u32(3), Fp4::from_u32(4)]; // Too many
+
+        let coeffs = vec![
+            Fp4::from_u32(1),
+            Fp4::from_u32(2),
+            Fp4::from_u32(3),
+            Fp4::from_u32(4),
+        ]; // Too many
         let result = UnivariatePoly::new(coeffs);
         assert!(result.is_err());
     }
@@ -241,8 +248,9 @@ mod univariate_tests {
 
     #[test]
     fn test_from_coeffs_deg2() {
-        let poly = UnivariatePoly::from_coeffs_deg2(Fp4::from_u32(1), Fp4::from_u32(2), Fp4::from_u32(3));
-        
+        let poly =
+            UnivariatePoly::from_coeffs_deg2(Fp4::from_u32(1), Fp4::from_u32(2), Fp4::from_u32(3));
+
         assert_eq!(poly.degree(), 2);
         assert_eq!(poly.constant_coeff(), Fp4::from_u32(1));
         assert_eq!(poly.linear_coeff(), Fp4::from_u32(2));
@@ -251,8 +259,9 @@ mod univariate_tests {
 
     #[test]
     fn test_evaluate_degree2() {
-        let poly = UnivariatePoly::from_coeffs_deg2(Fp4::from_u32(1), Fp4::from_u32(2), Fp4::from_u32(3)); // 1 + 2x + 3x^2
-        
+        let poly =
+            UnivariatePoly::from_coeffs_deg2(Fp4::from_u32(1), Fp4::from_u32(2), Fp4::from_u32(3)); // 1 + 2x + 3x^2
+
         assert_eq!(poly.evaluate(Fp4::ZERO), Fp4::from_u32(1)); // f(0) = 1
         assert_eq!(poly.evaluate(Fp4::ONE), Fp4::from_u32(6)); // f(1) = 1 + 2 + 3 = 6
         assert_eq!(poly.evaluate(Fp4::from_u32(2)), Fp4::from_u32(17)); // f(2) = 1 + 4 + 12 = 17
@@ -260,16 +269,17 @@ mod univariate_tests {
 
     #[test]
     fn test_interpolation_roundtrip_degree2() {
-        let original_poly = UnivariatePoly::from_coeffs_deg2(Fp4::from_u32(5), Fp4::from_u32(7), Fp4::from_u32(2));
-        
+        let original_poly =
+            UnivariatePoly::from_coeffs_deg2(Fp4::from_u32(5), Fp4::from_u32(7), Fp4::from_u32(2));
+
         let f_0 = original_poly.evaluate(Fp4::ZERO);
         let f_1 = original_poly.evaluate(Fp4::ONE);
         let f_2 = original_poly.evaluate(Fp4::from_u32(2));
         let evals = vec![f_0, f_1, f_2];
-        
+
         let mut eval_poly = UnivariatePoly::new(evals).unwrap();
         eval_poly.interpolate().unwrap();
-        
+
         assert_eq!(eval_poly.coeffs[0], Fp4::from_u32(5)); // Constant coefficient
         assert_eq!(eval_poly.coeffs[1], Fp4::from_u32(7)); // Linear coefficient
         assert_eq!(eval_poly.coeffs[2], Fp4::from_u32(2)); // Quadratic coefficient

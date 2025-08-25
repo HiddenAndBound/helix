@@ -42,4 +42,3 @@ pub use inner::InnerSumCheckProof;
 pub use outer::OuterSumCheckProof;
 pub use pcs::PCSSumCheckProof;
 pub use spark::SparkSumCheckProof;
-

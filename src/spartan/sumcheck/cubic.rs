@@ -1,10 +1,7 @@
 use p3_field::PrimeCharacteristicRing;
 
 use crate::{
-    Fp, Fp4,
-    challenger::Challenger,
-    eq::EqEvals,
-    polynomial::MLE,
+    Fp, Fp4, challenger::Challenger, eq::EqEvals, polynomial::MLE,
     spartan::univariate::UnivariatePoly,
 };
 

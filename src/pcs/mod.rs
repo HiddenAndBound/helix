@@ -348,7 +348,7 @@ impl Basefold {
 
         //Commit phase
         for round in 0..rounds {
-            let round_proof= match round {
+            let round_proof = match round {
                 0 => Self::process_sum_check_round(
                     poly,
                     &eval_point,
@@ -365,7 +365,7 @@ impl Basefold {
                 ),
             };
 
-             challenger.observe_fp4_elems(&round_proof.coefficients());
+            challenger.observe_fp4_elems(&round_proof.coefficients());
 
             eq.fold_in_place();
             let r = challenger.get_challenge();
@@ -400,7 +400,8 @@ impl Basefold {
         }
 
         //Query phase
-        let mut queries = challenger.get_indices(rounds as u32, config.queries);
+        let mut queries =
+            challenger.get_indices(rounds as u32 + config.rate.trailing_zeros(), config.queries);
 
         let mut codewords = Vec::with_capacity(rounds);
         let mut paths = Vec::with_capacity(rounds);
@@ -637,7 +638,6 @@ impl Basefold {
         let mut random_point = Vec::new();
         //Commit phase
         for round in 0..rounds {
-        
             let round_poly = &proof.sum_check_rounds[round];
             Self::verify_sum_check_round(
                 round_poly,
@@ -654,12 +654,14 @@ impl Basefold {
             challenger.observe_commitment(&proof.commitments[round]);
         }
 
-        let queries = challenger.get_indices(rounds as u32, config.queries);
+        let queries =
+            challenger.get_indices(rounds as u32 + config.rate.trailing_zeros(), config.queries);
 
         let mut current_codewords = &proof.codewords[0];
         let mut folded_codewords = Vec::with_capacity(config.queries);
         let mut merkle_paths = &proof.paths[0];
         for round in 0..rounds - 1 {
+            println!("{round}");
             let halfsize = 1 << (rounds - round - 1);
 
             for query in 0..QUERIES {
@@ -682,13 +684,13 @@ impl Basefold {
                         ));
                     }
                     _ => {
+                        check_fold(&folded_codewords, &queries, query, halfsize, left, right)?;
                         MerkleTree::verify_path(
                             leaf_hash,
                             queries[query],
                             path,
                             proof.commitments[round - 1],
                         )?;
-                        check_fold(&folded_codewords, &queries, query, halfsize, left, right)?;
                         folded_codewords[query] = fold_pair(
                             current_codewords[query],
                             random_point[round],
@@ -754,7 +756,7 @@ impl Basefold {
                 *current_claim,
                 expected
             );
-        }   
+        }
         Ok(())
     }
 }
@@ -817,45 +819,53 @@ fn check_fold(
     Ok(())
 }
 
-#[test]
-fn test_basefold() -> Result<(), anyhow::Error> {
-    // Test the BaseFold commitment scheme
-    let mut rng = StdRng::seed_from_u64(0);
-    let mut challenger = Challenger::new();
+#[cfg(test)]
+mod tests {
+    use p3_field::PrimeCharacteristicRing;
+    use rand::{Rng, SeedableRng, rngs::StdRng};
 
-    const N_VARS: usize = 6;
-    let roots = Fp::roots_of_unity_table(1 << (N_VARS + 1));
-    let mle = MLE::new(
-        (0..1 << N_VARS)
-            .map(|_| Fp::from_u32(rng.r#gen()))
-            .collect(),
-    );
+    use super::*;
 
-    let eval_point: Vec<Fp4> = (0..N_VARS).map(|_| Fp4::from_u128(rng.r#gen())).collect();
-    let evaluation = mle.evaluate(&eval_point);
-    let config = BaseFoldConfig::new();
-    let (commitment, prover_data) = Basefold::commit(&mle, &roots, &config).unwrap();
-    let eval_proof = Basefold::evaluate(
-        &mle,
-        &eval_point,
-        &mut challenger,
-        evaluation,
-        prover_data,
-        &roots,
-        &config,
-    )
-    .unwrap();
+    #[test]
+    fn test_basefold() -> Result<(), anyhow::Error> {
+        // Test the BaseFold commitment scheme
+        let mut rng = StdRng::seed_from_u64(0);
+        let mut challenger = Challenger::new();
 
-    let mut challenger = Challenger::new();
-    let verification_result = Basefold::verify(
-        eval_proof,
-        evaluation,
-        &eval_point,
-        commitment,
-        &roots,
-        &mut challenger,
-        &config,
-    )?;
+        const N_VARS: usize = 6;
+        let roots = Fp::roots_of_unity_table(1 << (N_VARS + 1));
+        let mle = MLE::new(
+            (0..1 << N_VARS)
+                .map(|_| Fp::from_u32(rng.r#gen()))
+                .collect(),
+        );
 
-    Ok(())
+        let eval_point: Vec<Fp4> = (0..N_VARS).map(|_| Fp4::from_u128(rng.r#gen())).collect();
+        let evaluation = mle.evaluate(&eval_point);
+        let config = BaseFoldConfig::new();
+        let (commitment, prover_data) = Basefold::commit(&mle, &roots, &config).unwrap();
+        let eval_proof = Basefold::evaluate(
+            &mle,
+            &eval_point,
+            &mut challenger,
+            evaluation,
+            prover_data,
+            &roots,
+            &config,
+        )
+        .unwrap();
+
+        let mut challenger = Challenger::new();
+        let verification_result = Basefold::verify(
+            eval_proof,
+            evaluation,
+            &eval_point,
+            commitment,
+            &roots,
+            &mut challenger,
+            &config,
+        )?;
+
+        Ok(())
+    }
 }

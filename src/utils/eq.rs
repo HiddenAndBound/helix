@@ -56,8 +56,8 @@ impl<'a> EqEvals<'a> {
 
         // For each coefficient pair (low, high) where low corresponds to x₀=0 and high to x₀=1
         for i in 0..half_len {
-            let low = self.coeffs[(i<<1)]; // eq(..., x₀=0)
-            let high = self.coeffs[(i<<1)|1]; // eq(..., x₀=1)
+            let low = self.coeffs[(i << 1)]; // eq(..., x₀=0)
+            let high = self.coeffs[(i << 1) | 1]; // eq(..., x₀=1)
 
             // Compute (1 - challenge) * low + challenge * high
             let folded = low + high;
@@ -90,18 +90,18 @@ impl<'a> Index<Range<usize>> for EqEvals<'a> {
 mod tests {
     use super::*;
     use p3_field::PrimeCharacteristicRing;
-    use rand::{rngs::StdRng, Rng, SeedableRng};
-
+    use rand::{Rng, SeedableRng, rngs::StdRng};
 
     //Tests whether given eq = eq(r_0,..., r_{n-1}; x_0,..., x_{n-1}), fold_in_place returns eq(r_1,...,r_{n-1}; x_1, ..., x_{n-1})
     #[test]
-    fn test_fold_in_place(){
-
+    fn test_fold_in_place() {
         let mut rng = StdRng::seed_from_u64(0);
-        let point = (0..4).map(|_| Fp4::from_u128(rng.r#gen())).collect::<Vec<Fp4>>();
+        let point = (0..4)
+            .map(|_| Fp4::from_u128(rng.r#gen()))
+            .collect::<Vec<Fp4>>();
         let mut eq = EqEvals::gen_from_point(&point);
         eq.fold_in_place();
-        
+
         let mut eq_0 = EqEvals::gen_from_point(&point[1..]);
 
         assert_eq!(eq, eq_0)
@@ -388,7 +388,6 @@ mod tests {
         let sum: Fp4 = eq.coeffs.iter().copied().sum();
         assert_eq!(sum, Fp4::ONE);
     }
-
 
     #[test]
     fn test_fold_in_place_single_var() {
