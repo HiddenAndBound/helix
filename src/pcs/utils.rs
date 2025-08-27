@@ -151,7 +151,8 @@ where
     Fp4: ExtensionField<F>,
 {
     let (a0, a1) = codewords;
-    let (g0, g1) = ((a0 + a1) * HALF, (a0 - a1) * HALF * twiddle);
+    //todo: pass batch inverted twiddles
+    let (g0, g1) = ((a0 + a1) * HALF, (a0 - a1) * HALF * twiddle.inverse());
     r*(g1 - g0) + g0
 }
 

@@ -798,7 +798,7 @@ fn check_fold(
     left: Fp4,
     right: Fp4,
 ) -> anyhow::Result<()> {
-    if queries[query] > halfsize {
+    if queries[query] >= halfsize {
         if folded_codewords[query] != right {
             anyhow::bail!(
                 "Folded codeword verification failed: expected {:?}, got {:?}",
