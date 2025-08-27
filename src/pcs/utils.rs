@@ -99,7 +99,7 @@ pub fn encode_mle(poly: &MLE<Fp>, roots: &[Vec<Fp>], rate: usize) -> Encoding {
 
     assert_eq!(
         roots.len(),
-        buffer.len().trailing_zeros() as usize - 1,
+        buffer.len().trailing_zeros() as usize - rate.trailing_zeros() as usize,
         "Root table not large enough to encode the MLE."
     );
 
@@ -195,16 +195,16 @@ where
 /// let twiddle_factors = &roots[round]; // Length 2 for 4→2 folding
 /// let folded = fold(&encoding, challenge, twiddle_factors); // Length 2
 /// ```
-pub fn fold<F>(mle: &[F], random_challenge: Fp4, roots: &[Fp]) -> Vec<Fp4>
+pub fn fold<F>(code: &[F], random_challenge: Fp4, roots: &[Fp]) -> Vec<Fp4>
 where
     F: Field + Mul<Fp, Output = F>,
     Fp4: ExtensionField<F>,
 {
-    let half_size = mle.len() >> 1;
+    let half_size = code.len() >> 1;
     let mut folded = Vec::with_capacity(half_size);
     for i in 0..half_size {
         folded.push(fold_pair(
-            (mle[i], mle[i + half_size]),
+            (code[i], code[i + half_size]),
             random_challenge,
             roots[i],
         ));

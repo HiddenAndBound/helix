@@ -821,7 +821,7 @@ fn check_fold(
 
 #[cfg(test)]
 mod tests {
-    
+
     use p3_baby_bear::BabyBear;
     use p3_field::{extension::BinomiallyExtendable, PrimeCharacteristicRing};
     use p3_monty_31::dft::{self, RecursiveDft};
@@ -902,9 +902,9 @@ mod tests {
 
         println!("{:?}", test);
         
+        let powers:Vec<Fp> = roots[0][1].powers().take(16).collect();
+        println!("{:?}", powers);
         println!("{:?}", roots[0]);
-        let mut acc = Fp::ZERO;
-
 
     }
 }
