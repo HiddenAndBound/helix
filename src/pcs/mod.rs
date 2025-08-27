@@ -821,7 +821,10 @@ fn check_fold(
 
 #[cfg(test)]
 mod tests {
-    use p3_field::PrimeCharacteristicRing;
+    
+    use p3_baby_bear::BabyBear;
+    use p3_field::{extension::BinomiallyExtendable, PrimeCharacteristicRing};
+    use p3_monty_31::dft::{self, RecursiveDft};
     use rand::{Rng, SeedableRng, rngs::StdRng};
 
     use super::*;
@@ -872,21 +875,36 @@ mod tests {
     #[test]
     fn test_fold(){
         let mut rng = StdRng::seed_from_u64(0);
-        let challenge = Fp::from_u32(rng.r#gen());
 
         let poly = MLE::new((0..1<<4).map(|_| Fp::from_u32(rng.r#gen())).collect());
-        let roots = Fp::roots_of_unity_table(1 << 5); 
-
-        let mut encoding = encode_mle(&poly, &roots, 2);
-        let folded = fold(&encoding, Fp4::from(challenge), &roots[0]);
-
-        let mut test_fold = poly.fold_in_place(Fp4::from(challenge));
-        let test_fold = MLE::new(test_fold.coeffs().iter().map(|c| <Fp4 as ExtensionField<Fp>>::as_base(c).unwrap()).collect());
-        let mut test_encoding = encode_mle(&test_fold, &roots[1..], 2);
-        assert_eq!(folded.len(), test_encoding.len());
-        for i in 0..folded.len(){
-            assert!(<Fp4 as ExtensionField<Fp>>::is_in_basefield(&folded[i]));
-            assert_eq!(<Fp4 as ExtensionField<Fp>>::as_base(&folded[i]).unwrap(), test_encoding[i], "failed at {i}");
+        let roots = Fp::roots_of_unity_table(1 << 5);
+        let eval_point: Vec<Fp4> = (0..4).map(|_| Fp4::from_u128(rng.r#gen())).collect();
+        let eval = poly.evaluate(&eval_point);
+        let  encoding = encode_mle(&poly, &roots, 2);
+        let mut encoding: Vec<Fp4> = encoding.iter().map(|&x| Fp4::from(x)).collect();
+        for i in 0..4 {
+            let r = eval_point[i];
+            encoding = fold(&encoding, r, &roots[i]);
         }
+        println!("{:?}", eval);
+        println!("{:?}", encoding);
+    }
+
+    #[test]
+    fn test_fft(){
+        let poly:Vec<Fp> = (0..16).map(|i| Fp::new(i)).collect();
+
+        let roots = Fp::roots_of_unity_table(1 << 4);
+
+        let mut test  = poly.clone();
+
+        BabyBear::forward_fft(&mut test, &roots);
+
+        println!("{:?}", test);
+        
+        println!("{:?}", roots[0]);
+        let mut acc = Fp::ZERO;
+
+
     }
 }

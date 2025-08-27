@@ -103,7 +103,12 @@ impl InnerSumCheckProof {
     }
 
     /// Verifies the inner sum-check proof. Panics if verification fails.
-    pub fn verify(&self, outer_claims: [Fp4; 3], gamma: Fp4, challenger: &mut Challenger) {
+    pub fn verify(
+        &self,
+        outer_claims: [Fp4; 3],
+        gamma: Fp4,
+        challenger: &mut Challenger,
+    ) -> (Vec<Fp4>, [Fp4; 4]) {
         let rounds = self.round_proofs.len();
 
         let [a_claim, b_claim, c_claim] = outer_claims;
@@ -131,7 +136,9 @@ impl InnerSumCheckProof {
         assert_eq!(
             current_claim,
             (gamma * a + gamma.square() * b + gamma.cube() * c) * z
-        )
+        );
+
+        (round_challenges, self.final_evals)
     }
 }
 

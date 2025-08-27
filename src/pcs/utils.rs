@@ -54,7 +54,7 @@ pub const QUERIES: usize = 144;
 pub const RATE: usize = 2;
 
 /// Precomputed constant 1/2 in BabyBear field for efficient folding operations.
-pub const HALF: Fp = Fp::new(134217727);
+pub const HALF: Fp = Fp::new(1006632961);
 
 /// Encodes a multilinear polynomial using Reed-Solomon codes via forward FFT.
 ///
@@ -104,6 +104,7 @@ pub fn encode_mle(poly: &MLE<Fp>, roots: &[Vec<Fp>], rate: usize) -> Encoding {
     );
 
     BabyBear::forward_fft(&mut buffer, roots);
+    bit_reverse_sort(&mut buffer);
     buffer
 }
 
@@ -407,4 +408,295 @@ where
     zip(left, right)
         .map(|(l, r)| hash_field_pair(l.clone(), r.clone()))
         .collect()
+}
+
+/// Performs an in-place bit-reverse sort on a vector.
+///
+/// This function rearranges the elements in a vector so that the element at position `i`
+/// is moved to position `bit_reverse(i)`. This reordering is commonly used in FFT algorithms
+/// to optimize memory access patterns and eliminate the need for bit-reversal during the
+/// transform process.
+///
+/// # Mathematical Process
+/// For a vector of length n = 2^k:
+/// 1. **Index computation**: For each position i, compute j = bit_reverse(i, k bits)
+/// 2. **Element swapping**: If i < j, swap elements at positions i and j
+/// 3. **Cycle completion**: Each element reaches its final bit-reversed position
+///
+/// The bit-reversal operation reverses the binary representation of the index within
+/// k bits, where k = log₂(n).
+///
+/// # Parameters
+/// * `vec` - Vector to sort in-place (length must be a power of 2)
+///
+/// # Panics
+/// * If vector length is not a power of 2
+///
+/// # Performance
+/// - **Time complexity**: O(n) where n is vector length
+/// - **Space complexity**: O(1) additional space (in-place operation)
+/// - **Optimization**: Uses `std::intrinsics::bitreverse` for maximum efficiency
+///
+/// # Usage in FFT Algorithms
+/// Many FFT implementations require input data in bit-reversed order to optimize
+/// the butterfly operations and memory access patterns. This function pre-processes
+/// the data to eliminate bit-reversal overhead during the actual FFT computation.
+///
+/// # Example
+/// ```rust,ignore
+/// let mut vec = vec![0, 1, 2, 3, 4, 5, 6, 7];
+/// bit_reverse_sort(&mut vec);
+/// // Result: [0, 4, 2, 6, 1, 5, 3, 7] (indices 0,1,2,3,4,5,6,7 -> 0,4,2,6,1,5,3,7)
+/// ```
+pub fn bit_reverse_sort<T>(vec: &mut Vec<T>) {
+    let len = vec.len();
+    assert!(
+        len == 0 || len.is_power_of_two(),
+        "Vector length must be a power of 2, got {}",
+        len
+    );
+
+    if len <= 1 {
+        return;
+    }
+
+    let num_bits = len.trailing_zeros();
+
+    for i in 0..len {
+        let j = (std::intrinsics::bitreverse(i) >> (usize::BITS - num_bits)) as usize;
+        if i < j {
+            vec.swap(i, j);
+        }
+    }
+}
+
+/// Returns a new vector with elements arranged in bit-reversed order.
+///
+/// This function creates a new vector where each element from the original vector at position `i`
+/// is placed at position `bit_reverse(i)`. Unlike `bit_reverse_sort`, this function does not
+/// modify the original vector but returns a new one with the reordered elements.
+///
+/// # Mathematical Process
+/// For a vector of length n = 2^k:
+/// 1. **New vector creation**: Create a new vector of the same length
+/// 2. **Index mapping**: For each position i, compute j = bit_reverse(i, k bits)  
+/// 3. **Element copying**: Copy element from position i to position j in the new vector
+///
+/// # Parameters
+/// * `vec` - Vector to reorder (length must be a power of 2)
+///
+/// # Returns
+/// * `Vec<T>` - New vector with elements in bit-reversed order
+///
+/// # Panics
+/// * If vector length is not a power of 2
+///
+/// # Performance
+/// - **Time complexity**: O(n) where n is vector length
+/// - **Space complexity**: O(n) for the new vector
+/// - **Memory**: Requires cloning each element once
+///
+/// # Type Requirements
+/// Elements must implement `Clone` since they are copied to the new vector.
+///
+/// # Usage
+/// This function is useful when you need to maintain the original vector while also
+/// having a bit-reversed version, or when working with immutable data structures.
+///
+/// # Example
+/// ```rust,ignore
+/// let vec = vec![0, 1, 2, 3, 4, 5, 6, 7];
+/// let reversed = bit_reverse_sorted(&vec);
+/// // Original: [0, 1, 2, 3, 4, 5, 6, 7]
+/// // Result:   [0, 4, 2, 6, 1, 5, 3, 7]
+/// ```
+pub fn bit_reverse_sorted<T: Clone>(vec: &Vec<T>) -> Vec<T> {
+    let len = vec.len();
+    assert!(
+        len == 0 || len.is_power_of_two(),
+        "Vector length must be a power of 2, got {}",
+        len
+    );
+
+    if len <= 1 {
+        return vec.clone();
+    }
+
+    let num_bits = len.trailing_zeros();
+    let mut result = vec![vec[0].clone(); len];
+
+    for i in 0..len {
+        let j = (std::intrinsics::bitreverse(i) >> (usize::BITS - num_bits)) as usize;
+        result[j] = vec[i].clone();
+    }
+
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use p3_field::integers::QuotientMap;
+
+    use super::*;
+
+    #[test]
+    fn test_bit_reverse_sort_basic() {
+        let mut vec = vec![0, 1, 2, 3, 4, 5, 6, 7];
+        bit_reverse_sort(&mut vec);
+        
+        // For length 8 (3 bits), bit-reverse mapping:
+        // 0 (000) -> 0 (000), 1 (001) -> 4 (100), 2 (010) -> 2 (010), 3 (011) -> 6 (110)
+        // 4 (100) -> 1 (001), 5 (101) -> 5 (101), 6 (110) -> 3 (011), 7 (111) -> 7 (111)
+        assert_eq!(vec, vec![0, 4, 2, 6, 1, 5, 3, 7]);
+    }
+
+    #[test]
+    fn test_bit_reverse_sort_length_4() {
+        let mut vec = vec!['a', 'b', 'c', 'd'];
+        bit_reverse_sort(&mut vec);
+        
+        // For length 4 (2 bits), bit-reverse mapping:
+        // 0 (00) -> 0 (00), 1 (01) -> 2 (10), 2 (10) -> 1 (01), 3 (11) -> 3 (11)
+        assert_eq!(vec, vec!['a', 'c', 'b', 'd']);
+    }
+
+    #[test]
+    fn test_bit_reverse_sort_length_2() {
+        let mut vec = vec![10, 20];
+        bit_reverse_sort(&mut vec);
+        
+        // For length 2 (1 bit), bit-reverse mapping:
+        // 0 (0) -> 0 (0), 1 (1) -> 1 (1)
+        assert_eq!(vec, vec![10, 20]);
+    }
+
+    #[test]
+    fn test_bit_reverse_sort_length_1() {
+        let mut vec = vec![42];
+        bit_reverse_sort(&mut vec);
+        assert_eq!(vec, vec![42]);
+    }
+
+    #[test]
+    fn test_bit_reverse_sort_empty() {
+        let mut vec: Vec<i32> = vec![];
+        bit_reverse_sort(&mut vec);
+        assert_eq!(vec, vec![]);
+    }
+
+    #[test]
+    fn test_bit_reverse_sort_large() {
+        let mut vec: Vec<usize> = (0..16).collect();
+        bit_reverse_sort(&mut vec);
+        
+        // For length 16 (4 bits), verify a few key mappings:
+        // 0 (0000) -> 0 (0000), 1 (0001) -> 8 (1000), 2 (0010) -> 4 (0100), 3 (0011) -> 12 (1100)
+        assert_eq!(vec[0], 0);  // 0 -> 0
+        assert_eq!(vec[8], 1);  // 1 -> 8
+        assert_eq!(vec[4], 2);  // 2 -> 4  
+        assert_eq!(vec[12], 3); // 3 -> 12
+        
+        // Check that all original elements are present
+        let mut sorted_vec = vec.clone();
+        sorted_vec.sort();
+        assert_eq!(sorted_vec, (0..16).collect::<Vec<_>>());
+    }
+
+    #[test]
+    #[should_panic(expected = "Vector length must be a power of 2")]
+    fn test_bit_reverse_sort_non_power_of_two() {
+        let mut vec = vec![1, 2, 3];  // length 3 is not a power of 2
+        bit_reverse_sort(&mut vec);
+    }
+
+    #[test]
+    fn test_bit_reverse_sorted_basic() {
+        let vec = vec![0, 1, 2, 3, 4, 5, 6, 7];
+        let result = bit_reverse_sorted(&vec);
+        
+        // Should produce same result as in-place version
+        assert_eq!(result, vec![0, 4, 2, 6, 1, 5, 3, 7]);
+        
+        // Original should be unchanged
+        assert_eq!(vec, vec![0, 1, 2, 3, 4, 5, 6, 7]);
+    }
+
+    #[test]
+    fn test_bit_reverse_sorted_strings() {
+        let vec = vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()];
+        let result = bit_reverse_sorted(&vec);
+        
+        assert_eq!(result, vec!["a".to_string(), "c".to_string(), "b".to_string(), "d".to_string()]);
+        assert_eq!(vec, vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()]);
+    }
+
+    #[test]
+    fn test_bit_reverse_sorted_field_elements() {
+        let vec: Vec<Fp> = (0..8).map(|i| Fp::from_u32(i)).collect();
+        let result = bit_reverse_sorted(&vec);
+        
+        let expected: Vec<Fp> = vec![0, 4, 2, 6, 1, 5, 3, 7]
+            .into_iter()
+            .map(|i| Fp::from_u32(i))
+            .collect();
+        
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    #[should_panic(expected = "Vector length must be a power of 2")]
+    fn test_bit_reverse_sorted_non_power_of_two() {
+        let vec = vec![1, 2, 3, 4, 5];  // length 5 is not a power of 2
+        bit_reverse_sorted(&vec);
+    }
+
+    #[test]
+    fn test_bit_reverse_inverse_property() {
+        // Test that applying bit-reverse twice returns to original order
+        let original = vec![10, 20, 30, 40, 50, 60, 70, 80];
+        let mut vec = original.clone();
+        
+        // Apply bit-reverse twice
+        bit_reverse_sort(&mut vec);
+        bit_reverse_sort(&mut vec);
+        
+        assert_eq!(vec, original);
+    }
+
+    #[test]
+    fn test_bit_reverse_consistency() {
+        // Test that in-place and copying versions produce same result
+        let original = vec![100, 200, 300, 400, 500, 600, 700, 800];
+        
+        let mut in_place = original.clone();
+        bit_reverse_sort(&mut in_place);
+        
+        let copied = bit_reverse_sorted(&original);
+        
+        assert_eq!(in_place, copied);
+    }
+
+    #[test]
+    fn test_bit_reverse_with_complex_types() {
+        #[derive(Debug, Clone, PartialEq)]
+        struct ComplexData {
+            id: usize,
+            name: String,
+        }
+        
+        let vec = vec![
+            ComplexData { id: 0, name: "zero".to_string() },
+            ComplexData { id: 1, name: "one".to_string() },
+            ComplexData { id: 2, name: "two".to_string() },
+            ComplexData { id: 3, name: "three".to_string() },
+        ];
+        
+        let result = bit_reverse_sorted(&vec);
+        
+        // Expected order: [0, 2, 1, 3]
+        assert_eq!(result[0].id, 0);
+        assert_eq!(result[1].id, 2);
+        assert_eq!(result[2].id, 1);
+        assert_eq!(result[3].id, 3);
+    }
 }

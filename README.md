@@ -217,7 +217,7 @@ The ultimate goal is a fully integrated system combining:
 - Twist & Shout's efficient memory checking
 - Zero-knowledge features for privacy
 
-This combination would create a high-performance zkVM suitable for production use while maintaining the simplicity and auditability that makes these protocols attractive.
+This combination would create a high-performance SNARK suitable for production use while maintaining the simplicity and auditability that makes these protocols attractive.
 
 For detailed technical specifications of the complete vision, see the [comprehensive implementation guide](context/total_plan/spartan-whir-twist-shout-guide.md).
 

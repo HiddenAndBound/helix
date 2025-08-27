@@ -3,8 +3,9 @@
 /.claude
 /.kilocode
 /spartan_plan
-
 browser*
 /.*
 *.md
+*.pdf
+*.yaml
 planning/.DS_Store
