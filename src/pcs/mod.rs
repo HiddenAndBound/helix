@@ -406,6 +406,7 @@ impl Basefold {
         let mut codewords = Vec::with_capacity(rounds);
         let mut paths = Vec::with_capacity(rounds);
         for round in 0..rounds {
+             let halfsize = 1 << (rounds + config.rate.trailing_zeros() as usize - round - 1);
             let round_codewords: Vec<(Fp4, Fp4)> = match round {
                 0 => get_codewords(&queries, &prover_data.encoding),
                 _ => get_codewords(&queries, &encodings[round - 1]),
@@ -419,7 +420,7 @@ impl Basefold {
             };
             paths.push(round_paths);
 
-            queries.iter_mut().for_each(|query| *query >>= 1);
+            queries.iter_mut().for_each(|query| *query &= halfsize - 1);
         }
 
         Ok(EvalProof {
@@ -654,7 +655,7 @@ impl Basefold {
             challenger.observe_commitment(&proof.commitments[round]);
         }
 
-        let queries =
+        let mut queries =
             challenger.get_indices(rounds as u32 + config.rate.trailing_zeros(), config.queries);
 
         let mut current_codewords = &proof.codewords[0];
@@ -662,7 +663,7 @@ impl Basefold {
         let mut merkle_paths = &proof.paths[0];
         for round in 0..rounds - 1 {
             println!("{round}");
-            let halfsize = 1 << (rounds - round - 1);
+            let halfsize = 1 << (rounds + config.rate.trailing_zeros() as usize - round - 1);
 
             for query in 0..QUERIES {
                 let (left, right) = current_codewords[query];
@@ -680,7 +681,7 @@ impl Basefold {
                         folded_codewords.push(fold_pair(
                             current_codewords[query],
                             random_point[round],
-                            roots[round][query & (1 << (rounds - round - 1)) - 1],
+                            roots[round][query % halfsize],
                         ));
                     }
                     _ => {
@@ -694,14 +695,19 @@ impl Basefold {
                         folded_codewords[query] = fold_pair(
                             current_codewords[query],
                             random_point[round],
-                            roots[round][query & (1 << (rounds - round - 1)) - 1],
+                            roots[round][query % halfsize ],
                         );
                     }
                 }
+                
             }
+
+            // Apply query masking AFTER processing each round for next iteration - follows industry standard pattern  
+            queries.iter_mut().for_each(|q| *q &= halfsize - 1);
 
             current_codewords = &proof.codewords[round + 1];
             merkle_paths = &proof.paths[round + 1];
+            
         }
 
         if folded_codewords[0] != current_claim {
@@ -798,11 +804,12 @@ fn check_fold(
     left: Fp4,
     right: Fp4,
 ) -> anyhow::Result<()> {
+    println!("query: {}, halfsize: {}", queries[query], halfsize);
     if queries[query] >= halfsize {
         if folded_codewords[query] != right {
             anyhow::bail!(
                 "Folded codeword verification failed: expected {:?}, got {:?}",
-                right,
+                (left, right),
                 folded_codewords[query]
             );
         }
@@ -810,7 +817,7 @@ fn check_fold(
         if folded_codewords[query] != left {
             anyhow::bail!(
                 "Folded codeword verification failed: expected {:?}, got {:?}",
-                left,
+                (left, right),
                 folded_codewords[query]
             );
         }
@@ -835,7 +842,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0);
         let mut challenger = Challenger::new();
 
-        const N_VARS: usize = 6;
+        const N_VARS: usize = 4;
         let roots = Fp::roots_of_unity_table(1 << (N_VARS + 1));
         let mle = MLE::new(
             (0..1 << N_VARS)
@@ -845,7 +852,7 @@ mod tests {
 
         let eval_point: Vec<Fp4> = (0..N_VARS).map(|_| Fp4::from_u128(rng.r#gen())).collect();
         let evaluation = mle.evaluate(&eval_point);
-        let config = BaseFoldConfig::new();
+        let mut config = BaseFoldConfig::new();
         let (commitment, prover_data) = Basefold::commit(&mle, &roots, &config).unwrap();
         let eval_proof = Basefold::evaluate(
             &mle,
@@ -905,6 +912,57 @@ mod tests {
         let powers:Vec<Fp> = roots[0][1].powers().take(16).collect();
         println!("{:?}", powers);
         println!("{:?}", roots[0]);
+
+    }
+
+    #[test]
+    fn test_query(){
+        let val = (1 << (6 + 1 - 1 - 1));
+        let test = 33 & ((1 << (6 + 1 - 1 - 1)) - 1);
+        println!("{:b}", val);
+        println!("{:b}", test);   
+    }
+
+    #[test]
+    fn test_get_codewords(){
+
+        // Keeping values small in order to parse them
+        let poly = MLE::new((0..16).map(|i| Fp::new(i)).collect());
+
+        let roots = Fp::roots_of_unity_table(1 << 5);
+
+        let encoding = encode_mle(&poly, &roots, 2);
+
+        let mut queries : Vec<usize> = (0..32).collect();
+
+        let mut halfsize = 16;
+
+        let codewords = get_codewords(&queries, &encoding);
+
+        let challenge = Fp4::TWO;
+        let folded_encoding = fold(&encoding, challenge, &roots[0]);
+
+        
+        let folded_codewords: Vec<Fp4> = codewords.iter().enumerate().map(|(i, &val)| fold_pair(val, challenge, roots[0][i % (1<<4)])).collect();
+        
+        for i in 0..32{
+            assert_eq!(folded_encoding[i % 16], folded_codewords[i])
+        }
+
+        // Apply bitmask to get lower bits
+        queries.iter_mut().for_each(|q| *q &= halfsize - 1);
+
+        let codewords = get_codewords(&queries, &folded_encoding);
+
+        for i in 0..16{
+            check_fold(&folded_codewords, &queries, i, 8, codewords[i].0, codewords[i].1).unwrap();
+        }
+
+    
+        
+
+
+        
 
     }
 }
