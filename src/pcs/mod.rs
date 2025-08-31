@@ -168,7 +168,7 @@ pub struct ProverData {
 ///
 /// # Protocol Structure
 /// The proof is generated through n rounds (where n = number of variables):
-/// 1. Each round produces a sum-check univariate polynomial  
+/// 1. Each round produces a sum-check univariate polynomial
 /// 2. Encoding and polynomial are folded using verifier's challenge
 /// 3. New commitment is generated for the folded encoding
 /// 4. Random queries verify consistency of folding operations
@@ -201,7 +201,7 @@ impl Basefold {
     /// # Mathematical Process
     /// 1. **Reed-Solomon Encoding**: Apply forward FFT to polynomial coefficients using provided roots
     /// 2. **Pairing**: Split encoding into pairs (E[0],E[1]), (E[2],E[3]), ..., (E[n-2],E[n-1])
-    /// 3. **Hashing**: Compute leaf hashes H(E[2i], E[2i+1]) for each pair  
+    /// 3. **Hashing**: Compute leaf hashes H(E[2i], E[2i+1]) for each pair
     /// 4. **Merkle Tree**: Build tree over leaf hashes to get root commitment
     ///
     /// # Parameters
@@ -222,7 +222,7 @@ impl Basefold {
     /// * **Succinctness**: Commitment size is constant (32 bytes) regardless of polynomial degree
     ///
     /// # Example
-    /// ```rust,ignore  
+    /// ```rust,ignore
     /// let poly = MLE::new(vec![Fp::ONE, Fp::TWO, Fp::ZERO, Fp::ONE]); // 2-variable polynomial
     /// let roots = generate_fft_roots_for_depth(2); // Roots for 2 variables
     /// let config = BaseFoldConfig::default();
@@ -250,8 +250,8 @@ impl Basefold {
         let encoding = encode_mle(poly, roots, config.rate);
 
         let (left, right) = encoding.split_at(encoding.len() / 2);
-        let leaves: Vec<[u8; 32]> = create_hash_leaves_from_pairs(left, right);
 
+        let leaves: Vec<[u8; 32]> = create_hash_leaves_from_pairs(left, right);
         let merkle_tree = MerkleTree::from_hash(&leaves)?;
         let commitment = merkle_tree.root();
 
@@ -270,13 +270,13 @@ impl Basefold {
     /// evaluation point r, and claimed value v. The proof combines sum-check rounds with encoding folding
     /// to achieve both correctness and soundness.
     ///
-    /// # Mathematical Process  
+    /// # Mathematical Process
     /// For n rounds (where n = number of polynomial variables):
     /// 1. **Sum-check Round**: Generate univariate polynomial g_i(X) from sum-check reduction
-    /// 2. **Challenge Generation**: Fiat-Shamir challenge r_i from g_i coefficients  
+    /// 2. **Challenge Generation**: Fiat-Shamir challenge r_i from g_i coefficients
     /// 3. **Dual Folding**:
     ///    - Encoding: E_{i+1} = fold(E_i, r_i, roots[i])
-    ///    - Polynomial: P_{i+1} = P_i.fold_in_place(r_i)  
+    ///    - Polynomial: P_{i+1} = P_i.fold_in_place(r_i)
     /// 4. **Commitment Update**: Build Merkle tree over E_{i+1}, observe root
     /// 5. **Claim Update**: claim_{i+1} = g_i(r_i)
     ///
@@ -284,7 +284,7 @@ impl Basefold {
     ///
     /// # Parameters
     /// * `poly` - The multilinear polynomial to evaluate (must match commitment)
-    /// * `eval_point` - Point r = [r₁, r₂, ..., rₙ] where polynomial is evaluated  
+    /// * `eval_point` - Point r = [r₁, r₂, ..., rₙ] where polynomial is evaluated
     /// * `challenger` - Fiat-Shamir challenger for generating randomness
     /// * `evaluation` - Claimed value v = P(r) that the proof will demonstrate
     /// * `prover_data` - Encoding and Merkle tree from commitment phase
@@ -296,7 +296,7 @@ impl Basefold {
     ///
     /// # Mathematical Invariants
     /// * After round i: folded_encoding corresponds to i-times-folded polynomial
-    /// * Sum-check consistency: g_i(0) + g_i(1) = previous_claim  
+    /// * Sum-check consistency: g_i(0) + g_i(1) = previous_claim
     /// * Final claim equals actual polynomial evaluation at random point
     ///
     /// # Security Properties
@@ -304,13 +304,13 @@ impl Basefold {
     /// * **Soundness**: Cheating prover cannot convince verifier of incorrect evaluation except with negligible probability
     /// * **Zero-Knowledge**: None - proof reveals information about polynomial structure
     ///
-    /// # Panics  
+    /// # Panics
     /// * If evaluation point dimension doesn't match polynomial variable count
     ///
     /// # Example
     /// ```rust,ignore
     /// let eval_point = vec![Fp4::from_u32(5), Fp4::from_u32(7)];
-    /// let evaluation = poly.evaluate(&eval_point); // Honest evaluation  
+    /// let evaluation = poly.evaluate(&eval_point); // Honest evaluation
     /// let mut challenger = Challenger::new();
     /// let config = BaseFoldConfig::default();
     /// let proof = Basefold::evaluate(&poly, &eval_point, &mut challenger,
@@ -399,14 +399,22 @@ impl Basefold {
             random_point.push(r);
         }
 
-        //Query phase
-        let mut queries =
-            challenger.get_indices(rounds as u32 + config.rate.trailing_zeros(), config.queries);
+        //||============ QUERY PHASE ============||
+
+        // The verifier (or the random oracle, which is the challenger for us concretely) at this point has observed the prover's sumcheck messages as well the commitments throughout the commit phase which was interleaved with the sumcheck protocol.
+        // Now the verifier generates queries to test consistency between the committed oracles, which are concretely merkle tree roots, and finally test proximity to a valid codeword.
+
+        //The queries should lie in the range 0...encoding.len()/2. The provided codewords, should contain the indexed value at i, as well as i + halfsize which the verifier requires to test consistency.
+
+        let mut log_domain_size = rounds as u32 + config.rate.trailing_zeros() - 1;
+        let mut domain_size = 1 << log_domain_size;
+        let mut queries = challenger.get_indices(log_domain_size, config.queries);
 
         let mut codewords = Vec::with_capacity(rounds);
         let mut paths = Vec::with_capacity(rounds);
+
         for round in 0..rounds {
-             let halfsize = 1 << (rounds + config.rate.trailing_zeros() as usize - round - 1);
+            let halfsize = domain_size >> 1;
             let round_codewords: Vec<(Fp4, Fp4)> = match round {
                 0 => get_codewords(&queries, &prover_data.encoding),
                 _ => get_codewords(&queries, &encodings[round - 1]),
@@ -420,7 +428,10 @@ impl Basefold {
             };
             paths.push(round_paths);
 
-            queries.iter_mut().for_each(|query| *query &= halfsize - 1);
+            update_queries(&mut queries, halfsize);
+
+            // Domain size halves each round
+            domain_size = halfsize;
         }
 
         Ok(EvalProof {
@@ -438,7 +449,7 @@ impl Basefold {
     ///
     /// # Mathematical Process
     /// For round i with current polynomial P and evaluation point [r₁,...,rₙ]:
-    /// 1. Compute g₀ = Σⱼ eq[j] * P[2j] (sum over x_i = 0)  
+    /// 1. Compute g₀ = Σⱼ eq[j] * P[2j] (sum over x_i = 0)
     /// 2. Derive g₁ from constraint: g₀ + g₁ = current_claim and g₁ = g(1)
     /// 3. Construct g(X) = g₀ + (g₁ - g₀) * X (degree-1 univariate)
     /// 4. Generate challenge r_i via Fiat-Shamir from g(X) coefficients
@@ -573,7 +584,7 @@ impl Basefold {
     /// ## 1. Sum-Check Verification (Commit Phase)
     /// For each round i:
     /// - Check sum-check consistency: g_i(0) + g_i(1) = current_claim
-    /// - Generate challenge r_i from g_i coefficients via Fiat-Shamir  
+    /// - Generate challenge r_i from g_i coefficients via Fiat-Shamir
     /// - Update claim: claim_{i+1} = g_i(r_i)
     /// - Observe folded encoding commitment
     ///
@@ -595,11 +606,11 @@ impl Basefold {
     /// * `Ok(())` - If proof is valid and evaluation claim is accepted
     /// * `Err(anyhow::Error)` - If any verification check fails:
     ///   - Sum-check consistency violation
-    ///   - Merkle path verification failure  
+    ///   - Merkle path verification failure
     ///   - Folding consistency check failure
     ///   - Final claim mismatch
     ///
-    /// # Mathematical Guarantees  
+    /// # Mathematical Guarantees
     /// * **Completeness**: Honest proofs with correct evaluations always verify
     /// * **Soundness**: Invalid proofs are rejected except with probability ≈ QUERIES/|Fp4|
     /// * **Efficiency**: Verification time is O(log(poly_size) * QUERIES + rounds)
@@ -607,7 +618,7 @@ impl Basefold {
     /// # Security Analysis
     /// The verification provides soundness against:
     /// - **Encoding attacks**: Reed-Solomon distance detects corrupted encodings
-    /// - **Sum-check attacks**: Interactive protocol ensures evaluation correctness  
+    /// - **Sum-check attacks**: Interactive protocol ensures evaluation correctness
     /// - **Folding attacks**: Query consistency checks detect invalid folding operations
     ///
     /// With QUERIES = 144 and |Fp4| ≈ 2¹²⁴, soundness error is approximately 2⁻¹⁰⁰.
@@ -655,59 +666,60 @@ impl Basefold {
             challenger.observe_commitment(&proof.commitments[round]);
         }
 
-        let mut queries =
-            challenger.get_indices(rounds as u32 + config.rate.trailing_zeros(), config.queries);
+        //Query Phase
 
-        let mut current_codewords = &proof.codewords[0];
+        let log_domain_size = rounds as u32 + config.rate.trailing_zeros() - 1;
+        let mut domain_size = 1 << log_domain_size;
+
+        let mut queries = challenger.get_indices(log_domain_size, config.queries);
+
         let mut folded_codewords = Vec::with_capacity(config.queries);
+        let mut current_codewords = &proof.codewords[0];
         let mut merkle_paths = &proof.paths[0];
-        for round in 0..rounds - 1 {
-            println!("{round}");
-            let halfsize = 1 << (rounds + config.rate.trailing_zeros() as usize - round - 1);
-
-            for query in 0..QUERIES {
-                let (left, right) = current_codewords[query];
+        for round in 0..rounds {
+            let halfsize = domain_size >> 1;
+            for idx in 0..config.queries {
+                let (left, right) = current_codewords[idx];
                 let leaf_hash = hash_field_pair(left, right);
-                let path = &merkle_paths[query];
+                let path = &merkle_paths[idx];
                 match round {
                     0 => {
                         MerkleTree::verify_path(
                             leaf_hash,
-                            queries[query],
+                            queries[idx],
                             path,
                             commitment.commitment,
                         )?;
 
                         folded_codewords.push(fold_pair(
-                            current_codewords[query],
+                            current_codewords[idx],
                             random_point[round],
-                            roots[round][query % halfsize],
+                            roots[round][queries[idx]],
                         ));
                     }
                     _ => {
-                        check_fold(&folded_codewords, &queries, query, halfsize, left, right)?;
+                        check_fold(&folded_codewords, queries[idx], domain_size, left, right)?;
+
                         MerkleTree::verify_path(
                             leaf_hash,
-                            queries[query],
+                            queries[idx],
                             path,
                             proof.commitments[round - 1],
                         )?;
-                        folded_codewords[query] = fold_pair(
-                            current_codewords[query],
+                        folded_codewords[idx] = fold_pair(
+                            current_codewords[idx],
                             random_point[round],
-                            roots[round][query % halfsize ],
+                            roots[round][queries[idx]],
                         );
                     }
                 }
-                
             }
-
-            // Apply query masking AFTER processing each round for next iteration - follows industry standard pattern  
-            queries.iter_mut().for_each(|q| *q &= halfsize - 1);
-
-            current_codewords = &proof.codewords[round + 1];
-            merkle_paths = &proof.paths[round + 1];
-            
+            if round < rounds - 1 {
+                update_queries(&mut queries, halfsize);
+                domain_size = halfsize;
+                current_codewords = &proof.codewords[round + 1];
+                merkle_paths = &proof.paths[round + 1];
+            }
         }
 
         if folded_codewords[0] != current_claim {
@@ -727,7 +739,7 @@ impl Basefold {
     ///
     /// # Verification Process
     /// 1. **Consistency Check**: Verify g(0) + g(1) = current_claim via evaluation point
-    /// 2. **Fiat-Shamir**: Observe polynomial coefficients to maintain transcript consistency  
+    /// 2. **Fiat-Shamir**: Observe polynomial coefficients to maintain transcript consistency
     /// 3. **Claim Update**: Set new claim = g(challenge) for next round
     ///
     /// # Parameters
@@ -767,6 +779,20 @@ impl Basefold {
     }
 }
 
+fn update_queries(queries: &mut Vec<usize>, halfsize: usize) {
+    queries.iter_mut().for_each(|query| {
+        if *query >= halfsize {
+            *query -= halfsize;
+        }
+    });
+}
+
+fn update_query(query: &mut usize, halfsize: usize) {
+    if *query >= halfsize {
+        *query -= halfsize;
+    }
+}
+
 /// Verifies the consistency of folding operations during query verification.
 ///
 /// This function ensures that the current round's codewords correctly fold to match
@@ -775,51 +801,49 @@ impl Basefold {
 /// # Folding Verification Process
 /// For each query position, check that:
 /// - If query index > halfsize: folded_codeword should equal the right codeword
-/// - If query index ≤ halfsize: folded_codeword should equal the left codeword  
+/// - If query index ≤ halfsize: folded_codeword should equal the left codeword
 ///
 /// This verification ensures the prover performed folding correctly and didn't manipulate
 /// the encodings between rounds.
 ///
-/// # Parameters  
+/// # Parameters
 /// * `folded_codewords` - Previously computed folded codewords from last round
 /// * `queries` - Query positions for the current verification round
 /// * `query` - Index of current query being checked
 /// * `halfsize` - Half the size of current encoding (for indexing logic)
-/// * `left` - Left codeword from current query response  
+/// * `left` - Left codeword from current query response
 /// * `right` - Right codeword from current query response
 ///
 /// # Returns
 /// * `Ok(())` - If folding consistency check passes
 /// * `Err(anyhow::Error)` - If folded codeword doesn't match expected value
 ///
-/// # Security Properties  
+/// # Security Properties
 /// This check prevents the prover from providing inconsistent encodings across folding rounds,
 /// which would allow them to cheat by using different polynomials in different rounds.
 /// The verification leverages the deterministic nature of the folding operation.
 fn check_fold(
     folded_codewords: &[Fp4],
-    queries: &[usize],
     query: usize,
     halfsize: usize,
     left: Fp4,
     right: Fp4,
 ) -> anyhow::Result<()> {
-    println!("query: {}, halfsize: {}", queries[query], halfsize);
-    if queries[query] >= halfsize {
+    if query >= halfsize {
         if folded_codewords[query] != right {
             anyhow::bail!(
                 "Folded codeword verification failed: expected {:?}, got {:?}",
                 (left, right),
                 folded_codewords[query]
             );
-        }
-    } else {
-        if folded_codewords[query] != left {
-            anyhow::bail!(
-                "Folded codeword verification failed: expected {:?}, got {:?}",
-                (left, right),
-                folded_codewords[query]
-            );
+        } else {
+            if folded_codewords[query] != left {
+                anyhow::bail!(
+                    "Folded codeword verification failed: expected {:?}, got {:?}",
+                    (left, right),
+                    folded_codewords[query]
+                );
+            }
         }
     }
 
@@ -830,7 +854,7 @@ fn check_fold(
 mod tests {
 
     use p3_baby_bear::BabyBear;
-    use p3_field::{extension::BinomiallyExtendable, PrimeCharacteristicRing};
+    use p3_field::{PrimeCharacteristicRing, extension::BinomiallyExtendable};
     use p3_monty_31::dft::{self, RecursiveDft};
     use rand::{Rng, SeedableRng, rngs::StdRng};
 
@@ -853,6 +877,8 @@ mod tests {
         let eval_point: Vec<Fp4> = (0..N_VARS).map(|_| Fp4::from_u128(rng.r#gen())).collect();
         let evaluation = mle.evaluate(&eval_point);
         let mut config = BaseFoldConfig::new();
+
+        config = config.with_queries(5);
         let (commitment, prover_data) = Basefold::commit(&mle, &roots, &config).unwrap();
         let eval_proof = Basefold::evaluate(
             &mle,
@@ -864,7 +890,6 @@ mod tests {
             &config,
         )
         .unwrap();
-
         let mut challenger = Challenger::new();
         let verification_result = Basefold::verify(
             eval_proof,
@@ -880,14 +905,14 @@ mod tests {
     }
 
     #[test]
-    fn test_fold(){
+    fn test_fold() {
         let mut rng = StdRng::seed_from_u64(0);
 
-        let poly = MLE::new((0..1<<4).map(|_| Fp::from_u32(rng.r#gen())).collect());
+        let poly = MLE::new((0..1 << 4).map(|_| Fp::from_u32(rng.r#gen())).collect());
         let roots = Fp::roots_of_unity_table(1 << 5);
         let eval_point: Vec<Fp4> = (0..4).map(|_| Fp4::from_u128(rng.r#gen())).collect();
         let eval = poly.evaluate(&eval_point);
-        let  encoding = encode_mle(&poly, &roots, 2);
+        let encoding = encode_mle(&poly, &roots, 2);
         let mut encoding: Vec<Fp4> = encoding.iter().map(|&x| Fp4::from(x)).collect();
         for i in 0..4 {
             let r = eval_point[i];
@@ -898,71 +923,58 @@ mod tests {
     }
 
     #[test]
-    fn test_fft(){
-        let poly:Vec<Fp> = (0..16).map(|i| Fp::new(i)).collect();
+    fn test_fft() {
+        let poly: Vec<Fp> = (0..16).map(|i| Fp::new(i)).collect();
 
         let roots = Fp::roots_of_unity_table(1 << 4);
 
-        let mut test  = poly.clone();
+        let mut test = poly.clone();
 
         BabyBear::forward_fft(&mut test, &roots);
 
         println!("{:?}", test);
-        
-        let powers:Vec<Fp> = roots[0][1].powers().take(16).collect();
+
+        let powers: Vec<Fp> = roots[0][1].powers().take(16).collect();
         println!("{:?}", powers);
         println!("{:?}", roots[0]);
-
     }
 
     #[test]
-    fn test_query(){
+    fn test_query() {
         let val = (1 << (6 + 1 - 1 - 1));
         let test = 33 & ((1 << (6 + 1 - 1 - 1)) - 1);
         println!("{:b}", val);
-        println!("{:b}", test);   
+        println!("{:b}", test);
     }
 
     #[test]
-    fn test_get_codewords(){
+    fn test_folding_queries() {
+        // The test should test that the queried positions checked each round is correct
 
-        // Keeping values small in order to parse them
-        let poly = MLE::new((0..16).map(|i| Fp::new(i)).collect());
+        let mut rng = StdRng::seed_from_u64(0);
 
+        let poly = MLE::new((0..1 << 4).map(|_| Fp::from_u32(rng.r#gen())).collect());
         let roots = Fp::roots_of_unity_table(1 << 5);
-
+        let eval_point: Vec<Fp4> = (0..4).map(|_| Fp4::from_u128(rng.r#gen())).collect();
+        let eval = poly.evaluate(&eval_point);
         let encoding = encode_mle(&poly, &roots, 2);
 
-        let mut queries : Vec<usize> = (0..32).collect();
+        let mut domain_size = 1 << 4;
+        let half_size = domain_size / 2;
 
-        let mut halfsize = 16;
+        // We start with query at 5. Thus the provided codeword should be encoding[5] and encoding[(5 + domain_size) = 21]
+        let mut queries = vec![5];
 
-        let codewords = get_codewords(&queries, &encoding);
+        let correct_codeword = (encoding[5].into(), encoding[21].into());
 
-        let challenge = Fp4::TWO;
-        let folded_encoding = fold(&encoding, challenge, &roots[0]);
+        let received_codeword = get_codewords(&queries, &encoding);
 
-        
-        let folded_codewords: Vec<Fp4> = codewords.iter().enumerate().map(|(i, &val)| fold_pair(val, challenge, roots[0][i % (1<<4)])).collect();
-        
-        for i in 0..32{
-            assert_eq!(folded_encoding[i % 16], folded_codewords[i])
-        }
+        assert_eq!(correct_codeword, received_codeword[0]);
 
-        // Apply bitmask to get lower bits
-        queries.iter_mut().for_each(|q| *q &= halfsize - 1);
+        let folded_codeword = fold_pair(received_codeword[0], eval_point[0], roots[0][5]);
 
-        let codewords = get_codewords(&queries, &folded_encoding);
+        let mut folded_oracle = fold(&encoding, eval_point[0], &roots[0]);
 
-        for i in 0..16{
-            check_fold(&folded_codewords, &queries, i, 8, codewords[i].0, codewords[i].1).unwrap();
-        }
-
-    
-        
-
-
-        
-
+        assert_eq!(folded_codeword, folded_oracle[5]);
     }
 }

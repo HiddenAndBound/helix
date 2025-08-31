@@ -54,8 +54,9 @@ where
     Fp4: ExtensionField<F>,
 {
     let (a0, a1) = codewords;
+    // todo:Inverse˚ should not be called
     let (g0, g1) = ((a0 + a1) * HALF, (a0 - a1) * HALF * twiddle.inverse());
-    r*(g1 - g0) + g0
+    r * (g1 - g0) + g0
 }
 
 /// Folds an encoding by applying fold_pair to adjacent pairs, reducing size by half.
@@ -78,39 +79,23 @@ where
 }
 
 /// Retrieves codeword pairs from an encoding at query positions.
-/// For position i < halfsize, returns (encoding[i], encoding[i+halfsize]).
-/// For position i >= halfsize, returns (encoding[i-halfsize], encoding[i]).
 pub fn get_codewords<F: Into<Fp4> + Copy>(queries: &[usize], encoding: &[F]) -> Vec<(Fp4, Fp4)> {
     let halfsize = encoding.len() / 2;
-
     queries
         .iter()
         .copied()
-        .map(|i| {
-            if i >= halfsize {
-                (encoding[i - halfsize].into(), encoding[i].into())
-            } else {
-                (encoding[i].into(), encoding[i + halfsize].into())
-            }
-        })
+        .map(|i| (encoding[i].into(), encoding[i + halfsize].into()))
         .collect()
 }
 
 /// Generates Merkle authentication paths for query positions.
-/// For indices >= halfsize, toggles MSB to get correct leaf index.
+/// Assumes indices are valid leaf indices.
 pub fn get_merkle_paths(queries: &[usize], merkle_tree: &MerkleTree) -> Vec<MerklePath> {
     let halfsize = 1 << merkle_tree.depth;
     queries
         .iter()
         .copied()
-        .map(|i| {
-            // Toggle MSB for indices >= halfsize to get valid leaf index.
-            if i >= halfsize {
-                merkle_tree.get_path(i ^ halfsize)
-            } else {
-                merkle_tree.get_path(i)
-            }
-        })
+        .map(|i| merkle_tree.get_path(i))
         .collect()
 }
 
@@ -212,7 +197,7 @@ mod tests {
     fn test_bit_reverse_sort_basic() {
         let mut vec = vec![0, 1, 2, 3, 4, 5, 6, 7];
         bit_reverse_sort(&mut vec);
-        
+
         // For length 8 (3 bits), bit-reverse mapping:
         // 0 (000) -> 0 (000), 1 (001) -> 4 (100), 2 (010) -> 2 (010), 3 (011) -> 6 (110)
         // 4 (100) -> 1 (001), 5 (101) -> 5 (101), 6 (110) -> 3 (011), 7 (111) -> 7 (111)
@@ -223,7 +208,7 @@ mod tests {
     fn test_bit_reverse_sort_length_4() {
         let mut vec = vec!['a', 'b', 'c', 'd'];
         bit_reverse_sort(&mut vec);
-        
+
         // For length 4 (2 bits), bit-reverse mapping:
         // 0 (00) -> 0 (00), 1 (01) -> 2 (10), 2 (10) -> 1 (01), 3 (11) -> 3 (11)
         assert_eq!(vec, vec!['a', 'c', 'b', 'd']);
@@ -233,7 +218,7 @@ mod tests {
     fn test_bit_reverse_sort_length_2() {
         let mut vec = vec![10, 20];
         bit_reverse_sort(&mut vec);
-        
+
         // For length 2 (1 bit), bit-reverse mapping:
         // 0 (0) -> 0 (0), 1 (1) -> 1 (1)
         assert_eq!(vec, vec![10, 20]);
@@ -257,14 +242,14 @@ mod tests {
     fn test_bit_reverse_sort_large() {
         let mut vec: Vec<usize> = (0..16).collect();
         bit_reverse_sort(&mut vec);
-        
+
         // For length 16 (4 bits), verify a few key mappings:
         // 0 (0000) -> 0 (0000), 1 (0001) -> 8 (1000), 2 (0010) -> 4 (0100), 3 (0011) -> 12 (1100)
-        assert_eq!(vec[0], 0);  // 0 -> 0
-        assert_eq!(vec[8], 1);  // 1 -> 8
-        assert_eq!(vec[4], 2);  // 2 -> 4  
+        assert_eq!(vec[0], 0); // 0 -> 0
+        assert_eq!(vec[8], 1); // 1 -> 8
+        assert_eq!(vec[4], 2); // 2 -> 4
         assert_eq!(vec[12], 3); // 3 -> 12
-        
+
         // Check that all original elements are present
         let mut sorted_vec = vec.clone();
         sorted_vec.sort();
@@ -274,7 +259,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Vector length must be a power of 2")]
     fn test_bit_reverse_sort_non_power_of_two() {
-        let mut vec = vec![1, 2, 3];  // length 3 is not a power of 2
+        let mut vec = vec![1, 2, 3]; // length 3 is not a power of 2
         bit_reverse_sort(&mut vec);
     }
 
@@ -282,40 +267,61 @@ mod tests {
     fn test_bit_reverse_sorted_basic() {
         let vec = vec![0, 1, 2, 3, 4, 5, 6, 7];
         let result = bit_reverse_sorted(&vec);
-        
+
         // Should produce same result as in-place version
         assert_eq!(result, vec![0, 4, 2, 6, 1, 5, 3, 7]);
-        
+
         // Original should be unchanged
         assert_eq!(vec, vec![0, 1, 2, 3, 4, 5, 6, 7]);
     }
 
     #[test]
     fn test_bit_reverse_sorted_strings() {
-        let vec = vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()];
+        let vec = vec![
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+        ];
         let result = bit_reverse_sorted(&vec);
-        
-        assert_eq!(result, vec!["a".to_string(), "c".to_string(), "b".to_string(), "d".to_string()]);
-        assert_eq!(vec, vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()]);
+
+        assert_eq!(
+            result,
+            vec![
+                "a".to_string(),
+                "c".to_string(),
+                "b".to_string(),
+                "d".to_string()
+            ]
+        );
+        assert_eq!(
+            vec,
+            vec![
+                "a".to_string(),
+                "b".to_string(),
+                "c".to_string(),
+                "d".to_string()
+            ]
+        );
     }
 
     #[test]
     fn test_bit_reverse_sorted_field_elements() {
         let vec: Vec<Fp> = (0..8).map(|i| Fp::from_u32(i)).collect();
         let result = bit_reverse_sorted(&vec);
-        
+
         let expected: Vec<Fp> = vec![0, 4, 2, 6, 1, 5, 3, 7]
             .into_iter()
             .map(|i| Fp::from_u32(i))
             .collect();
-        
+
         assert_eq!(result, expected);
     }
 
     #[test]
     #[should_panic(expected = "Vector length must be a power of 2")]
     fn test_bit_reverse_sorted_non_power_of_two() {
-        let vec = vec![1, 2, 3, 4, 5];  // length 5 is not a power of 2
+        let vec = vec![1, 2, 3, 4, 5]; // length 5 is not a power of 2
         bit_reverse_sorted(&vec);
     }
 
@@ -324,11 +330,11 @@ mod tests {
         // Test that applying bit-reverse twice returns to original order
         let original = vec![10, 20, 30, 40, 50, 60, 70, 80];
         let mut vec = original.clone();
-        
+
         // Apply bit-reverse twice
         bit_reverse_sort(&mut vec);
         bit_reverse_sort(&mut vec);
-        
+
         assert_eq!(vec, original);
     }
 
@@ -336,12 +342,12 @@ mod tests {
     fn test_bit_reverse_consistency() {
         // Test that in-place and copying versions produce same result
         let original = vec![100, 200, 300, 400, 500, 600, 700, 800];
-        
+
         let mut in_place = original.clone();
         bit_reverse_sort(&mut in_place);
-        
+
         let copied = bit_reverse_sorted(&original);
-        
+
         assert_eq!(in_place, copied);
     }
 
@@ -352,16 +358,28 @@ mod tests {
             id: usize,
             name: String,
         }
-        
+
         let vec = vec![
-            ComplexData { id: 0, name: "zero".to_string() },
-            ComplexData { id: 1, name: "one".to_string() },
-            ComplexData { id: 2, name: "two".to_string() },
-            ComplexData { id: 3, name: "three".to_string() },
+            ComplexData {
+                id: 0,
+                name: "zero".to_string(),
+            },
+            ComplexData {
+                id: 1,
+                name: "one".to_string(),
+            },
+            ComplexData {
+                id: 2,
+                name: "two".to_string(),
+            },
+            ComplexData {
+                id: 3,
+                name: "three".to_string(),
+            },
         ];
-        
+
         let result = bit_reverse_sorted(&vec);
-        
+
         // Expected order: [0, 2, 1, 3]
         assert_eq!(result[0].id, 0);
         assert_eq!(result[1].id, 2);
