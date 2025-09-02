@@ -60,12 +60,14 @@ where
 }
 
 /// Folds an encoding by applying fold_pair to adjacent pairs, reducing size by half.
+/// Folds an encoding by applying fold_pair to adjacent pairs, reducing size by half.
+/// Uses bitwise shift for optimal performance when dealing with power-of-2 sizes.
 pub fn fold<F>(code: &[F], random_challenge: Fp4, roots: &[Fp]) -> Vec<Fp4>
 where
     F: Field + Mul<Fp, Output = F>,
     Fp4: ExtensionField<F>,
 {
-    let half_size = code.len() >> 1;
+    let half_size = code.len() >> 1; // Already optimized with bitwise shift
     let mut folded = Vec::with_capacity(half_size);
     for i in 0..half_size {
         folded.push(fold_pair(
@@ -80,7 +82,7 @@ where
 
 /// Retrieves codeword pairs from an encoding at query positions.
 pub fn get_codewords<F: Into<Fp4> + Copy>(queries: &[usize], encoding: &[F]) -> Vec<(Fp4, Fp4)> {
-    let halfsize = encoding.len() / 2;
+    let halfsize = encoding.len() >> 1; // Bitwise right shift for division by 2
     queries
         .iter()
         .copied()

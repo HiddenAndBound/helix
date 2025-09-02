@@ -784,18 +784,22 @@ impl Basefold {
     }
 }
 
+/// Updates queries using bitwise masking for power-of-2 halfsize optimization.
+/// Since halfsize is always a power of 2 in BaseFold, we can use bitwise AND
+/// instead of conditional subtraction for better performance.
+/// Mathematical equivalence: if query >= halfsize { query -= halfsize } == query &= (halfsize - 1)
 fn update_queries(queries: &mut Vec<usize>, halfsize: usize) {
     queries.iter_mut().for_each(|query| {
-        if *query >= halfsize {
-            *query -= halfsize;
-        }
+        update_query(query, halfsize);
     });
 }
 
+/// Updates a single query using bitwise masking optimization.
+/// For power-of-2 halfsize: query &= (halfsize - 1) is equivalent to
+/// the conditional subtraction but faster as it's a single bitwise operation.
 fn update_query(query: &mut usize, halfsize: usize) {
-    if *query >= halfsize {
-        *query -= halfsize;
-    }
+    debug_assert!(halfsize.is_power_of_two(), "halfsize must be a power of 2");
+    *query &= (halfsize - 1);
 }
 
 /// Verifies the consistency of folding operations during query verification.
@@ -827,6 +831,8 @@ fn update_query(query: &mut usize, halfsize: usize) {
 /// This check prevents the prover from providing inconsistent encodings across folding rounds,
 /// which would allow them to cheat by using different polynomials in different rounds.
 /// The verification leverages the deterministic nature of the folding operation.
+/// Verifies the consistency of folding operations during query verification.
+/// Uses bitwise operations for power-of-2 halfsize optimization.
 fn check_fold(
     folded_codeword: Fp4,
     query: usize,
@@ -834,7 +840,11 @@ fn check_fold(
     left: Fp4,
     right: Fp4,
 ) -> anyhow::Result<()> {
-    if query >= halfsize {
+    debug_assert!(halfsize.is_power_of_two(), "halfsize must be a power of 2");
+    
+    // For power-of-2 halfsize, query >= halfsize is equivalent to checking the high bit
+    // that corresponds to the halfsize position. We can use bitwise AND to check this.
+    if (query & halfsize) != 0 {
         if folded_codeword != right {
             anyhow::bail!(
                 "Folded codeword verification failed: expected {:?}, got {:?}",
@@ -978,5 +988,33 @@ mod tests {
         let mut folded_oracle = fold(&encoding, eval_point[0], &roots[0]);
 
         assert_eq!(folded_codeword, folded_oracle[5]);
+    }
+
+    #[test]
+    fn test_bitwise_query_updates() {
+        // Test that bitwise operations produce identical results to arithmetic operations
+        let test_cases = [
+            (5, 8),   // query < halfsize
+            (13, 8),  // query >= halfsize
+            (7, 16),  // query < halfsize
+            (23, 16), // query >= halfsize
+        ];
+
+        for (query, halfsize) in test_cases {
+            let mut bitwise_query = query;
+            let mut arithmetic_query = query;
+            
+            // Bitwise operation (new implementation)
+            update_query(&mut bitwise_query, halfsize);
+            
+            // Arithmetic operation (old implementation)
+            if arithmetic_query >= halfsize {
+                arithmetic_query -= halfsize;
+            }
+            
+            assert_eq!(bitwise_query, arithmetic_query,
+                "Bitwise and arithmetic operations should produce identical results for query={}, halfsize={}",
+                query, halfsize);
+        }
     }
 }
