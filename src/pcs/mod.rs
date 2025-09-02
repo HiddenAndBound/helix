@@ -698,8 +698,14 @@ impl Basefold {
                         ));
                     }
                     _ => {
-                        check_fold(&folded_codewords, queries[idx], domain_size, left, right)?;
-
+                        check_fold(
+                            folded_codewords[idx],
+                            queries[idx],
+                            domain_size,
+                            left,
+                            right,
+                        )?;
+                        update_query(&mut queries[idx], domain_size);
                         MerkleTree::verify_path(
                             leaf_hash,
                             queries[idx],
@@ -715,7 +721,6 @@ impl Basefold {
                 }
             }
             if round < rounds - 1 {
-                update_queries(&mut queries, halfsize);
                 domain_size = halfsize;
                 current_codewords = &proof.codewords[round + 1];
                 merkle_paths = &proof.paths[round + 1];
@@ -823,28 +828,26 @@ fn update_query(query: &mut usize, halfsize: usize) {
 /// which would allow them to cheat by using different polynomials in different rounds.
 /// The verification leverages the deterministic nature of the folding operation.
 fn check_fold(
-    folded_codewords: &[Fp4],
+    folded_codeword: Fp4,
     query: usize,
     halfsize: usize,
     left: Fp4,
     right: Fp4,
 ) -> anyhow::Result<()> {
     if query >= halfsize {
-        if folded_codewords[query] != right {
+        if folded_codeword != right {
             anyhow::bail!(
                 "Folded codeword verification failed: expected {:?}, got {:?}",
                 (left, right),
-                folded_codewords[query]
+                folded_codeword
             );
-        } else {
-            if folded_codewords[query] != left {
-                anyhow::bail!(
-                    "Folded codeword verification failed: expected {:?}, got {:?}",
-                    (left, right),
-                    folded_codewords[query]
-                );
-            }
         }
+    } else if folded_codeword != left {
+        anyhow::bail!(
+            "Folded codeword verification failed: expected {:?}, got {:?}",
+            (left, right),
+            folded_codeword
+        );
     }
 
     Ok(())
@@ -854,8 +857,7 @@ fn check_fold(
 mod tests {
 
     use p3_baby_bear::BabyBear;
-    use p3_field::{PrimeCharacteristicRing, extension::BinomiallyExtendable};
-    use p3_monty_31::dft::{self, RecursiveDft};
+    use p3_field::PrimeCharacteristicRing;
     use rand::{Rng, SeedableRng, rngs::StdRng};
 
     use super::*;
