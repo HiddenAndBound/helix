@@ -29,3 +29,15 @@ debug = false
 [[bench]]
 name = "fft_bench"
 harness = false
+
+[[bench]]
+name = "iteration_bench"
+harness = false
+
+[[bench]]
+name = "reslicing_bench"
+harness = false
+
+[[bench]]
+name = "unsafe_bench"
+harness = false
