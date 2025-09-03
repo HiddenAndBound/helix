@@ -156,7 +156,10 @@ pub fn bit_reverse_sort<T>(vec: &mut Vec<T>) {
     let num_bits = len.trailing_zeros();
 
     for i in 0..len {
-        let j = (std::intrinsics::bitreverse(i) >> (usize::BITS - num_bits)) as usize;
+        // Use the highly-optimized builtin reverse_bits which typically maps to a single
+        // CPU instruction on supported targets. This provides a large speedup over a
+        // manual loop while remaining portable and stable.
+        let j = (i.reverse_bits() >> (usize::BITS - num_bits)) as usize;
         if i < j {
             vec.swap(i, j);
         }
@@ -182,7 +185,8 @@ pub fn bit_reverse_sorted<T: Clone>(vec: &Vec<T>) -> Vec<T> {
     let mut result = vec![vec[0].clone(); len];
 
     for i in 0..len {
-        let j = (std::intrinsics::bitreverse(i) >> (usize::BITS - num_bits)) as usize;
+        // Fast reverse via builtin instruction
+        let j = (i.reverse_bits() >> (usize::BITS - num_bits)) as usize;
         result[j] = vec[i].clone();
     }
 
