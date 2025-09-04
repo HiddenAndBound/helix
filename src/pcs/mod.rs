@@ -28,10 +28,12 @@
 //! ```
 
 use anyhow::{ Ok, Result };
+use itertools::multizip;
 use p3_field::{ ExtensionField, Field, PackedValue, PrimeCharacteristicRing };
 use rand::rngs::StdRng;
 use rand::{ Rng, SeedableRng };
 
+use crate::commitment;
 use crate::pcs::utils::{
     Commitment,
     Encoding,
@@ -681,13 +683,7 @@ impl Basefold {
         //Commit phase
         for round in 0..rounds {
             let round_poly = &proof.sum_check_rounds[round];
-            Self::verify_sum_check_round(
-                round_poly,
-                &mut current_claim,
-                &eval_point,
-                round,
-                challenger
-            )?;
+            verify_sum_check_round(round_poly, &mut current_claim, &eval_point, round, challenger)?;
 
             challenger.observe_fp4_elems(&round_poly.coefficients());
             let r = challenger.get_challenge();
@@ -698,59 +694,42 @@ impl Basefold {
 
         //Query Phase
 
-        let log_domain_size = (rounds as u32) + config.rate.trailing_zeros() - 1;
-        let mut domain_size = 1 << log_domain_size;
-
-        let mut queries = challenger.get_indices(log_domain_size, config.queries);
-
-        let mut folded_codewords = Vec::with_capacity(config.queries);
+        // The queries are always in the range 0..encoding.len()/2
+        let log_query_range = (rounds as u32) + config.rate.trailing_zeros() - 1;
+        let mut query_range = 1 << log_query_range;
+        let mut queries = challenger.get_indices(log_query_range, config.queries);
+        let mut folded_codewords = vec![Fp4::ZERO; config.queries];
         let mut current_codewords = &proof.codewords[0];
         let mut merkle_paths = &proof.paths[0];
-        for round in 0..rounds {
-            let halfsize = domain_size >> 1;
-            for idx in 0..config.queries {
-                let (left, right) = current_codewords[idx];
-                let leaf_hash = hash_field_pair(left, right);
-                let path = &merkle_paths[idx];
-                match round {
-                    0 => {
-                        MerkleTree::verify_path(
-                            leaf_hash,
-                            queries[idx],
-                            path,
-                            commitment.commitment
-                        )?;
 
-                        folded_codewords.push(
-                            fold_pair(
-                                current_codewords[idx],
-                                random_point[round],
-                                roots[round][queries[idx]]
-                            )
-                        );
-                    }
-                    _ => {
-                        check_fold(folded_codewords[idx], queries[idx], domain_size, left, right)?;
-                        update_query(&mut queries[idx], domain_size);
-                        MerkleTree::verify_path(
-                            leaf_hash,
-                            queries[idx],
-                            path,
-                            proof.commitments[round - 1]
-                        )?;
-                        folded_codewords[idx] = fold_pair(
-                            current_codewords[idx],
-                            random_point[round],
-                            roots[round][queries[idx]]
-                        );
-                    }
-                }
-            }
-            if round < rounds - 1 {
-                domain_size = halfsize;
-                current_codewords = &proof.codewords[round + 1];
-                merkle_paths = &proof.paths[round + 1];
-            }
+        for round in 0..rounds {
+            let halfsize = query_range >> 1;
+            let oracle_commitment = match round {
+                0 => commitment.commitment,
+                _ => proof.commitments[round - 1],
+            };
+
+            let (codewords, paths) = (&proof.codewords[round], &proof.paths[round]);
+
+            check_query_consistency(
+                &mut queries,
+                &folded_codewords,
+                &codewords,
+                query_range,
+                round
+            )?;
+
+            verify_paths(codewords, paths, &queries, oracle_commitment)?;
+
+            fold_codewords(
+                &mut folded_codewords,
+                codewords,
+                &queries,
+                random_point[round],
+                &roots[round]
+            );
+
+            query_range = halfsize;
         }
 
         if folded_codewords[0] != current_claim {
@@ -762,53 +741,99 @@ impl Basefold {
         }
         Ok(())
     }
-
-    /// Verifies a single sum-check round during the verification phase.
-    ///
-    /// This function checks the consistency of one round's sum-check polynomial against
-    /// the current claim and updates the claim for the next round.
-    ///
-    /// # Verification Process
-    /// 1. **Consistency Check**: Verify g(0) + g(1) = current_claim via evaluation point
-    /// 2. **Fiat-Shamir**: Observe polynomial coefficients to maintain transcript consistency
-    /// 3. **Claim Update**: Set new claim = g(challenge) for next round
-    ///
-    /// # Parameters
-    /// * `round_poly` - The sum-check univariate polynomial g(X) for this round
-    /// * `current_claim` - The current sum-check claim (updated in-place)
-    /// * `eval_point_round` - The evaluation point component for this round
-    /// * `challenger` - Fiat-Shamir challenger for transcript consistency
-    ///
-    /// # Mathematical Verification
-    /// The function asserts that:
-    /// ```text
-    /// current_claim = (1 - eval_point_round) * g(0) + eval_point_round * g(1)
-    /// ```
-    /// This ensures the sum-check reduction is performed correctly.
-    ///
-    /// # Returns
-    /// * `Ok(())` - If sum-check verification passes
-    /// * `Err(anyhow::Error)` - If consistency equation is violated
-    fn verify_sum_check_round(
-        round_poly: &UnivariatePoly,
-        current_claim: &mut Fp4,
-        eval_point: &[Fp4],
-        round: usize,
-        challenger: &mut Challenger
-    ) -> anyhow::Result<()> {
-        let expected =
-            (Fp4::ONE - eval_point[round]) * round_poly.evaluate(Fp4::ZERO) +
-            eval_point[round] * round_poly.evaluate(Fp4::ONE);
-
-        if *current_claim != expected {
-            anyhow::bail!(
-                "Sum-check verification failed in round {round}: claim {:?} != expected {:?}",
-                *current_claim,
-                expected
-            );
-        }
-        Ok(())
+}
+fn fold_codewords(
+    folded_codewords: &mut [Fp4],
+    codewords: &[(Fp4, Fp4)],
+    queries: &[usize],
+    r: Fp4,
+    roots: &[Fp]
+) {
+    for (query, fold, &codeword_pair) in multizip((queries, folded_codewords, codewords)) {
+        *fold = fold_pair(codeword_pair, r, roots[*query]);
     }
+}
+fn verify_paths(
+    codewords: &[(Fp4, Fp4)],
+    paths: &[MerklePath],
+    queries: &[usize],
+    oracle_commitment: [u8; 32]
+) -> anyhow::Result<()> {
+    for (query, path, &codeword_pair) in multizip((queries, paths, codewords)) {
+        let (left, right) = codeword_pair;
+        let leaf_hash = hash_field_pair(left, right);
+        MerkleTree::verify_path(leaf_hash, *query, path, oracle_commitment)?;
+    }
+    Ok(())
+}
+
+fn check_query_consistency(
+    queries: &mut [usize],
+    folded_codewords: &[Fp4],
+    codewords: &[(Fp4, Fp4)],
+    query_range: usize,
+    round: usize
+) -> anyhow::Result<()> {
+    // The folded codewords are only checked for consistency after the first round.
+    if round > 0 {
+        for (query, &folded_codeword, &codeword_pair) in multizip((
+            queries,
+            folded_codewords,
+            codewords,
+        )) {
+            let (left, right) = codeword_pair;
+            check_fold(folded_codeword, *query, query_range, left, right)?;
+            update_query(query, query_range);
+        }
+    }
+    Ok(())
+}
+
+/// Verifies a single sum-check round during the verification phase.
+///
+/// This function checks the consistency of one round's sum-check polynomial against
+/// the current claim and updates the claim for the next round.
+///
+/// # Verification Process
+/// 1. **Consistency Check**: Verify g(0) + g(1) = current_claim via evaluation point
+/// 2. **Fiat-Shamir**: Observe polynomial coefficients to maintain transcript consistency
+/// 3. **Claim Update**: Set new claim = g(challenge) for next round
+///
+/// # Parameters
+/// * `round_poly` - The sum-check univariate polynomial g(X) for this round
+/// * `current_claim` - The current sum-check claim (updated in-place)
+/// * `eval_point_round` - The evaluation point component for this round
+/// * `challenger` - Fiat-Shamir challenger for transcript consistency
+///
+/// # Mathematical Verification
+/// The function asserts that:
+/// ```text
+/// current_claim = (1 - eval_point_round) * g(0) + eval_point_round * g(1)
+/// ```
+/// This ensures the sum-check reduction is performed correctly.
+///
+/// # Returns
+/// * `Ok(())` - If sum-check verification passes
+/// * `Err(anyhow::Error)` - If consistency equation is violated
+fn verify_sum_check_round(
+    round_poly: &UnivariatePoly,
+    current_claim: &mut Fp4,
+    eval_point: &[Fp4],
+    round: usize,
+    challenger: &mut Challenger
+) -> anyhow::Result<()> {
+    let expected =
+        (Fp4::ONE - eval_point[round]) * round_poly.evaluate(Fp4::ZERO) +
+        eval_point[round] * round_poly.evaluate(Fp4::ONE);
+
+    if *current_claim != expected {
+        anyhow::bail!(
+            "Sum-check verification failed in round {round}: claim {:?} != expected {:?}",
+            *current_claim,
+            expected
+        );
+    }
+    Ok(())
 }
 
 /// Updates queries using bitwise masking for power-of-2 halfsize optimization.
