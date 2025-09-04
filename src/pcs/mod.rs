@@ -27,20 +27,30 @@
 //!                  &roots, &mut verifier_challenger)?;
 //! ```
 
-use anyhow::{Ok, Result};
-use p3_field::{ExtensionField, Field, PackedValue, PrimeCharacteristicRing};
+use anyhow::{ Ok, Result };
+use p3_field::{ ExtensionField, Field, PackedValue, PrimeCharacteristicRing };
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{ Rng, SeedableRng };
 
 use crate::pcs::utils::{
-    Commitment, Encoding, RATE, create_hash_leaves_from_pairs, create_hash_leaves_from_pairs_ref,
-    encode_mle, fold, fold_pair, get_codewords, get_merkle_paths, hash_field_pair,
+    Commitment,
+    Encoding,
+    RATE,
+    create_hash_leaves_from_pairs,
+    create_hash_leaves_from_pairs_ref,
+    encode_mle,
+    fold,
+    fold_pair,
+    get_codewords,
+    get_merkle_paths,
+    hash_field_pair,
 };
 use crate::{
-    Fp, Fp4,
+    Fp,
+    Fp4,
     challenger::Challenger,
     eq::EqEvals,
-    merkle_tree::{MerklePath, MerkleTree},
+    merkle_tree::{ MerklePath, MerkleTree },
     polynomial::MLE,
     spartan::univariate::UnivariatePoly,
 };
@@ -231,7 +241,7 @@ impl Basefold {
     pub fn commit(
         poly: &MLE<Fp>,
         roots: &[Vec<Fp>],
-        config: &BaseFoldConfig,
+        config: &BaseFoldConfig
     ) -> anyhow::Result<(BasefoldCommitment, ProverData)> {
         if !poly.len().is_power_of_two() {
             anyhow::bail!("Polynomial size must be a power of 2, got {}", poly.len());
@@ -323,7 +333,7 @@ impl Basefold {
         evaluation: Fp4,
         prover_data: ProverData,
         roots: &[Vec<Fp>],
-        config: &BaseFoldConfig,
+        config: &BaseFoldConfig
     ) -> anyhow::Result<EvalProof> {
         if poly.n_vars() != eval_point.len() {
             anyhow::bail!(
@@ -349,20 +359,22 @@ impl Basefold {
         //Commit phase
         for round in 0..rounds {
             let round_proof = match round {
-                0 => Self::process_sum_check_round(
-                    poly,
-                    &eval_point,
-                    &mut current_claim,
-                    round,
-                    &mut eq,
-                ),
-                _ => Self::process_sum_check_round(
-                    &current_poly,
-                    &eval_point,
-                    &mut current_claim,
-                    round,
-                    &mut eq,
-                ),
+                0 =>
+                    Self::process_sum_check_round(
+                        poly,
+                        &eval_point,
+                        &mut current_claim,
+                        round,
+                        &mut eq
+                    ),
+                _ =>
+                    Self::process_sum_check_round(
+                        &current_poly,
+                        &eval_point,
+                        &mut current_claim,
+                        round,
+                        &mut eq
+                    ),
             };
 
             challenger.observe_fp4_elems(&round_proof.coefficients());
@@ -377,7 +389,7 @@ impl Basefold {
                 r,
                 roots,
                 poly,
-                &current_poly,
+                &current_poly
             );
             current_poly = current_poly_folded;
 
@@ -385,13 +397,11 @@ impl Basefold {
                 current_encoding,
                 &mut commitments,
                 &mut merkle_trees,
-                &mut encodings,
+                &mut encodings
             )?;
 
             challenger.observe_commitment(
-                commitments
-                    .last()
-                    .expect("Will be non-empty after at least 1 fold"),
+                commitments.last().expect("Will be non-empty after at least 1 fold")
             );
             current_claim = round_proof.evaluate(r);
 
@@ -406,7 +416,7 @@ impl Basefold {
 
         //The queries should lie in the range 0...encoding.len()/2. The provided codewords, should contain the indexed value at i, as well as i + halfsize which the verifier requires to test consistency.
 
-        let mut log_domain_size = rounds as u32 + config.rate.trailing_zeros() - 1;
+        let mut log_domain_size = (rounds as u32) + config.rate.trailing_zeros() - 1;
         let mut domain_size = 1 << log_domain_size;
         let mut queries = challenger.get_indices(log_domain_size, config.queries);
 
@@ -480,16 +490,38 @@ impl Basefold {
         eval_point: &[Fp4],
         current_claim: &mut Fp4,
         round: usize,
-        eq: &mut EqEvals,
-    ) -> UnivariatePoly
-    where
-        F: PrimeCharacteristicRing + Field,
-        Fp4: ExtensionField<F>,
+        eq: &mut EqEvals
+    )
+        -> UnivariatePoly
+        where F: PrimeCharacteristicRing + Field, Fp4: ExtensionField<F>
     {
         let mut g_0: Fp4 = Fp4::ZERO;
         let rounds = eval_point.len();
-        for i in 0..1 << (rounds - round - 1) {
-            g_0 += eq[i] * poly[i << 1]
+        let hypercube_size = 1 << (rounds - round - 1);
+
+        // Bounds are safe: iterations = 2^(rounds-round-1), poly.len() = 2^rounds
+        // Max poly index = (iterations-1)*2 < 2^rounds, eq.len() ≥ iterations
+        let poly = &poly[0..hypercube_size * 2];
+        let eq = &eq[0..hypercube_size];
+        debug_assert!(
+            poly.len() >= hypercube_size * 2,
+            "Mathematical bounds violated: poly.len()={}, required={}",
+            poly.len(),
+            hypercube_size * 2
+        );
+        debug_assert!(
+            eq.len() >= hypercube_size,
+            "Mathematical bounds violated: eq.len()={}, required={}",
+            eq.len(),
+            hypercube_size
+        );
+
+        // Use unsafe indexing to eliminate bounds checking overhead
+        unsafe {
+            for i in 0..hypercube_size {
+                // SAFETY: Bounds verified above, i < iterations ≤ eq.len() and i*2 < poly.len()
+                g_0 += *eq.get_unchecked(i) * *poly.get_unchecked(i << 1);
+            }
         }
 
         let g1: Fp4 = (*current_claim - g_0 * (Fp4::ONE - eval_point[round])) / eval_point[round];
@@ -507,15 +539,11 @@ impl Basefold {
         r: Fp4,
         roots: &[Vec<Fp>],
         initial_poly: &MLE<Fp>,
-        current_poly: &MLE<Fp4>,
+        current_poly: &MLE<Fp4>
     ) -> (Vec<Fp4>, MLE<Fp4>) {
         let current_encoding = match round {
             0 => fold(initial_encoding, r, &roots[round]),
-            _ => fold(
-                encodings.last().expect("Will be non-empty"),
-                r,
-                &roots[round],
-            ),
+            _ => fold(encodings.last().expect("Will be non-empty"), r, &roots[round]),
         };
 
         let current_poly_folded = match round {
@@ -527,7 +555,7 @@ impl Basefold {
 
     fn initialize_evaluation_proof_context(
         evaluation: Fp4,
-        rounds: usize,
+        rounds: usize
     ) -> (
         Fp4,
         Vec<Fp4>,
@@ -559,7 +587,7 @@ impl Basefold {
         current_encoding: Vec<Fp4>,
         commitments: &mut Vec<Commitment>,
         merkle_trees: &mut Vec<MerkleTree>,
-        encodings: &mut Vec<Vec<Fp4>>,
+        encodings: &mut Vec<Vec<Fp4>>
     ) -> Result<(), anyhow::Error> {
         let (left, right) = current_encoding.split_at(current_encoding.len() / 2);
 
@@ -640,7 +668,7 @@ impl Basefold {
         commitment: BasefoldCommitment,
         roots: &[Vec<Fp>],
         challenger: &mut Challenger,
-        config: &BaseFoldConfig,
+        config: &BaseFoldConfig
     ) -> anyhow::Result<()> {
         // TODO: Observe statement (eval, eval_point, commitment)
         let mut current_claim = evaluation;
@@ -656,7 +684,7 @@ impl Basefold {
                 &mut current_claim,
                 &eval_point,
                 round,
-                challenger,
+                challenger
             )?;
 
             challenger.observe_fp4_elems(&round_poly.coefficients());
@@ -668,7 +696,7 @@ impl Basefold {
 
         //Query Phase
 
-        let log_domain_size = rounds as u32 + config.rate.trailing_zeros() - 1;
+        let log_domain_size = (rounds as u32) + config.rate.trailing_zeros() - 1;
         let mut domain_size = 1 << log_domain_size;
 
         let mut queries = challenger.get_indices(log_domain_size, config.queries);
@@ -688,34 +716,30 @@ impl Basefold {
                             leaf_hash,
                             queries[idx],
                             path,
-                            commitment.commitment,
+                            commitment.commitment
                         )?;
 
-                        folded_codewords.push(fold_pair(
-                            current_codewords[idx],
-                            random_point[round],
-                            roots[round][queries[idx]],
-                        ));
+                        folded_codewords.push(
+                            fold_pair(
+                                current_codewords[idx],
+                                random_point[round],
+                                roots[round][queries[idx]]
+                            )
+                        );
                     }
                     _ => {
-                        check_fold(
-                            folded_codewords[idx],
-                            queries[idx],
-                            domain_size,
-                            left,
-                            right,
-                        )?;
+                        check_fold(folded_codewords[idx], queries[idx], domain_size, left, right)?;
                         update_query(&mut queries[idx], domain_size);
                         MerkleTree::verify_path(
                             leaf_hash,
                             queries[idx],
                             path,
-                            proof.commitments[round - 1],
+                            proof.commitments[round - 1]
                         )?;
                         folded_codewords[idx] = fold_pair(
                             current_codewords[idx],
                             random_point[round],
-                            roots[round][queries[idx]],
+                            roots[round][queries[idx]]
                         );
                     }
                 }
@@ -768,10 +792,11 @@ impl Basefold {
         current_claim: &mut Fp4,
         eval_point: &[Fp4],
         round: usize,
-        challenger: &mut Challenger,
+        challenger: &mut Challenger
     ) -> anyhow::Result<()> {
-        let expected = (Fp4::ONE - eval_point[round]) * round_poly.evaluate(Fp4::ZERO)
-            + eval_point[round] * round_poly.evaluate(Fp4::ONE);
+        let expected =
+            (Fp4::ONE - eval_point[round]) * round_poly.evaluate(Fp4::ZERO) +
+            eval_point[round] * round_poly.evaluate(Fp4::ONE);
 
         if *current_claim != expected {
             anyhow::bail!(
@@ -799,7 +824,7 @@ fn update_queries(queries: &mut Vec<usize>, halfsize: usize) {
 /// the conditional subtraction but faster as it's a single bitwise operation.
 fn update_query(query: &mut usize, halfsize: usize) {
     debug_assert!(halfsize.is_power_of_two(), "halfsize must be a power of 2");
-    *query &= (halfsize - 1);
+    *query &= halfsize - 1;
 }
 
 /// Verifies the consistency of folding operations during query verification.
@@ -838,10 +863,10 @@ fn check_fold(
     query: usize,
     halfsize: usize,
     left: Fp4,
-    right: Fp4,
+    right: Fp4
 ) -> anyhow::Result<()> {
     debug_assert!(halfsize.is_power_of_two(), "halfsize must be a power of 2");
-    
+
     // For power-of-2 halfsize, query >= halfsize is equivalent to checking the high bit
     // that corresponds to the halfsize position. We can use bitwise AND to check this.
     if (query & halfsize) != 0 {
@@ -865,10 +890,9 @@ fn check_fold(
 
 #[cfg(test)]
 mod tests {
-
     use p3_baby_bear::BabyBear;
     use p3_field::PrimeCharacteristicRing;
-    use rand::{Rng, SeedableRng, rngs::StdRng};
+    use rand::{ Rng, SeedableRng, rngs::StdRng };
 
     use super::*;
 
@@ -880,11 +904,7 @@ mod tests {
 
         const N_VARS: usize = 4;
         let roots = Fp::roots_of_unity_table(1 << (N_VARS + 1));
-        let mle = MLE::new(
-            (0..1 << N_VARS)
-                .map(|_| Fp::from_u32(rng.r#gen()))
-                .collect(),
-        );
+        let mle = MLE::new((0..1 << N_VARS).map(|_| Fp::from_u32(rng.r#gen())).collect());
 
         let eval_point: Vec<Fp4> = (0..N_VARS).map(|_| Fp4::from_u128(rng.r#gen())).collect();
         let evaluation = mle.evaluate(&eval_point);
@@ -899,9 +919,8 @@ mod tests {
             evaluation,
             prover_data,
             &roots,
-            &config,
-        )
-        .unwrap();
+            &config
+        ).unwrap();
         let mut challenger = Challenger::new();
         let verification_result = Basefold::verify(
             eval_proof,
@@ -910,7 +929,7 @@ mod tests {
             commitment,
             &roots,
             &mut challenger,
-            &config,
+            &config
         )?;
 
         Ok(())
@@ -925,7 +944,10 @@ mod tests {
         let eval_point: Vec<Fp4> = (0..4).map(|_| Fp4::from_u128(rng.r#gen())).collect();
         let eval = poly.evaluate(&eval_point);
         let encoding = encode_mle(&poly, &roots, 2);
-        let mut encoding: Vec<Fp4> = encoding.iter().map(|&x| Fp4::from(x)).collect();
+        let mut encoding: Vec<Fp4> = encoding
+            .iter()
+            .map(|&x| Fp4::from(x))
+            .collect();
         for i in 0..4 {
             let r = eval_point[i];
             encoding = fold(&encoding, r, &roots[i]);
@@ -953,7 +975,7 @@ mod tests {
 
     #[test]
     fn test_query() {
-        let val = (1 << (6 + 1 - 1 - 1));
+        let val = 1 << (6 + 1 - 1 - 1);
         let test = 33 & ((1 << (6 + 1 - 1 - 1)) - 1);
         println!("{:b}", val);
         println!("{:b}", test);
@@ -994,27 +1016,31 @@ mod tests {
     fn test_bitwise_query_updates() {
         // Test that bitwise operations produce identical results to arithmetic operations
         let test_cases = [
-            (5, 8),   // query < halfsize
-            (13, 8),  // query >= halfsize
-            (7, 16),  // query < halfsize
+            (5, 8), // query < halfsize
+            (13, 8), // query >= halfsize
+            (7, 16), // query < halfsize
             (23, 16), // query >= halfsize
         ];
 
         for (query, halfsize) in test_cases {
             let mut bitwise_query = query;
             let mut arithmetic_query = query;
-            
+
             // Bitwise operation (new implementation)
             update_query(&mut bitwise_query, halfsize);
-            
+
             // Arithmetic operation (old implementation)
             if arithmetic_query >= halfsize {
                 arithmetic_query -= halfsize;
             }
-            
-            assert_eq!(bitwise_query, arithmetic_query,
+
+            assert_eq!(
+                bitwise_query,
+                arithmetic_query,
                 "Bitwise and arithmetic operations should produce identical results for query={}, halfsize={}",
-                query, halfsize);
+                query,
+                halfsize
+            );
         }
     }
 }

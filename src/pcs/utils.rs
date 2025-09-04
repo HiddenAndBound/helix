@@ -60,24 +60,24 @@ where
 }
 
 /// Folds an encoding by applying fold_pair to adjacent pairs, reducing size by half.
-/// Folds an encoding by applying fold_pair to adjacent pairs, reducing size by half.
-/// Uses bitwise shift for optimal performance when dealing with power-of-2 sizes.
+/// Uses slice splitting to eliminate manual offset calculation and prevent out-of-bounds access.
+/// Applies fold_pair to pairs from left and right halves of the input slice.
 pub fn fold<F>(code: &[F], random_challenge: Fp4, roots: &[Fp]) -> Vec<Fp4>
 where
     F: Field + Mul<Fp, Output = F>,
     Fp4: ExtensionField<F>,
 {
-    let half_size = code.len() >> 1; // Already optimized with bitwise shift
-    let mut folded = Vec::with_capacity(half_size);
-    for i in 0..half_size {
-        folded.push(fold_pair(
-            (code[i], code[i + half_size]),
-            random_challenge,
-            roots[i],
-        ));
-    }
-
-    folded
+    let half_size = code.len() >> 1;
+    assert_eq!(
+        roots.len(),
+        half_size,
+        "roots length must equal half of code length"
+    );
+    
+    let (left, right) = code.split_at(half_size);
+    itertools::multizip((left, right, roots))
+        .map(|(&l, &r, &root)| fold_pair((l, r), random_challenge, root))
+        .collect()
 }
 
 /// Retrieves codeword pairs from an encoding at query positions.
