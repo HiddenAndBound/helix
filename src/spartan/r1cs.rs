@@ -9,9 +9,9 @@
 //! the constraint system is satisfied if: (A·z) ∘ (B·z) = C·z
 //! where ∘ denotes the Hadamard (element-wise) product.
 
-use crate::spartan::error::{SparseError, SparseResult};
+use crate::spartan::error::{ SparseError, SparseResult };
 use crate::spartan::spark::sparse::SparseMLE;
-use crate::utils::{Fp4, eq::EqEvals, polynomial::MLE};
+use crate::utils::{ Fp4, eq::EqEvals, polynomial::MLE };
 use p3_baby_bear::BabyBear;
 use p3_field::PrimeCharacteristicRing;
 use std::collections::HashMap;
@@ -41,7 +41,7 @@ impl R1CS {
     ///
     /// # Arguments
     /// * `a` - Constraint matrix A
-    /// * `b` - Constraint matrix B  
+    /// * `b` - Constraint matrix B
     /// * `c` - Constraint matrix C
     /// * `num_public_inputs` - Number of public input variables
     ///
@@ -51,7 +51,7 @@ impl R1CS {
         a: SparseMLE,
         b: SparseMLE,
         c: SparseMLE,
-        num_public_inputs: usize,
+        num_public_inputs: usize
     ) -> SparseResult<Self> {
         // Validate matrix dimensions match
         let (a_rows, a_cols) = a.dimensions();
@@ -59,24 +59,36 @@ impl R1CS {
         let (c_rows, c_cols) = c.dimensions();
 
         if a_rows != b_rows || b_rows != c_rows {
-            return Err(SparseError::ValidationError(format!(
-                "Matrix row count mismatch: A={}, B={}, C={}",
-                a_rows, b_rows, c_rows
-            )));
+            return Err(
+                SparseError::ValidationError(
+                    format!("Matrix row count mismatch: A={}, B={}, C={}", a_rows, b_rows, c_rows)
+                )
+            );
         }
 
         if a_cols != b_cols || b_cols != c_cols {
-            return Err(SparseError::ValidationError(format!(
-                "Matrix column count mismatch: A={}, B={}, C={}",
-                a_cols, b_cols, c_cols
-            )));
+            return Err(
+                SparseError::ValidationError(
+                    format!(
+                        "Matrix column count mismatch: A={}, B={}, C={}",
+                        a_cols,
+                        b_cols,
+                        c_cols
+                    )
+                )
+            );
         }
 
         if num_public_inputs > a_cols {
-            return Err(SparseError::ValidationError(format!(
-                "Number of public inputs {} exceeds number of variables {}",
-                num_public_inputs, a_cols
-            )));
+            return Err(
+                SparseError::ValidationError(
+                    format!(
+                        "Number of public inputs {} exceeds number of variables {}",
+                        num_public_inputs,
+                        a_cols
+                    )
+                )
+            );
         }
 
         Ok(R1CS {
@@ -108,15 +120,19 @@ impl R1CS {
         let (c_rows, c_cols) = self.c.dimensions();
 
         if a_rows != b_rows || b_rows != c_rows || a_rows != self.num_constraints {
-            return Err(SparseError::ValidationError(
-                "Inconsistent constraint matrix dimensions".to_string(),
-            ));
+            return Err(
+                SparseError::ValidationError(
+                    "Inconsistent constraint matrix dimensions".to_string()
+                )
+            );
         }
 
         if a_cols != b_cols || b_cols != c_cols || a_cols != self.num_variables {
-            return Err(SparseError::ValidationError(
-                "Inconsistent variable count across matrices".to_string(),
-            ));
+            return Err(
+                SparseError::ValidationError(
+                    "Inconsistent variable count across matrices".to_string()
+                )
+            );
         }
 
         Ok(())
@@ -210,8 +226,8 @@ impl R1CS {
                 BabyBear::new(0), // padding
                 BabyBear::new(0), // padding
                 BabyBear::new(0), // padding
-                BabyBear::new(0), // padding
-            ], // private vars + padding to make 7 total
+                BabyBear::new(0) // padding
+            ] // private vars + padding to make 7 total
         )?;
 
         Ok((r1cs, witness))
@@ -275,18 +291,13 @@ impl R1CS {
         witness_vars[7] = BabyBear::new(0); // padding
 
         let witness = Witness::new(
+            vec![BabyBear::new(2), BabyBear::new(3), BabyBear::new(4), BabyBear::new(5)],
             vec![
-                BabyBear::new(2),
-                BabyBear::new(3),
-                BabyBear::new(4),
-                BabyBear::new(5),
-            ],
-            vec![
-                BabyBear::new(6),   // y1 = 2*3
-                BabyBear::new(24),  // y2 = 6*4
+                BabyBear::new(6), // y1 = 2*3
+                BabyBear::new(24), // y2 = 6*4
                 BabyBear::new(120), // out = 24*5
-                BabyBear::new(0),   // padding
-            ],
+                BabyBear::new(0) // padding
+            ]
         )?;
 
         Ok((r1cs, witness))
@@ -309,7 +320,7 @@ impl Witness {
     /// Creates a new witness from public inputs and private variables.
     pub fn new(
         public_inputs: Vec<BabyBear>,
-        private_variables: Vec<BabyBear>,
+        private_variables: Vec<BabyBear>
     ) -> SparseResult<Self> {
         Ok(Witness {
             public_inputs,
@@ -363,7 +374,7 @@ impl Witness {
             public_inputs: vec![BabyBear::new(2)], // x = 2
             private_variables: vec![
                 BabyBear::new(3), // y = 3
-                BabyBear::new(6), // z = 6
+                BabyBear::new(6) // z = 6
             ],
         }
     }
@@ -449,7 +460,7 @@ impl R1CSInstance {
     /// via eq(point, ·)
     pub fn compute_bound_matrices(
         &self,
-        point: &[Fp4],
+        point: &[Fp4]
     ) -> SparseResult<(MLE<Fp4>, MLE<Fp4>, MLE<Fp4>)> {
         // Validate that all constraint matrices have the same row dimensions
         let (a_rows, _) = self.r1cs.a.dimensions();
@@ -457,10 +468,11 @@ impl R1CSInstance {
         let (c_rows, _) = self.r1cs.c.dimensions();
 
         if a_rows != b_rows || b_rows != c_rows {
-            return Err(SparseError::ValidationError(format!(
-                "Inconsistent row dimensions: A={}, B={}, C={}",
-                a_rows, b_rows, c_rows
-            )));
+            return Err(
+                SparseError::ValidationError(
+                    format!("Inconsistent row dimensions: A={}, B={}, C={}", a_rows, b_rows, c_rows)
+                )
+            );
         }
 
         let row_count = a_rows;
@@ -473,12 +485,16 @@ impl R1CSInstance {
 
         // Validate that the point has the correct length for row variables
         if point.len() != row_vars {
-            return Err(SparseError::ValidationError(format!(
-                "Point has {} elements but expected {} for {} rows",
-                point.len(),
-                row_vars,
-                row_count
-            )));
+            return Err(
+                SparseError::ValidationError(
+                    format!(
+                        "Point has {} elements but expected {} for {} rows",
+                        point.len(),
+                        row_vars,
+                        row_count
+                    )
+                )
+            );
         }
 
         // Generate the equality polynomial evaluations from the given point
@@ -550,7 +566,7 @@ mod tests {
     fn test_witness_new() {
         let witness = Witness::new(
             vec![BabyBear::new(1), BabyBear::new(2)],
-            vec![BabyBear::new(3), BabyBear::new(4)],
+            vec![BabyBear::new(3), BabyBear::new(4)]
         );
         assert!(witness.is_ok());
         assert_eq!(witness.unwrap().len(), 4);
@@ -649,10 +665,7 @@ mod tests {
             private_variables: vec![BabyBear::ONE], // Too short
         };
         let bad_instance = R1CSInstance::new(r1cs, bad_witness);
-        assert!(matches!(
-            bad_instance,
-            Err(SparseError::DimensionMismatch { .. })
-        ));
+        assert!(matches!(bad_instance, Err(SparseError::DimensionMismatch { .. })));
     }
 
     #[test]
@@ -804,7 +817,7 @@ mod tests {
         let eq_evals = EqEvals::gen_from_point(&point);
 
         // eq_evals should be [(1-13), 13] = [-12, 13]
-        assert_eq!(eq_evals.coeffs.len(), 2);
+        assert_eq!(eq_evals.coeffs().len(), 2);
 
         // For A matrix, result should be:
         // col 0: eq_evals[0] * 1 + eq_evals[1] * 0 = -12 * 1 = -12

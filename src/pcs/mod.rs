@@ -497,28 +497,30 @@ impl Basefold {
     {
         let mut g_0: Fp4 = Fp4::ZERO;
         let rounds = eval_point.len();
-        let hypercube_size = 1 << (rounds - round - 1);
+
+        // Size of the boolean hypercube at this round of the sumcheck
+        let size = 1 << (rounds - round - 1);
 
         // Bounds are safe: iterations = 2^(rounds-round-1), poly.len() = 2^rounds
         // Max poly index = (iterations-1)*2 < 2^rounds, eq.len() ≥ iterations
-        let poly = &poly[0..hypercube_size * 2];
-        let eq = &eq[0..hypercube_size];
+        let poly = &poly.coeffs()[0..size * 2];
+        let eq = &eq.coeffs()[0..size];
         debug_assert!(
-            poly.len() >= hypercube_size * 2,
+            poly.len() >= size * 2,
             "Mathematical bounds violated: poly.len()={}, required={}",
             poly.len(),
-            hypercube_size * 2
+            size * 2
         );
         debug_assert!(
-            eq.len() >= hypercube_size,
+            eq.len() >= size,
             "Mathematical bounds violated: eq.len()={}, required={}",
             eq.len(),
-            hypercube_size
+            size
         );
 
         // Use unsafe indexing to eliminate bounds checking overhead
         unsafe {
-            for i in 0..hypercube_size {
+            for i in 0..size {
                 // SAFETY: Bounds verified above, i < iterations ≤ eq.len() and i*2 < poly.len()
                 g_0 += *eq.get_unchecked(i) * *poly.get_unchecked(i << 1);
             }

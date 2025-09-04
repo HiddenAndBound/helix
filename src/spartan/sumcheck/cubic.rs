@@ -1,7 +1,11 @@
 use p3_field::PrimeCharacteristicRing;
 
 use crate::{
-    Fp, Fp4, challenger::Challenger, eq::EqEvals, polynomial::MLE,
+    Fp,
+    Fp4,
+    challenger::Challenger,
+    eq::EqEvals,
+    polynomial::MLE,
     spartan::univariate::UnivariatePoly,
 };
 
@@ -40,7 +44,7 @@ impl CubicSumCheckProof {
         right: &MLE<Fp>,
         eq_evals: &EqEvals,
         claimed_sum: Fp4,
-        challenger: &mut Challenger,
+        challenger: &mut Challenger
     ) -> Self {
         let rounds = left.n_vars();
         assert_eq!(
@@ -48,10 +52,7 @@ impl CubicSumCheckProof {
             rounds,
             "Left and right MLEs must have same number of variables"
         );
-        assert_eq!(
-            eq_evals.n_vars, rounds,
-            "Equality polynomial must match MLE dimensions"
-        );
+        assert_eq!(eq_evals.n_vars(), rounds, "Equality polynomial must match MLE dimensions");
 
         // Get random evaluation point from challenger (Fiat-Shamir)
         let eq_point = challenger.get_challenges(rounds);
@@ -61,8 +62,14 @@ impl CubicSumCheckProof {
         let mut round_challenges = Vec::new();
 
         // Handle first round separately (uses base field Fp for efficiency)
-        let round_proof =
-            compute_cubic_first_round(left, right, eq_evals, &eq_point, current_claim, rounds);
+        let round_proof = compute_cubic_first_round(
+            left,
+            right,
+            eq_evals,
+            &eq_point,
+            current_claim,
+            rounds
+        );
 
         // Process first round proof
         round_proofs.push(round_proof.clone());
@@ -87,7 +94,7 @@ impl CubicSumCheckProof {
                 &eq_point,
                 current_claim,
                 round,
-                rounds,
+                rounds
             );
 
             challenger.observe_fp4_elems(&round_proof.coefficients());
@@ -122,8 +129,8 @@ impl CubicSumCheckProof {
             let eq_point = challenger.get_challenge();
             assert_eq!(
                 current_claim,
-                (Fp4::ONE - eq_point) * round_poly.evaluate(Fp4::ZERO)
-                    + eq_point * round_poly.evaluate(Fp4::ONE)
+                (Fp4::ONE - eq_point) * round_poly.evaluate(Fp4::ZERO) +
+                    eq_point * round_poly.evaluate(Fp4::ONE)
             );
 
             challenger.observe_fp4_elems(&round_poly.coefficients());
@@ -162,7 +169,7 @@ impl BatchedCubicSumCheckProof {
     pub fn new(
         round_proofs: Vec<UnivariatePoly>,
         final_evals: Vec<(Fp4, Fp4)>,
-        num_claims: usize,
+        num_claims: usize
     ) -> Self {
         assert_eq!(
             final_evals.len(),
@@ -183,7 +190,7 @@ impl BatchedCubicSumCheckProof {
     ///
     /// # Arguments
     /// * `left_polys` - Vector of left MLEs, one per claim
-    /// * `right_polys` - Vector of right MLEs, one per claim  
+    /// * `right_polys` - Vector of right MLEs, one per claim
     /// * `eq_evals` - Vector of equality polynomial evaluations, one per claim
     /// * `claimed_sums` - Vector of claimed sum values for each claim
     /// * `challenger` - Challenger for Fiat-Shamir randomness
@@ -191,7 +198,7 @@ impl BatchedCubicSumCheckProof {
         left_polys: &[MLE<Fp4>],
         right_polys: &[MLE<Fp4>],
         claimed_sums: &[Fp4],
-        challenger: &mut Challenger,
+        challenger: &mut Challenger
     ) -> Self {
         let num_claims = left_polys.len();
         assert_eq!(
@@ -199,11 +206,7 @@ impl BatchedCubicSumCheckProof {
             num_claims,
             "Number of left and right polynomials must match"
         );
-        assert_eq!(
-            claimed_sums.len(),
-            num_claims,
-            "Number of claimed sums must match"
-        );
+        assert_eq!(claimed_sums.len(), num_claims, "Number of claimed sums must match");
 
         if num_claims == 0 {
             return Self::new(vec![], vec![], 0);
@@ -238,7 +241,7 @@ impl BatchedCubicSumCheckProof {
         let mut batched_claim = Fp4::ZERO;
 
         for (i, &claimed_sum) in claimed_sums.iter().enumerate() {
-            let gamma_power = gamma.exp_u64(i as u64 + 1);
+            let gamma_power = gamma.exp_u64((i as u64) + 1);
             batched_claim += gamma_power * claimed_sum;
         }
 
@@ -257,7 +260,7 @@ impl BatchedCubicSumCheckProof {
             gamma,
             num_claims,
             0,
-            rounds,
+            rounds
         );
 
         // Process first round proof
@@ -290,7 +293,7 @@ impl BatchedCubicSumCheckProof {
                 gamma,
                 num_claims,
                 round,
-                rounds,
+                rounds
             );
 
             challenger.observe_fp4_elems(&round_proof.coefficients());
@@ -348,8 +351,9 @@ impl BatchedCubicSumCheckProof {
 
             // Check sum-check relation: current_claim = (1-r_i) * g_i(0) + r_i * g_i(1)
 
-            let expected_claim = (Fp4::ONE - eq_point[round]) * round_poly.evaluate(Fp4::ZERO)
-                + eq_point[round] * round_poly.evaluate(Fp4::ONE);
+            let expected_claim =
+                (Fp4::ONE - eq_point[round]) * round_poly.evaluate(Fp4::ZERO) +
+                eq_point[round] * round_poly.evaluate(Fp4::ONE);
             if current_claim != expected_claim {
                 return false;
             }
@@ -363,7 +367,7 @@ impl BatchedCubicSumCheckProof {
         // Final check: batched evaluation of final values must match the final claim
         let mut expected_claim = Fp4::ZERO;
         for (i, &(left_eval, right_eval)) in self.final_evals.iter().enumerate() {
-            expected_claim = (left_eval * right_eval) + gamma * expected_claim;
+            expected_claim = left_eval * right_eval + gamma * expected_claim;
         }
 
         current_claim == expected_claim
@@ -379,7 +383,7 @@ pub fn compute_cubic_round(
     eq_point: &Vec<Fp4>,
     current_claim: Fp4,
     round: usize,
-    rounds: usize,
+    rounds: usize
 ) -> UnivariatePoly {
     // Use Gruen's optimization: compute evaluations at X = 0, 1, 2
     let mut round_coeffs = vec![Fp4::ZERO; 3];
@@ -390,8 +394,8 @@ pub fn compute_cubic_round(
 
         // g(2): use multilinear polynomial identity
         // For base field, we need to convert to Fp4 first, then use double()
-        let left_at_2 = Fp4::from(left[i << 1]) + Fp4::from(left[i << 1 | 1]).double();
-        let right_at_2 = Fp4::from(right[i << 1]) + Fp4::from(right[i << 1 | 1]).double();
+        let left_at_2 = Fp4::from(left[i << 1]) + Fp4::from(left[(i << 1) | 1]).double();
+        let right_at_2 = Fp4::from(right[i << 1]) + Fp4::from(right[(i << 1) | 1]).double();
         round_coeffs[2] += eq[i] * (left_at_2 * right_at_2);
     }
 
@@ -412,7 +416,7 @@ pub fn compute_cubic_first_round(
     eq: &EqEvals,
     eq_point: &Vec<Fp4>,
     current_claim: Fp4,
-    rounds: usize,
+    rounds: usize
 ) -> UnivariatePoly {
     // Use Gruen's optimization: compute evaluations at X = 0, 1, 2
     let mut round_coeffs = vec![Fp4::ZERO; 3];
@@ -423,8 +427,8 @@ pub fn compute_cubic_first_round(
 
         // g(2): use multilinear polynomial identity
         // For base field, we need to convert to Fp4 first, then use double()
-        let left_at_2 = Fp4::from(left[i << 1]) + Fp4::from(left[i << 1 | 1]).double();
-        let right_at_2 = Fp4::from(right[i << 1]) + Fp4::from(right[i << 1 | 1]).double();
+        let left_at_2 = Fp4::from(left[i << 1]) + Fp4::from(left[(i << 1) | 1]).double();
+        let right_at_2 = Fp4::from(right[i << 1]) + Fp4::from(right[(i << 1) | 1]).double();
         round_coeffs[2] += eq[i] * (left_at_2 * right_at_2);
     }
 
@@ -449,7 +453,7 @@ pub fn compute_batched_cubic_round(
     gamma: Fp4,
     num_claims: usize,
     round: usize,
-    rounds: usize,
+    rounds: usize
 ) -> UnivariatePoly {
     // Use Gruen's optimization: compute evaluations at X = 0, 1, 2
     let mut round_coeffs = vec![vec![Fp4::ZERO; 3]; num_claims];
@@ -461,9 +465,9 @@ pub fn compute_batched_cubic_round(
             let left_val = left_polys[claim_idx][i << 1];
             let right_val = right_polys[claim_idx][i << 1];
             let left_at_2 =
-                left_polys[claim_idx][i << 1] + left_polys[claim_idx][i << 1 | 1].double();
+                left_polys[claim_idx][i << 1] + left_polys[claim_idx][(i << 1) | 1].double();
             let right_at_2 =
-                right_polys[claim_idx][i << 1] + right_polys[claim_idx][i << 1 | 1].double();
+                right_polys[claim_idx][i << 1] + right_polys[claim_idx][(i << 1) | 1].double();
 
             round_coeffs[claim_idx][0] += left_val * right_val * eq_evals[i];
             round_coeffs[claim_idx][2] += left_at_2 * right_at_2 * eq_evals[i];

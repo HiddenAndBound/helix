@@ -5,13 +5,13 @@
 //!
 //! Key features:
 //! - Sparse MLE representation: O(nnz) storage vs O(n²) dense
-//! - Metadata preprocessing for sum-check protocols  
+//! - Metadata preprocessing for sum-check protocols
 //! - Twist & Shout memory checking timestamps
 
-use crate::spartan::error::{SparseError, SparseResult};
-use crate::utils::{Fp, Fp4, eq::EqEvals, polynomial::MLE};
+use crate::spartan::error::{ SparseError, SparseResult };
+use crate::utils::{ Fp, Fp4, eq::EqEvals, polynomial::MLE };
 use p3_baby_bear::BabyBear;
-use p3_field::{PrimeCharacteristicRing, PrimeField32};
+use p3_field::{ PrimeCharacteristicRing, PrimeField32 };
 use std::collections::HashMap;
 
 /// Sparse multilinear extension (MLE) polynomial for Spartan.
@@ -68,10 +68,7 @@ impl SparseMLE {
             .max()
             .expect("Should be non-zero");
 
-        (
-            (max_row + 1).next_power_of_two(),
-            (max_col + 1).next_power_of_two(),
-        )
+        ((max_row + 1).next_power_of_two(), (max_col + 1).next_power_of_two())
     }
 
     /// Returns the number of non-zero entries.
@@ -86,10 +83,7 @@ impl SparseMLE {
 
     /// Gets the coefficient at (row, col), returns zero if not present.
     pub fn get(&self, row: usize, col: usize) -> BabyBear {
-        self.coeffs
-            .get(&(row, col))
-            .copied()
-            .unwrap_or(BabyBear::ZERO)
+        self.coeffs.get(&(row, col)).copied().unwrap_or(BabyBear::ZERO)
     }
 
     /// Returns an iterator over non-zero entries as ((row, col), value) tuples.
@@ -175,22 +169,32 @@ impl SparseMLE {
         let row_vars = (rows as f64).log2().ceil() as usize;
 
         // Validate that eq_evals has the correct number of variables for row binding
-        if eq_evals.n_vars != row_vars {
-            return Err(SparseError::ValidationError(format!(
-                "EqEvals has {} variables but expected {} for {} rows",
-                eq_evals.n_vars, row_vars, rows
-            )));
+        if eq_evals.n_vars() != row_vars {
+            return Err(
+                SparseError::ValidationError(
+                    format!(
+                        "EqEvals has {} variables but expected {} for {} rows",
+                        eq_evals.n_vars(),
+                        row_vars,
+                        rows
+                    )
+                )
+            );
         }
 
         // The eq_evals should have 2^row_vars coefficients
         let expected_eq_coeffs = 1 << row_vars;
-        if eq_evals.coeffs.len() != expected_eq_coeffs {
-            return Err(SparseError::ValidationError(format!(
-                "EqEvals has {} coefficients but expected {} for {} row variables",
-                eq_evals.coeffs.len(),
-                expected_eq_coeffs,
-                row_vars
-            )));
+        if eq_evals.coeffs().len() != expected_eq_coeffs {
+            return Err(
+                SparseError::ValidationError(
+                    format!(
+                        "EqEvals has {} coefficients but expected {} for {} row variables",
+                        eq_evals.coeffs().len(),
+                        expected_eq_coeffs,
+                        row_vars
+                    )
+                )
+            );
         }
 
         // Initialize result vector with zeros - this will be our column dimension
@@ -200,9 +204,9 @@ impl SparseMLE {
         // This computes: result[col] = ∑_row (eq_evals[row] * matrix[row][col])
         for ((row, col), &value) in self.iter() {
             // Ensure we don't go out of bounds
-            if *row < rows && *col < cols && *row < eq_evals.coeffs.len() {
+            if *row < rows && *col < cols && *row < eq_evals.coeffs().len() {
                 // Convert BabyBear matrix value to Fp4 and multiply by eq_evals coefficient
-                let contribution = eq_evals.coeffs[*row] * Fp4::from(value);
+                let contribution = eq_evals.coeffs()[*row] * Fp4::from(value);
                 result_coeffs[*col] += contribution;
             }
         }
@@ -237,16 +241,20 @@ impl SpartanMetadata {
         col: MLE<Fp>,
         val: MLE<Fp>,
         row_ts: TimeStamps,
-        col_ts: TimeStamps,
+        col_ts: TimeStamps
     ) -> SparseResult<Self> {
         // Validate that all MLEs have the same length
         if row.len() != col.len() || col.len() != val.len() {
-            return Err(SparseError::ValidationError(format!(
-                "MLE length mismatch: row={}, col={}, val={}",
-                row.len(),
-                col.len(),
-                val.len()
-            )));
+            return Err(
+                SparseError::ValidationError(
+                    format!(
+                        "MLE length mismatch: row={}, col={}, val={}",
+                        row.len(),
+                        col.len(),
+                        val.len()
+                    )
+                )
+            );
         }
 
         Ok(SpartanMetadata {
@@ -269,9 +277,9 @@ impl SpartanMetadata {
 
         // Validate dimensions are reasonable
         if max_rows == 0 || max_cols == 0 {
-            return Err(SparseError::ValidationError(
-                "Matrix dimensions cannot be zero".to_string(),
-            ));
+            return Err(
+                SparseError::ValidationError("Matrix dimensions cannot be zero".to_string())
+            );
         }
 
         // Convert sparse representation to dense vectors
@@ -291,7 +299,7 @@ impl SpartanMetadata {
 
     /// Extracts dense vectors from sparse representation in deterministic order.
     fn extract_dense_vectors(
-        sparse_mle: &SparseMLE,
+        sparse_mle: &SparseMLE
     ) -> SparseResult<(Vec<BabyBear>, Vec<BabyBear>, Vec<BabyBear>)> {
         let num_entries = sparse_mle.num_nonzeros();
 
@@ -358,15 +366,17 @@ impl TimeStamps {
     /// Address space must be power of 2. Time: O(n+m), Space: O(m).
     pub fn compute(indices: &[BabyBear], max_address_space: usize) -> SparseResult<Self> {
         if indices.is_empty() {
-            return Err(SparseError::ValidationError(
-                "Cannot compute timestamps for empty index sequence".to_string(),
-            ));
+            return Err(
+                SparseError::ValidationError(
+                    "Cannot compute timestamps for empty index sequence".to_string()
+                )
+            );
         }
 
         if !max_address_space.is_power_of_two() {
-            return Err(SparseError::ValidationError(
-                "Address space size must be a power of 2".to_string(),
-            ));
+            return Err(
+                SparseError::ValidationError("Address space size must be a power of 2".to_string())
+            );
         }
 
         let padded_size = indices.len().next_power_of_two();
@@ -408,7 +418,7 @@ impl TimeStamps {
         &self.read_ts
     }
 
-    /// Returns a reference to the final timestamps  
+    /// Returns a reference to the final timestamps
     pub fn final_ts(&self) -> &[BabyBear] {
         &self.final_ts
     }
@@ -557,10 +567,7 @@ mod tests {
             expected: (2, 3),
             actual: (4, 5),
         };
-        assert_eq!(
-            dimension_err.to_string(),
-            "Dimension mismatch: expected (2, 3), got (4, 5)"
-        );
+        assert_eq!(dimension_err.to_string(), "Dimension mismatch: expected (2, 3), got (4, 5)");
 
         let index_err = SparseError::IndexOutOfBounds {
             index: (5, 6),
@@ -572,10 +579,7 @@ mod tests {
         assert_eq!(empty_err.to_string(), "Operation on empty matrix");
 
         let constraint_err = SparseError::ConstraintViolation("constraint failed".to_string());
-        assert_eq!(
-            constraint_err.to_string(),
-            "Constraint violation: constraint failed"
-        );
+        assert_eq!(constraint_err.to_string(), "Constraint violation: constraint failed");
     }
 
     #[test]
@@ -596,12 +600,7 @@ mod tests {
     #[test]
     fn test_spartan_metadata_new_length_mismatch() {
         let row_mle = MLE::new(vec![BabyBear::ZERO, BabyBear::ZERO]); // Length 2
-        let col_mle = MLE::new(vec![
-            BabyBear::ONE,
-            BabyBear::ZERO,
-            BabyBear::ONE,
-            BabyBear::ZERO,
-        ]); // Length 4 (different)
+        let col_mle = MLE::new(vec![BabyBear::ONE, BabyBear::ZERO, BabyBear::ONE, BabyBear::ZERO]); // Length 4 (different)
         let val_mle = MLE::new(vec![BabyBear::from_u32(5), BabyBear::from_u32(6)]); // Length 2
 
         let read_ts = vec![BabyBear::ZERO];
@@ -639,8 +638,9 @@ mod tests {
         coeffs.insert((0, 1), BabyBear::from_u32(3));
 
         let sparse_mle = SparseMLE::new(coeffs).unwrap();
-        let (row_vec, col_vec, val_vec) =
-            SpartanMetadata::extract_dense_vectors(&sparse_mle).unwrap();
+        let (row_vec, col_vec, val_vec) = SpartanMetadata::extract_dense_vectors(
+            &sparse_mle
+        ).unwrap();
 
         assert_eq!(row_vec.len(), 2);
         assert_eq!(col_vec.len(), 2);
@@ -686,12 +686,7 @@ mod tests {
 
     #[test]
     fn test_timestamps_compute_valid() {
-        let indices = vec![
-            BabyBear::ZERO,
-            BabyBear::ONE,
-            BabyBear::ZERO,
-            BabyBear::from_u32(2),
-        ];
+        let indices = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::ZERO, BabyBear::from_u32(2)];
         let max_address_space = 4; // Power of 2
 
         let timestamps = TimeStamps::compute(&indices, max_address_space).unwrap();
@@ -770,7 +765,7 @@ mod tests {
             BabyBear::ONE,
             BabyBear::ZERO,
             BabyBear::ONE,
-            BabyBear::from_u32(2),
+            BabyBear::from_u32(2)
         ];
 
         let timestamps = TimeStamps::compute(&indices, 4).unwrap();

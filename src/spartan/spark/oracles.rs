@@ -10,9 +10,9 @@
 //! - [`generate_spark_opening_oracles`]: Main function to generate all oracles from evaluation point
 //! - [`generate_single_oracle_pair`]: Utility function to generate oracles for a single matrix
 
-use crate::spartan::error::{SparseError, SparseResult};
+use crate::spartan::error::{ SparseError, SparseResult };
 use crate::spartan::spark::sparse::SpartanMetadata;
-use crate::utils::{Fp4, eq::EqEvals, polynomial::MLE};
+use crate::utils::{ Fp4, eq::EqEvals, polynomial::MLE };
 use p3_field::PrimeField32;
 
 /// Spark oracles for polynomial commitment opening across all three constraint matrices.
@@ -61,7 +61,7 @@ pub struct SparkOracles {
 /// # Protocol Context
 /// In the Spark protocol:
 /// 1. The outer sum-check generates challenges rx
-/// 2. The inner sum-check generates challenges ry  
+/// 2. The inner sum-check generates challenges ry
 /// 3. The evaluation point is rx ⊕ ry (concatenation)
 /// 4. For each matrix metadata, we create oracles where:
 ///    - e_rx[i] = eq_rx[row[i]] (row indices map to rx equality polynomial)
@@ -70,14 +70,18 @@ pub fn generate_spark_opening_oracles(
     metadata_a: &SpartanMetadata,
     metadata_b: &SpartanMetadata,
     metadata_c: &SpartanMetadata,
-    evaluation_point: &[Fp4],
+    evaluation_point: &[Fp4]
 ) -> SparseResult<SparkOracles> {
     // Validate evaluation point can be split into rx and ry
     if evaluation_point.len() % 2 != 0 {
-        return Err(SparseError::ValidationError(format!(
-            "Evaluation point length {} must be even to split into rx and ry",
-            evaluation_point.len()
-        )));
+        return Err(
+            SparseError::ValidationError(
+                format!(
+                    "Evaluation point length {} must be even to split into rx and ry",
+                    evaluation_point.len()
+                )
+            )
+        );
     }
 
     let half_len = evaluation_point.len() / 2;
@@ -104,7 +108,7 @@ fn generate_oracle_pair(
     metadata_b: &SpartanMetadata,
     metadata_c: &SpartanMetadata,
     eq_rx: &EqEvals,
-    eq_ry: &EqEvals,
+    eq_ry: &EqEvals
 ) -> SparseResult<SparkOracles> {
     // Generate oracle pairs for each metadata
     let (e_rx_a, e_ry_a) = generate_single_oracle_pair(metadata_a, eq_rx, eq_ry)?;
@@ -129,14 +133,14 @@ fn generate_oracle_pair(
 pub fn generate_single_oracle_pair(
     metadata: &SpartanMetadata,
     eq_rx: &EqEvals,
-    eq_ry: &EqEvals,
+    eq_ry: &EqEvals
 ) -> SparseResult<(MLE<Fp4>, MLE<Fp4>)> {
     let len = metadata.len();
 
     if len == 0 {
-        return Err(SparseError::ValidationError(
-            "Cannot generate oracles for empty metadata".to_string(),
-        ));
+        return Err(
+            SparseError::ValidationError("Cannot generate oracles for empty metadata".to_string())
+        );
     }
 
     let mut e_rx_vec = Vec::with_capacity(len);
@@ -152,22 +156,22 @@ pub fn generate_single_oracle_pair(
         let col_index = col_coeffs[i].as_canonical_u32() as usize;
 
         // Validate indices are within bounds
-        if row_index >= eq_rx.coeffs.len() {
+        if row_index >= eq_rx.coeffs().len() {
             return Err(SparseError::IndexOutOfBounds {
                 index: (row_index, 0),
-                bounds: (eq_rx.coeffs.len(), 0),
+                bounds: (eq_rx.coeffs().len(), 0),
             });
         }
-        if col_index >= eq_ry.coeffs.len() {
+        if col_index >= eq_ry.coeffs().len() {
             return Err(SparseError::IndexOutOfBounds {
                 index: (col_index, 0),
-                bounds: (eq_ry.coeffs.len(), 0),
+                bounds: (eq_ry.coeffs().len(), 0),
             });
         }
 
         // Populate oracle vectors
-        e_rx_vec.push(eq_rx.coeffs[row_index]);
-        e_ry_vec.push(eq_ry.coeffs[col_index]);
+        e_rx_vec.push(eq_rx.coeffs()[row_index]);
+        e_ry_vec.push(eq_ry.coeffs()[col_index]);
     }
 
     // Convert to MLEs
@@ -207,16 +211,15 @@ mod tests {
         // Evaluation point with 2 variables (1 for rx, 1 for ry)
         let evaluation_point = vec![
             Fp4::from_u32(2), // rx
-            Fp4::from_u32(3), // ry
+            Fp4::from_u32(3) // ry
         ];
 
         let result = generate_spark_opening_oracles(
             &metadata_a,
             &metadata_b,
             &metadata_c,
-            &evaluation_point,
-        )
-        .unwrap();
+            &evaluation_point
+        ).unwrap();
 
         // Verify we get SparkOracles with all 6 oracle fields
         // Each oracle should have MLEs with length matching metadata
@@ -236,9 +239,12 @@ mod tests {
         // Evaluation point: rx=[2], ry=[3]
         let evaluation_point = vec![Fp4::from_u32(2), Fp4::from_u32(3)];
 
-        let result =
-            generate_spark_opening_oracles(&metadata, &metadata, &metadata, &evaluation_point)
-                .unwrap();
+        let result = generate_spark_opening_oracles(
+            &metadata,
+            &metadata,
+            &metadata,
+            &evaluation_point
+        ).unwrap();
 
         // For this test case:
         // - eq_rx for point [2] gives coefficients [(1-2), 2] = [-1, 2]
@@ -260,8 +266,12 @@ mod tests {
         // Odd length evaluation point should fail
         let odd_evaluation_point = vec![Fp4::from_u32(1), Fp4::from_u32(2), Fp4::from_u32(3)];
 
-        let result =
-            generate_spark_opening_oracles(&metadata, &metadata, &metadata, &odd_evaluation_point);
+        let result = generate_spark_opening_oracles(
+            &metadata,
+            &metadata,
+            &metadata,
+            &odd_evaluation_point
+        );
 
         assert!(matches!(result, Err(SparseError::ValidationError(_))));
     }
@@ -300,12 +310,15 @@ mod tests {
             Fp4::from_u32(1),
             Fp4::from_u32(2), // rx = [1, 2]
             Fp4::from_u32(3),
-            Fp4::from_u32(4), // ry = [3, 4]
+            Fp4::from_u32(4) // ry = [3, 4]
         ];
 
-        let result =
-            generate_spark_opening_oracles(&metadata, &metadata, &metadata, &evaluation_point)
-                .unwrap();
+        let result = generate_spark_opening_oracles(
+            &metadata,
+            &metadata,
+            &metadata,
+            &evaluation_point
+        ).unwrap();
 
         // Verify structure is correct
         assert_eq!(result.e_rx_a.len(), 2); // Two non-zero entries in metadata
@@ -326,9 +339,12 @@ mod tests {
         let ry_point = vec![Fp4::from_u32(7)];
         let evaluation_point = [rx_point.clone(), ry_point.clone()].concat();
 
-        let result =
-            generate_spark_opening_oracles(&metadata, &metadata, &metadata, &evaluation_point)
-                .unwrap();
+        let result = generate_spark_opening_oracles(
+            &metadata,
+            &metadata,
+            &metadata,
+            &evaluation_point
+        ).unwrap();
 
         // Manual verification: create EqEvals and check lookups
         let eq_rx = EqEvals::gen_from_point(&rx_point);

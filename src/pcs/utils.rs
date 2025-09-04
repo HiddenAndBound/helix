@@ -81,12 +81,15 @@ where
 }
 
 /// Retrieves codeword pairs from an encoding at query positions.
+/// Uses slice splitting to eliminate manual offset calculation.
 pub fn get_codewords<F: Into<Fp4> + Copy>(queries: &[usize], encoding: &[F]) -> Vec<(Fp4, Fp4)> {
-    let halfsize = encoding.len() >> 1; // Bitwise right shift for division by 2
+    let halfsize = encoding.len() >> 1;
+    let (left, right) = encoding.split_at(halfsize);
+    
     queries
         .iter()
         .copied()
-        .map(|i| (encoding[i].into(), encoding[i + halfsize].into()))
+        .map(|i| (left[i].into(), right[i].into()))
         .collect()
 }
 
