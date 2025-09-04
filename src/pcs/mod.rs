@@ -151,9 +151,10 @@ impl BaseFoldConfig {
 /// a field-agnostic polynomial commitment scheme optimized for integration with sum-check protocols.
 pub struct Basefold;
 
+/// Default number of queries for soundness (provides ~100-bit security)
 pub const QUERIES: usize = 144;
 
-//TODO: Hash pruning, hash leaves together, oracle skipping, early stopping, rate_customisation.
+// TODO: Optimizations - hash pruning, oracle skipping, early stopping, rate customisation
 
 /// A cryptographic commitment to a polynomial using BaseFold.
 #[derive(Debug)]
@@ -261,8 +262,10 @@ impl Basefold {
         }
         let encoding = encode_mle(poly, roots, config.rate);
 
+        // Split Reed-Solomon encoding into pairs for Merkle tree construction
         let (left, right) = encoding.split_at(encoding.len() / 2);
 
+        // Create leaf hashes: H(E[2i], E[2i+1]) for each codeword pair
         let leaves: Vec<[u8; 32]> = create_hash_leaves_from_pairs(left, right);
         let merkle_tree = MerkleTree::from_hash(&leaves)?;
         let commitment = merkle_tree.root();
@@ -416,8 +419,8 @@ impl Basefold {
         // The verifier (or the random oracle, which is the challenger for us concretely) at this point has observed the prover's sumcheck messages as well the commitments throughout the commit phase which was interleaved with the sumcheck protocol.
         // Now the verifier generates queries to test consistency between the committed oracles, which are concretely merkle tree roots, and finally test proximity to a valid codeword.
 
-        //The queries should lie in the range 0...encoding.len()/2. The provided codewords, should contain the indexed value at i, as well as i + halfsize which the verifier requires to test consistency.
-
+        // Query generation: sample random positions for consistency verification
+        // Domain starts at size 2^(vars + rate_bits - 1), halves each folding round
         let mut log_domain_size = (rounds as u32) + config.rate.trailing_zeros() - 1;
         let mut domain_size = 1 << log_domain_size;
         let mut queries = challenger.get_indices(log_domain_size, config.queries);
@@ -440,9 +443,10 @@ impl Basefold {
             };
             paths.push(round_paths);
 
+            // Update query indices for next round using bitwise masking
             update_queries(&mut queries, halfsize);
 
-            // Domain size halves each round
+            // Domain size halves each folding round
             domain_size = halfsize;
         }
 
@@ -524,10 +528,13 @@ impl Basefold {
         unsafe {
             for i in 0..size {
                 // SAFETY: Bounds verified above, i < iterations ≤ eq.len() and i*2 < poly.len()
+                // Sum-check accumulation: g₀ = Σⱼ eq[j] * P[2j] (sum over x_i = 0)
                 g_0 += *eq.get_unchecked(i) * *poly.get_unchecked(i << 1);
             }
         }
 
+        // Derive g₁ from sum-check constraint: g₀ + g₁ = current_claim
+        // Rearranging: g₁ = (current_claim - g₀*(1-r)) / r where r = eval_point[round]
         let g1: Fp4 = (*current_claim - g_0 * (Fp4::ONE - eval_point[round])) / eval_point[round];
 
         let round_coeffs = vec![g_0, g1 - g_0];
@@ -536,6 +543,10 @@ impl Basefold {
         round_proof
     }
 
+    /// Performs dual folding of both encoding and polynomial using Fiat-Shamir challenge.
+    /// 
+    /// This is a core operation in BaseFold where both the Reed-Solomon encoding
+    /// and the polynomial are folded simultaneously to maintain consistency.
     fn fold_encoding_and_polynomial(
         round: usize,
         initial_encoding: &Encoding,
@@ -557,6 +568,10 @@ impl Basefold {
         (current_encoding, current_poly_folded)
     }
 
+    /// Initializes data structures for the evaluation proof generation.
+    /// 
+    /// Pre-allocates vectors with known capacity to avoid reallocations during
+    /// the intensive folding rounds of the sum-check protocol.
     fn initialize_evaluation_proof_context(
         evaluation: Fp4,
         rounds: usize
@@ -587,6 +602,10 @@ impl Basefold {
         )
     }
 
+    /// Updates Merkle trees and commitments after each folding round.
+    /// 
+    /// Builds a new Merkle tree over the folded encoding pairs and stores
+    /// the commitment for verifier observation in the Fiat-Shamir transcript.
     fn update_merkle_and_commitments_for_round(
         current_encoding: Vec<Fp4>,
         commitments: &mut Vec<Commitment>,
@@ -742,6 +761,10 @@ impl Basefold {
         Ok(())
     }
 }
+/// Folds queried codeword pairs using the current round's challenge.
+/// 
+/// This operation mimics the encoding folding performed by the prover,
+/// allowing the verifier to check consistency across folding rounds.
 fn fold_codewords(
     folded_codewords: &mut [Fp4],
     codewords: &[(Fp4, Fp4)],
@@ -753,6 +776,10 @@ fn fold_codewords(
         *fold = fold_pair(codeword_pair, r, roots[*query]);
     }
 }
+/// Verifies Merkle authentication paths for all queried codeword pairs.
+/// 
+/// Ensures that the prover provided authentic codewords from the committed
+/// Reed-Solomon encoding, preventing substitution attacks.
 fn verify_paths(
     codewords: &[(Fp4, Fp4)],
     paths: &[MerklePath],
@@ -767,6 +794,10 @@ fn verify_paths(
     Ok(())
 }
 
+/// Verifies consistency between folded codewords across rounds.
+/// 
+/// Checks that the current round's codeword pairs correctly fold to match
+/// the previous round's folded results, preventing encoding manipulation.
 fn check_query_consistency(
     queries: &mut [usize],
     folded_codewords: &[Fp4],
@@ -774,7 +805,7 @@ fn check_query_consistency(
     query_range: usize,
     round: usize
 ) -> anyhow::Result<()> {
-    // The folded codewords are only checked for consistency after the first round.
+    // Skip consistency check for first round (no previous folded codewords exist)
     if round > 0 {
         for (query, &folded_codeword, &codeword_pair) in multizip((
             queries,
@@ -836,10 +867,12 @@ fn verify_sum_check_round(
     Ok(())
 }
 
-/// Updates queries using bitwise masking for power-of-2 halfsize optimization.
-/// Since halfsize is always a power of 2 in BaseFold, we can use bitwise AND
-/// instead of conditional subtraction for better performance.
-/// Mathematical equivalence: if query >= halfsize { query -= halfsize } == query &= (halfsize - 1)
+/// Updates all query indices for the next folding round using bitwise optimization.
+/// 
+/// Since domain size halves each round and is always a power of 2, we use bitwise
+/// masking instead of modular arithmetic for better performance.
+/// 
+/// Mathematical equivalence: `query %= halfsize` == `query &= (halfsize - 1)`
 fn update_queries(queries: &mut Vec<usize>, halfsize: usize) {
     queries.iter_mut().for_each(|query| {
         update_query(query, halfsize);
@@ -851,6 +884,8 @@ fn update_queries(queries: &mut Vec<usize>, halfsize: usize) {
 /// the conditional subtraction but faster as it's a single bitwise operation.
 fn update_query(query: &mut usize, halfsize: usize) {
     debug_assert!(halfsize.is_power_of_two(), "halfsize must be a power of 2");
+    // Bitwise optimization: query &= (halfsize-1) equivalent to query %= halfsize
+    // but faster for power-of-2 values
     *query &= halfsize - 1;
 }
 
@@ -894,8 +929,8 @@ fn check_fold(
 ) -> anyhow::Result<()> {
     debug_assert!(halfsize.is_power_of_two(), "halfsize must be a power of 2");
 
-    // For power-of-2 halfsize, query >= halfsize is equivalent to checking the high bit
-    // that corresponds to the halfsize position. We can use bitwise AND to check this.
+    // Bitwise optimization: For power-of-2 halfsize, (query & halfsize) != 0
+    // is equivalent to query >= halfsize but uses single bitwise operation
     if (query & halfsize) != 0 {
         if folded_codeword != right {
             anyhow::bail!(
