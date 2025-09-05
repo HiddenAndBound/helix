@@ -29,15 +29,11 @@
 
 use anyhow::{ Ok, Result };
 use itertools::multizip;
-use p3_field::{ ExtensionField, Field, PackedValue, PrimeCharacteristicRing };
-use rand::rngs::StdRng;
-use rand::{ Rng, SeedableRng };
+use p3_field::{ ExtensionField, Field, PrimeCharacteristicRing };
 
-use crate::commitment;
 use crate::pcs::utils::{
     Commitment,
     Encoding,
-    RATE,
     create_hash_leaves_from_pairs,
     create_hash_leaves_from_pairs_ref,
     encode_mle,
@@ -348,15 +344,7 @@ impl Basefold {
             );
         }
 
-        let (
-            mut current_claim,
-            mut random_point,
-            mut sum_check_rounds,
-            mut commitments,
-            mut merkle_trees,
-            mut encodings,
-            mut current_poly,
-        ) = Self::initialize_evaluation_proof_context(evaluation, poly.n_vars());
+        let mut state = initialize_evaluation_proof_context(evaluation, poly.n_vars());
 
         let mut eq = EqEvals::gen_from_point(&eval_point[1..]);
         let rounds = poly.n_vars();
@@ -365,18 +353,18 @@ impl Basefold {
         for round in 0..rounds {
             let round_proof = match round {
                 0 =>
-                    Self::process_sum_check_round(
+                    process_sum_check_round(
                         poly,
                         &eval_point,
-                        &mut current_claim,
+                        &state.current_claim,
                         round,
                         &mut eq
                     ),
                 _ =>
-                    Self::process_sum_check_round(
-                        &current_poly,
+                    process_sum_check_round(
+                        &state.current_poly,
                         &eval_point,
-                        &mut current_claim,
+                        &state.current_claim,
                         round,
                         &mut eq
                     ),
@@ -387,31 +375,25 @@ impl Basefold {
             eq.fold_in_place();
             let r = challenger.get_challenge();
 
-            let (current_encoding, current_poly_folded) = Self::fold_encoding_and_polynomial(
+            let (current_encoding, current_poly_folded) = fold_encoding_and_polynomial(
                 round,
                 &prover_data.encoding,
-                &encodings,
+                &state.encodings,
                 r,
                 roots,
                 poly,
-                &current_poly
+                &state.current_poly
             );
-            current_poly = current_poly_folded;
-
-            Self::update_merkle_and_commitments_for_round(
+            state.update(
+                round_proof.evaluate(r),
+                r,
+                round_proof,
                 current_encoding,
-                &mut commitments,
-                &mut merkle_trees,
-                &mut encodings
+                current_poly_folded
             )?;
-
             challenger.observe_commitment(
-                commitments.last().expect("Will be non-empty after at least 1 fold")
+                state.oracle_commitments.last().expect("Will be non-empty after at least 1 fold")
             );
-            current_claim = round_proof.evaluate(r);
-
-            sum_check_rounds.push(round_proof);
-            random_point.push(r);
         }
 
         //||============ QUERY PHASE ============||
@@ -421,26 +403,30 @@ impl Basefold {
 
         // Query generation: sample random positions for consistency verification
         // Domain starts at size 2^(vars + rate_bits - 1), halves each folding round
-        let mut log_domain_size = (rounds as u32) + config.rate.trailing_zeros() - 1;
+        let log_domain_size = (rounds as u32) + config.rate.trailing_zeros() - 1;
         let mut domain_size = 1 << log_domain_size;
         let mut queries = challenger.get_indices(log_domain_size, config.queries);
 
         let mut codewords = Vec::with_capacity(rounds);
         let mut paths = Vec::with_capacity(rounds);
-
+        let BasefoldProverState { encodings, merkle_trees, .. } = state;
         for round in 0..rounds {
             let halfsize = domain_size >> 1;
-            let round_codewords: Vec<(Fp4, Fp4)> = match round {
-                0 => get_codewords(&queries, &prover_data.encoding),
-                _ => get_codewords(&queries, &encodings[round - 1]),
+            let (round_codewords, round_paths): (Vec<(Fp4, Fp4)>, Vec<MerklePath>) = match round {
+                0 =>
+                    (
+                        get_codewords(&queries, &prover_data.encoding),
+                        get_merkle_paths(&queries, &prover_data.merkle_tree),
+                    ),
+
+                _ =>
+                    (
+                        get_codewords(&queries, &encodings[round - 1]),
+                        get_merkle_paths(&queries, &merkle_trees[round - 1]),
+                    ),
             };
 
             codewords.push(round_codewords);
-
-            let round_paths: Vec<MerklePath> = match round {
-                0 => get_merkle_paths(&queries, &prover_data.merkle_tree),
-                _ => get_merkle_paths(&queries, &merkle_trees[round - 1]),
-            };
             paths.push(round_paths);
 
             // Update query indices for next round using bitwise masking
@@ -451,177 +437,11 @@ impl Basefold {
         }
 
         Ok(EvalProof {
-            sum_check_rounds,
-            paths,
-            commitments,
             codewords,
+            paths,
+            sum_check_rounds: state.sum_check_rounds,
+            commitments: state.oracle_commitments,
         })
-    }
-
-    /// Processes a single sum-check round in the BaseFold evaluation protocol.
-    ///
-    /// This function performs the sum-check reduction for one variable of the multilinear polynomial,
-    /// generating a univariate polynomial that represents the sum over the boolean hypercube.
-    ///
-    /// # Mathematical Process
-    /// For round i with current polynomial P and evaluation point [r₁,...,rₙ]:
-    /// 1. Compute g₀ = Σⱼ eq[j] * P[2j] (sum over x_i = 0)
-    /// 2. Derive g₁ from constraint: g₀ + g₁ = current_claim and g₁ = g(1)
-    /// 3. Construct g(X) = g₀ + (g₁ - g₀) * X (degree-1 univariate)
-    /// 4. Generate challenge r_i via Fiat-Shamir from g(X) coefficients
-    ///
-    /// # Parameters
-    /// * `poly` - Current (possibly folded) polynomial for this round
-    /// * `eval_point` - Full evaluation point [r₁, r₂, ..., rₙ]
-    /// * `current_claim` - Current sum-check claim to be reduced
-    /// * `challenger` - Fiat-Shamir challenger for randomness generation
-    /// * `round` - Current round index (0-indexed)
-    /// * `eq` - Equality polynomial evaluations eq(x, eval_point[round+1:])
-    ///
-    /// # Returns
-    /// * `UnivariatePoly` - The sum-check round polynomial g(X)
-    /// * `Fp4` - Challenge r_i for folding operations
-    ///
-    /// # Mathematical Invariants
-    /// * Sum-check consistency: g(0) + g(1) = current_claim
-    /// * Degree bound: g(X) has degree ≤ 1
-    /// * Field compatibility: Works with both Fp and Fp4 polynomials via extension
-    ///
-    /// # Implementation Notes
-    /// The equality polynomial eq encodes the remaining evaluation point components
-    /// after the current round, enabling the sum-check reduction while maintaining
-    /// the correct evaluation at the target point.
-    fn process_sum_check_round<F>(
-        poly: &MLE<F>,
-        eval_point: &[Fp4],
-        current_claim: &mut Fp4,
-        round: usize,
-        eq: &mut EqEvals
-    )
-        -> UnivariatePoly
-        where F: PrimeCharacteristicRing + Field, Fp4: ExtensionField<F>
-    {
-        let mut g_0: Fp4 = Fp4::ZERO;
-        let rounds = eval_point.len();
-
-        // Size of the boolean hypercube at this round of the sumcheck
-        let size = 1 << (rounds - round - 1);
-
-        // Bounds are safe: iterations = 2^(rounds-round-1), poly.len() = 2^rounds
-        // Max poly index = (iterations-1)*2 < 2^rounds, eq.len() ≥ iterations
-        let poly = &poly.coeffs()[0..size * 2];
-        let eq = &eq.coeffs()[0..size];
-        debug_assert!(
-            poly.len() >= size * 2,
-            "Mathematical bounds violated: poly.len()={}, required={}",
-            poly.len(),
-            size * 2
-        );
-        debug_assert!(
-            eq.len() >= size,
-            "Mathematical bounds violated: eq.len()={}, required={}",
-            eq.len(),
-            size
-        );
-
-        // Use unsafe indexing to eliminate bounds checking overhead
-        unsafe {
-            for i in 0..size {
-                // SAFETY: Bounds verified above, i < iterations ≤ eq.len() and i*2 < poly.len()
-                // Sum-check accumulation: g₀ = Σⱼ eq[j] * P[2j] (sum over x_i = 0)
-                g_0 += *eq.get_unchecked(i) * *poly.get_unchecked(i << 1);
-            }
-        }
-
-        // Derive g₁ from sum-check constraint: g₀ + g₁ = current_claim
-        // Rearranging: g₁ = (current_claim - g₀*(1-r)) / r where r = eval_point[round]
-        let g1: Fp4 = (*current_claim - g_0 * (Fp4::ONE - eval_point[round])) / eval_point[round];
-
-        let round_coeffs = vec![g_0, g1 - g_0];
-        let round_proof = UnivariatePoly::new(round_coeffs).unwrap();
-
-        round_proof
-    }
-
-    /// Performs dual folding of both encoding and polynomial using Fiat-Shamir challenge.
-    /// 
-    /// This is a core operation in BaseFold where both the Reed-Solomon encoding
-    /// and the polynomial are folded simultaneously to maintain consistency.
-    fn fold_encoding_and_polynomial(
-        round: usize,
-        initial_encoding: &Encoding,
-        encodings: &[Vec<Fp4>],
-        r: Fp4,
-        roots: &[Vec<Fp>],
-        initial_poly: &MLE<Fp>,
-        current_poly: &MLE<Fp4>
-    ) -> (Vec<Fp4>, MLE<Fp4>) {
-        let current_encoding = match round {
-            0 => fold(initial_encoding, r, &roots[round]),
-            _ => fold(encodings.last().expect("Will be non-empty"), r, &roots[round]),
-        };
-
-        let current_poly_folded = match round {
-            0 => initial_poly.fold_in_place(r),
-            _ => current_poly.fold_in_place(r),
-        };
-        (current_encoding, current_poly_folded)
-    }
-
-    /// Initializes data structures for the evaluation proof generation.
-    /// 
-    /// Pre-allocates vectors with known capacity to avoid reallocations during
-    /// the intensive folding rounds of the sum-check protocol.
-    fn initialize_evaluation_proof_context(
-        evaluation: Fp4,
-        rounds: usize
-    ) -> (
-        Fp4,
-        Vec<Fp4>,
-        Vec<UnivariatePoly>,
-        Vec<Commitment>,
-        Vec<MerkleTree>,
-        Vec<Vec<Fp4>>,
-        MLE<Fp4>,
-    ) {
-        let current_claim = evaluation;
-        let random_point = Vec::with_capacity(rounds);
-        let round_proofs = Vec::with_capacity(rounds);
-        let commitments = Vec::with_capacity(rounds);
-        let merkle_trees = Vec::with_capacity(rounds);
-        let encodings = Vec::with_capacity(rounds);
-        let current_poly = MLE::default();
-        (
-            current_claim,
-            random_point,
-            round_proofs,
-            commitments,
-            merkle_trees,
-            encodings,
-            current_poly,
-        )
-    }
-
-    /// Updates Merkle trees and commitments after each folding round.
-    /// 
-    /// Builds a new Merkle tree over the folded encoding pairs and stores
-    /// the commitment for verifier observation in the Fiat-Shamir transcript.
-    fn update_merkle_and_commitments_for_round(
-        current_encoding: Vec<Fp4>,
-        commitments: &mut Vec<Commitment>,
-        merkle_trees: &mut Vec<MerkleTree>,
-        encodings: &mut Vec<Vec<Fp4>>
-    ) -> Result<(), anyhow::Error> {
-        let (left, right) = current_encoding.split_at(current_encoding.len() / 2);
-
-        let leaves: Vec<[u8; 32]> = create_hash_leaves_from_pairs_ref(left, right);
-        let current_merkle_tree = MerkleTree::from_hash(&leaves)?;
-        let current_commitment = current_merkle_tree.root();
-
-        commitments.push(current_commitment);
-        merkle_trees.push(current_merkle_tree);
-        encodings.push(current_encoding);
-        Ok(())
     }
 
     /// Verifies an evaluation proof, checking that a committed polynomial evaluates to the claimed value.
@@ -702,7 +522,7 @@ impl Basefold {
         //Commit phase
         for round in 0..rounds {
             let round_poly = &proof.sum_check_rounds[round];
-            verify_sum_check_round(round_poly, &mut current_claim, &eval_point, round, challenger)?;
+            verify_sum_check_round(round_poly, &mut current_claim, &eval_point, round)?;
 
             challenger.observe_fp4_elems(&round_poly.coefficients());
             let r = challenger.get_challenge();
@@ -718,8 +538,6 @@ impl Basefold {
         let mut query_range = 1 << log_query_range;
         let mut queries = challenger.get_indices(log_query_range, config.queries);
         let mut folded_codewords = vec![Fp4::ZERO; config.queries];
-        let mut current_codewords = &proof.codewords[0];
-        let mut merkle_paths = &proof.paths[0];
 
         for round in 0..rounds {
             let halfsize = query_range >> 1;
@@ -761,8 +579,189 @@ impl Basefold {
         Ok(())
     }
 }
+
+struct BasefoldProverState {
+    current_claim: Fp4,
+    random_point: Vec<Fp4>,
+    sum_check_rounds: Vec<UnivariatePoly>,
+    oracle_commitments: Vec<[u8; 32]>,
+    merkle_trees: Vec<MerkleTree>,
+    encodings: Vec<Vec<Fp4>>,
+    current_poly: MLE<Fp4>,
+}
+
+impl BasefoldProverState {
+    fn update(
+        &mut self,
+        current_claim: Fp4,
+        random_point: Fp4,
+        sum_check_round: UnivariatePoly,
+        current_encoding: Vec<Fp4>,
+        current_poly: MLE<Fp4>
+    ) -> anyhow::Result<()> {
+        let (oracle_commitment, merkle_tree) = commit_oracle(&current_encoding)?;
+
+        self.current_claim = current_claim;
+        self.random_point.push(random_point);
+        self.sum_check_rounds.push(sum_check_round);
+        self.oracle_commitments.push(oracle_commitment);
+        self.merkle_trees.push(merkle_tree);
+        self.encodings.push(current_encoding);
+        self.current_poly = current_poly;
+
+        Ok(())
+    }
+}
+
+/// Processes a single sum-check round in the BaseFold evaluation protocol.
+///
+/// This function performs the sum-check reduction for one variable of the multilinear polynomial,
+/// generating a univariate polynomial that represents the sum over the boolean hypercube.
+///
+/// # Mathematical Process
+/// For round i with current polynomial P and evaluation point [r₁,...,rₙ]:
+/// 1. Compute g₀ = Σⱼ eq[j] * P[2j] (sum over x_i = 0)
+/// 2. Derive g₁ from constraint: g₀ + g₁ = current_claim and g₁ = g(1)
+/// 3. Construct g(X) = g₀ + (g₁ - g₀) * X (degree-1 univariate)
+/// 4. Generate challenge r_i via Fiat-Shamir from g(X) coefficients
+///
+/// # Parameters
+/// * `poly` - Current (possibly folded) polynomial for this round
+/// * `eval_point` - Full evaluation point [r₁, r₂, ..., rₙ]
+/// * `current_claim` - Current sum-check claim to be reduced
+/// * `challenger` - Fiat-Shamir challenger for randomness generation
+/// * `round` - Current round index (0-indexed)
+/// * `eq` - Equality polynomial evaluations eq(x, eval_point[round+1:])
+///
+/// # Returns
+/// * `UnivariatePoly` - The sum-check round polynomial g(X)
+/// * `Fp4` - Challenge r_i for folding operations
+///
+/// # Mathematical Invariants
+/// * Sum-check consistency: g(0) + g(1) = current_claim
+/// * Degree bound: g(X) has degree ≤ 1
+/// * Field compatibility: Works with both Fp and Fp4 polynomials via extension
+///
+/// # Implementation Notes
+/// The equality polynomial eq encodes the remaining evaluation point components
+/// after the current round, enabling the sum-check reduction while maintaining
+/// the correct evaluation at the target point.
+fn process_sum_check_round<F>(
+    poly: &MLE<F>,
+    eval_point: &[Fp4],
+    current_claim: &Fp4,
+    round: usize,
+    eq: &mut EqEvals
+)
+    -> UnivariatePoly
+    where F: PrimeCharacteristicRing + Field, Fp4: ExtensionField<F>
+{
+    let mut g_0: Fp4 = Fp4::ZERO;
+    let rounds = eval_point.len();
+
+    // Size of the boolean hypercube at this round of the sumcheck
+    let size = 1 << (rounds - round - 1);
+
+    // Bounds are safe: iterations = 2^(rounds-round-1), poly.len() = 2^rounds
+    // Max poly index = (iterations-1)*2 < 2^rounds, eq.len() ≥ iterations
+    let poly = &poly.coeffs()[0..size * 2];
+    let eq = &eq.coeffs()[0..size];
+    debug_assert!(
+        poly.len() >= size * 2,
+        "Mathematical bounds violated: poly.len()={}, required={}",
+        poly.len(),
+        size * 2
+    );
+    debug_assert!(
+        eq.len() >= size,
+        "Mathematical bounds violated: eq.len()={}, required={}",
+        eq.len(),
+        size
+    );
+
+    // Use unsafe indexing to eliminate bounds checking overhead
+    unsafe {
+        for i in 0..size {
+            // SAFETY: Bounds verified above, i < iterations ≤ eq.len() and i*2 < poly.len()
+            // Sum-check accumulation: g₀ = Σⱼ eq[j] * P[2j] (sum over x_i = 0)
+            g_0 += *eq.get_unchecked(i) * *poly.get_unchecked(i << 1);
+        }
+    }
+
+    // Derive g₁ from sum-check constraint: g₀ + g₁ = current_claim
+    // Rearranging: g₁ = (current_claim - g₀*(1-r)) / r where r = eval_point[round]
+    let g1: Fp4 = (*current_claim - g_0 * (Fp4::ONE - eval_point[round])) / eval_point[round];
+
+    let round_coeffs = vec![g_0, g1 - g_0];
+    let round_proof = UnivariatePoly::new(round_coeffs).unwrap();
+
+    round_proof
+}
+
+/// Performs dual folding of both encoding and polynomial using Fiat-Shamir challenge.
+///
+/// This is a core operation in BaseFold where both the Reed-Solomon encoding
+/// and the polynomial are folded simultaneously to maintain consistency.
+fn fold_encoding_and_polynomial(
+    round: usize,
+    initial_encoding: &Encoding,
+    encodings: &[Vec<Fp4>],
+    r: Fp4,
+    roots: &[Vec<Fp>],
+    initial_poly: &MLE<Fp>,
+    current_poly: &MLE<Fp4>
+) -> (Vec<Fp4>, MLE<Fp4>) {
+    let current_encoding = match round {
+        0 => fold(initial_encoding, r, &roots[round]),
+        _ => fold(encodings.last().expect("Will be non-empty"), r, &roots[round]),
+    };
+
+    let current_poly_folded = match round {
+        0 => initial_poly.fold_in_place(r),
+        _ => current_poly.fold_in_place(r),
+    };
+    (current_encoding, current_poly_folded)
+}
+
+/// Initializes data structures for the evaluation proof generation.
+///
+/// Pre-allocates vectors with known capacity to avoid reallocations during
+/// the intensive folding rounds of the sum-check protocol.
+fn initialize_evaluation_proof_context(evaluation: Fp4, rounds: usize) -> BasefoldProverState {
+    let current_claim = evaluation;
+    let random_point = Vec::with_capacity(rounds);
+    let sum_check_rounds = Vec::with_capacity(rounds);
+    let oracle_commitments = Vec::with_capacity(rounds);
+    let merkle_trees = Vec::with_capacity(rounds);
+    let encodings = Vec::with_capacity(rounds);
+    let current_poly = MLE::default();
+
+    BasefoldProverState {
+        current_claim,
+        random_point,
+        sum_check_rounds,
+        oracle_commitments,
+        merkle_trees,
+        encodings,
+        current_poly,
+    }
+}
+
+/// Updates Merkle trees and commitments after each folding round.
+///
+/// Builds a new Merkle tree over the folded encoding pairs and stores
+/// the commitment for verifier observation in the Fiat-Shamir transcript.
+fn commit_oracle(current_encoding: &[Fp4]) -> Result<([u8; 32], MerkleTree), anyhow::Error> {
+    let (left, right) = current_encoding.split_at(current_encoding.len() / 2);
+
+    let leaves: Vec<[u8; 32]> = create_hash_leaves_from_pairs_ref(left, right);
+    let current_merkle_tree = MerkleTree::from_hash(&leaves)?;
+    let current_commitment = current_merkle_tree.root();
+    Ok((current_commitment, current_merkle_tree))
+}
+
 /// Folds queried codeword pairs using the current round's challenge.
-/// 
+///
 /// This operation mimics the encoding folding performed by the prover,
 /// allowing the verifier to check consistency across folding rounds.
 fn fold_codewords(
@@ -777,7 +776,7 @@ fn fold_codewords(
     }
 }
 /// Verifies Merkle authentication paths for all queried codeword pairs.
-/// 
+///
 /// Ensures that the prover provided authentic codewords from the committed
 /// Reed-Solomon encoding, preventing substitution attacks.
 fn verify_paths(
@@ -795,7 +794,7 @@ fn verify_paths(
 }
 
 /// Verifies consistency between folded codewords across rounds.
-/// 
+///
 /// Checks that the current round's codeword pairs correctly fold to match
 /// the previous round's folded results, preventing encoding manipulation.
 fn check_query_consistency(
@@ -850,8 +849,7 @@ fn verify_sum_check_round(
     round_poly: &UnivariatePoly,
     current_claim: &mut Fp4,
     eval_point: &[Fp4],
-    round: usize,
-    challenger: &mut Challenger
+    round: usize
 ) -> anyhow::Result<()> {
     let expected =
         (Fp4::ONE - eval_point[round]) * round_poly.evaluate(Fp4::ZERO) +
@@ -868,10 +866,10 @@ fn verify_sum_check_round(
 }
 
 /// Updates all query indices for the next folding round using bitwise optimization.
-/// 
+///
 /// Since domain size halves each round and is always a power of 2, we use bitwise
 /// masking instead of modular arithmetic for better performance.
-/// 
+///
 /// Mathematical equivalence: `query %= halfsize` == `query &= (halfsize - 1)`
 fn update_queries(queries: &mut Vec<usize>, halfsize: usize) {
     queries.iter_mut().for_each(|query| {
@@ -984,7 +982,7 @@ mod tests {
             &config
         ).unwrap();
         let mut challenger = Challenger::new();
-        let verification_result = Basefold::verify(
+        Basefold::verify(
             eval_proof,
             evaluation,
             &eval_point,
@@ -1052,14 +1050,10 @@ mod tests {
         let poly = MLE::new((0..1 << 4).map(|_| Fp::from_u32(rng.r#gen())).collect());
         let roots = Fp::roots_of_unity_table(1 << 5);
         let eval_point: Vec<Fp4> = (0..4).map(|_| Fp4::from_u128(rng.r#gen())).collect();
-        let eval = poly.evaluate(&eval_point);
         let encoding = encode_mle(&poly, &roots, 2);
 
-        let mut domain_size = 1 << 4;
-        let half_size = domain_size / 2;
-
         // We start with query at 5. Thus the provided codeword should be encoding[5] and encoding[(5 + domain_size) = 21]
-        let mut queries = vec![5];
+        let queries = vec![5];
 
         let correct_codeword = (encoding[5].into(), encoding[21].into());
 
@@ -1069,7 +1063,7 @@ mod tests {
 
         let folded_codeword = fold_pair(received_codeword[0], eval_point[0], roots[0][5]);
 
-        let mut folded_oracle = fold(&encoding, eval_point[0], &roots[0]);
+        let folded_oracle = fold(&encoding, eval_point[0], &roots[0]);
 
         assert_eq!(folded_codeword, folded_oracle[5]);
     }
