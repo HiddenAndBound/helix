@@ -6,10 +6,7 @@
 use crate::{
     Fp4,
     challenger::Challenger,
-    spartan::{
-        R1CSInstance,
-        sumcheck::{InnerSumCheckProof, OuterSumCheckProof},
-    },
+    spartan::{ R1CSInstance, sumcheck::{ InnerSumCheckProof, OuterSumCheckProof } },
 };
 
 /// Spartan zkSNARK proof for an R1CS instance.
@@ -24,7 +21,7 @@ impl SpartanProof {
     /// Creates a new Spartan proof from an outer sum-check proof.
     pub fn new(
         outer_sumcheck_proof: OuterSumCheckProof,
-        inner_sumcheck_proof: InnerSumCheckProof,
+        inner_sumcheck_proof: InnerSumCheckProof
     ) -> Self {
         Self {
             outer_sumcheck_proof,
@@ -53,8 +50,9 @@ impl SpartanProof {
 
         // Use the random challenge from outer sumcheck to compute bound matrices
         // This gives us A_bound(y) = A(r_x, y), B_bound(y) = B(r_x, y), C_bound(y) = C(r_x, y)
-        let r_x_point: Vec<Fp4> =
-            challenger.get_challenges(A.dimensions().0.trailing_zeros() as usize);
+        let r_x_point: Vec<Fp4> = challenger.get_challenges(
+            A.dimensions().0.trailing_zeros() as usize
+        );
         let (a_bound, b_bound, c_bound) = instance.compute_bound_matrices(&r_x_point).unwrap();
 
         challenger.observe_fp4_elems(&outer_sum_check.final_evals);
@@ -68,7 +66,7 @@ impl SpartanProof {
             [outer_claims[0], outer_claims[1], outer_claims[2]],
             gamma,
             z,
-            challenger,
+            challenger
         );
 
         SpartanProof::new(outer_sum_check, inner_sum_check)
@@ -83,8 +81,7 @@ impl SpartanProof {
         // This ensures evaluation claims from outer sumcheck are correct
         challenger.observe_fp4_elems(&self.outer_sumcheck_proof.final_evals);
         let gamma = challenger.get_challenge();
-        self.inner_sumcheck_proof
-            .verify(self.outer_sumcheck_proof.final_evals, gamma, challenger);
+        self.inner_sumcheck_proof.verify(self.outer_sumcheck_proof.final_evals, gamma, challenger);
 
         // Note: In a complete Spartan implementation, additional steps would include:
         // - Polynomial commitment opening verifications (SparkSumCheck)

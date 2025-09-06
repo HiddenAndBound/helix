@@ -1,11 +1,12 @@
 use p3_field::PrimeCharacteristicRing;
 
 use crate::{
-    Fp, Fp4,
+    Fp,
+    Fp4,
     challenger::Challenger,
     eq::EqEvals,
     polynomial::MLE,
-    spartan::{spark::sparse::SparseMLE, univariate::UnivariatePoly},
+    spartan::{ spark::sparse::SparseMLE, univariate::UnivariatePoly },
 };
 
 /// Sum-check proof demonstrating that f(x₁, ..., xₙ) = A(x)·B(x) - C(x) sums to zero
@@ -36,7 +37,7 @@ impl OuterSumCheckProof {
         B: &SparseMLE,
         C: &SparseMLE,
         z: &MLE<Fp>,
-        challenger: &mut Challenger,
+        challenger: &mut Challenger
     ) -> Self {
         // Compute A·z, B·z, C·z (sparse matrix-MLE multiplications)
         let (a, b, c) = (
@@ -87,7 +88,7 @@ impl OuterSumCheckProof {
                 &eq_point,
                 current_claim,
                 round,
-                rounds,
+                rounds
             );
 
             challenger.observe_fp4_elems(&round_proof.coefficients());
@@ -123,8 +124,8 @@ impl OuterSumCheckProof {
             // Check sum-check relation: current_claim = (1-r_i) * g_i(0) + r_i * g_i(1)
             assert_eq!(
                 current_claim,
-                (Fp4::ONE - eq_point[round]) * round_poly.evaluate(Fp4::ZERO)
-                    + eq_point[round] * round_poly.evaluate(Fp4::ONE)
+                (Fp4::ONE - eq_point[round]) * round_poly.evaluate(Fp4::ZERO) +
+                    eq_point[round] * round_poly.evaluate(Fp4::ONE)
             );
 
             challenger.observe_fp4_elems(&round_poly.coefficients());
@@ -134,10 +135,7 @@ impl OuterSumCheckProof {
         }
 
         // Final check: A(r)·B(r) - C(r) = final_claim
-        assert_eq!(
-            current_claim,
-            self.final_evals[0] * self.final_evals[1] - self.final_evals[2]
-        );
+        assert_eq!(current_claim, self.final_evals[0] * self.final_evals[1] - self.final_evals[2]);
 
         (round_challenges, self.final_evals)
     }
@@ -153,7 +151,7 @@ pub fn compute_round(
     eq_point: &Vec<Fp4>,
     current_claim: Fp4,
     round: usize,
-    rounds: usize,
+    rounds: usize
 ) -> UnivariatePoly {
     // Use Gruen's optimization: compute evaluations at X = 0, 1, 2
     let mut round_coeffs = vec![Fp4::ZERO; 3];
@@ -163,9 +161,10 @@ pub fn compute_round(
         round_coeffs[0] += eq[i] * (a[i << 1] * b[i << 1] - c[i << 1]);
 
         // g(2): use multilinear polynomial identity
-        round_coeffs[2] += eq[i]
-            * ((a[i << 1] + a[i << 1 | 1].double()) * (b[i << 1] + b[i << 1 | 1].double())
-                - (c[i << 1] + c[i << 1 | 1].double()));
+        round_coeffs[2] +=
+            eq[i] *
+            ((a[i << 1] + a[(i << 1) | 1].double()) * (b[i << 1] + b[(i << 1) | 1].double()) -
+                (c[i << 1] + c[(i << 1) | 1].double()));
     }
 
     // g(1): derived from sum-check constraint
@@ -186,7 +185,7 @@ pub fn compute_first_round(
     eq: &EqEvals,
     eq_point: &Vec<Fp4>,
     current_claim: Fp4,
-    rounds: usize,
+    rounds: usize
 ) -> UnivariatePoly {
     // Use Gruen's optimization: compute evaluations at X = 0, 1, 2
     let mut round_coeffs = vec![Fp4::ZERO; 3];
@@ -196,9 +195,9 @@ pub fn compute_first_round(
         round_coeffs[0] += eq[i] * (a[i << 1] * b[i << 1] - c[i << 1]);
 
         // g(2): use multilinear polynomial identity
-        round_coeffs[2] += (a[i << 1] + a[i << 1 | 1].double())
-            * (b[i << 1] + b[i << 1 | 1].double())
-            - (c[i << 1] + c[i << 1 | 1].double());
+        round_coeffs[2] +=
+            (a[i << 1] + a[(i << 1) | 1].double()) * (b[i << 1] + b[(i << 1) | 1].double()) -
+            (c[i << 1] + c[(i << 1) | 1].double());
     }
 
     // g(1): derived from sum-check constraint
@@ -209,6 +208,5 @@ pub fn compute_first_round(
 
     round_proof
 }
-
 
 
