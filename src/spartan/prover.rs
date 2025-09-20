@@ -63,9 +63,10 @@ impl SpartanProof {
             &a_bound,
             &b_bound,
             &c_bound,
+            z,
             [outer_claims[0], outer_claims[1], outer_claims[2]],
             gamma,
-            z,
+
             challenger
         );
 
