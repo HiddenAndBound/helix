@@ -1,4 +1,9 @@
-use p3_field::PrimeCharacteristicRing;
+use std::{ any, collections::HashMap };
+
+use anyhow::{ anyhow, bail };
+use itertools::multizip;
+use p3_field::{ ExtensionField, Field, PackedValue, PrimeCharacteristicRing };
+use rand::{ Rng, SeedableRng, rngs::StdRng };
 
 use crate::{
     Fp,
@@ -61,57 +66,64 @@ impl OuterSumCheckProof {
         let mut round_proofs = Vec::new();
         let mut round_challenges = Vec::new();
 
-        // Handle first round separately (uses base field Fp for efficiency)
-        let round_proof = compute_first_round(&a, &b, &c, &eq, &eq_point, current_claim, rounds);
-
-        // Process first round proof
-        round_proofs.push(round_proof.clone());
-        challenger.observe_fp4_elems(&round_proof.coefficients());
-
-        let round_challenge = challenger.get_challenge();
-        round_challenges.push(round_challenge);
-        current_claim = round_proof.evaluate(round_challenge);
-
-        // Fold polynomials by fixing first variable to challenge
-        let mut a_fold = a.fold_in_place(round_challenge);
-        let mut b_fold = b.fold_in_place(round_challenge);
-        let mut c_fold = c.fold_in_place(round_challenge);
-        eq.fold_in_place();
+        let mut a_fold = MLE::default();
+        let mut b_fold = MLE::default();
+        let mut c_fold = MLE::default();
 
         // Process remaining rounds (1 to n-1)
-        for round in 1..rounds {
-            let round_proof = compute_round(
-                &a_fold,
-                &b_fold,
-                &c_fold,
-                &eq,
-                &eq_point,
-                current_claim,
-                round,
-                rounds
-            );
+        for round in 0..rounds {
+            let round_proof = match round {
+                0 => compute_round(&a, &b, &c, &eq, &eq_point, current_claim, round, rounds),
+                _ =>
+                    compute_round(
+                        &a_fold,
+                        &b_fold,
+                        &c_fold,
+                        &eq,
+                        &eq_point,
+                        current_claim,
+                        round,
+                        rounds
+                    ),
+            };
 
             challenger.observe_fp4_elems(&round_proof.coefficients());
+
             let round_challenge = challenger.get_challenge();
             round_challenges.push(round_challenge);
             current_claim = round_proof.evaluate(round_challenge);
 
             // Fold polynomials for next round
-            a_fold = a_fold.fold_in_place(round_challenge);
-            b_fold = b_fold.fold_in_place(round_challenge);
-            c_fold = c_fold.fold_in_place(round_challenge);
+            (a_fold, b_fold, c_fold) = match round {
+                0 =>
+                    (
+                        a.fold_in_place(round_challenge),
+                        b.fold_in_place(round_challenge),
+                        c.fold_in_place(round_challenge),
+                    ),
+                _ =>
+                    (
+                        a_fold.fold_in_place(round_challenge),
+                        b_fold.fold_in_place(round_challenge),
+                        c_fold.fold_in_place(round_challenge),
+                    ),
+            };
+
             eq.fold_in_place();
+            round_proofs.push(round_proof);
         }
 
         // Extract final evaluations A(r), B(r), C(r)
+        println!("{:?}", a_fold.len());
         let final_evals = [a_fold[0], b_fold[0], c_fold[0]];
 
         OuterSumCheckProof::new(round_proofs, final_evals)
     }
 
     /// Verifies the sum-check proof. Panics if verification fails.
-    pub fn verify(&self, challenger: &mut Challenger) -> (Vec<Fp4>, [Fp4; 3]) {
+    pub fn verify(&self, challenger: &mut Challenger) -> anyhow::Result<(Vec<Fp4>, [Fp4; 3])> {
         let rounds = self.round_proofs.len();
+
         let eq_point = challenger.get_challenges(rounds);
 
         let mut current_claim = Fp4::ZERO;
@@ -121,12 +133,17 @@ impl OuterSumCheckProof {
         for round in 0..rounds {
             let round_poly = &self.round_proofs[round];
 
-            // Check sum-check relation: current_claim = (1-r_i) * g_i(0) + r_i * g_i(1)
-            assert_eq!(
-                current_claim,
+            let round_eval =
                 (Fp4::ONE - eq_point[round]) * round_poly.evaluate(Fp4::ZERO) +
-                    eq_point[round] * round_poly.evaluate(Fp4::ONE)
-            );
+                eq_point[round] * round_poly.evaluate(Fp4::ONE);
+            // Check sum-check relation: current_claim = (1-r_i) * g_i(0) + r_i * g_i(1)
+            if current_claim != round_eval {
+                return Err(
+                    anyhow!(
+                        "OuterSumcheck round verification failed in round {round}, expected {current_claim} got {round_eval}"
+                    )
+                );
+            }
 
             challenger.observe_fp4_elems(&round_poly.coefficients());
             let challenge = challenger.get_challenge();
@@ -135,24 +152,29 @@ impl OuterSumCheckProof {
         }
 
         // Final check: A(r)·B(r) - C(r) = final_claim
-        assert_eq!(current_claim, self.final_evals[0] * self.final_evals[1] - self.final_evals[2]);
+        if current_claim != self.final_evals[0] * self.final_evals[1] - self.final_evals[2] {
+            return Err(anyhow!("Final Check Failed in OuterSumCheck"));
+        }
 
-        (round_challenges, self.final_evals)
+        Ok((round_challenges, self.final_evals))
     }
 }
 
 /// Computes the univariate polynomial for sum-check rounds 1 to n-1.
 /// Returns g(X) = ∑_{w∈{0,1}^{n-round-1}} eq(w) * [a(X,w) * b(X,w) - c(X,w)].
-pub fn compute_round(
-    a: &MLE<Fp4>,
-    b: &MLE<Fp4>,
-    c: &MLE<Fp4>,
+pub fn compute_round<F>(
+    a: &MLE<F>,
+    b: &MLE<F>,
+    c: &MLE<F>,
     eq: &EqEvals,
     eq_point: &Vec<Fp4>,
     current_claim: Fp4,
     round: usize,
     rounds: usize
-) -> UnivariatePoly {
+)
+    -> UnivariatePoly
+    where F: Field, Fp4: ExtensionField<F>
+{
     // Use Gruen's optimization: compute evaluations at X = 0, 1, 2
     let mut round_coeffs = vec![Fp4::ZERO; 3];
 
@@ -163,12 +185,13 @@ pub fn compute_round(
         // g(2): use multilinear polynomial identity
         round_coeffs[2] +=
             eq[i] *
-            ((a[i << 1] + a[(i << 1) | 1].double()) * (b[i << 1] + b[(i << 1) | 1].double()) -
-                (c[i << 1] + c[(i << 1) | 1].double()));
+            ((a[(i << 1) | 1].double() - a[i << 1]) * (b[(i << 1) | 1].double() - b[i << 1]) -
+                (c[(i << 1) | 1].double() - c[i << 1]));
     }
 
     // g(1): derived from sum-check constraint
-    round_coeffs[1] = (current_claim - round_coeffs[0] * (Fp4::ONE + eq_point[0])) / eq_point[0];
+    round_coeffs[1] =
+        (current_claim - round_coeffs[0] * (Fp4::ONE - eq_point[round])) / eq_point[round];
 
     let mut round_proof = UnivariatePoly::new(round_coeffs).unwrap();
     round_proof.interpolate().unwrap();
@@ -176,37 +199,52 @@ pub fn compute_round(
     round_proof
 }
 
-/// Computes the univariate polynomial for the first sum-check round.
-/// Uses base field (Fp) arithmetic for efficiency, outputs in extension field (Fp4).
-pub fn compute_first_round(
-    a: &MLE<Fp>,
-    b: &MLE<Fp>,
-    c: &MLE<Fp>,
-    eq: &EqEvals,
-    eq_point: &Vec<Fp4>,
-    current_claim: Fp4,
-    rounds: usize
-) -> UnivariatePoly {
-    // Use Gruen's optimization: compute evaluations at X = 0, 1, 2
-    let mut round_coeffs = vec![Fp4::ZERO; 3];
+#[test]
+fn outer_sum_check_test() -> anyhow::Result<()> {
+    // This is also the number of nonlinear constraints.
+    const ROWS: usize = 1 << 10;
+    const COLS: usize = ROWS;
+    let mut rng = StdRng::seed_from_u64(0);
+    let mut A = HashMap::<(usize, usize), Fp>::new();
+    let mut B = HashMap::<(usize, usize), Fp>::new();
+    let mut C = HashMap::<(usize, usize), Fp>::new();
+    let mut z = MLE::new(Fp::new_array([rng.r#gen::<u32>(); COLS as usize]).to_vec());
 
-    for i in 0..1 << (rounds - 1) {
-        // g(0): set first variable to 0 (base field Fp promoted to Fp4)
-        round_coeffs[0] += eq[i] * (a[i << 1] * b[i << 1] - c[i << 1]);
+    let z_const = z[0];
+    let z_inv_const = z[0].inverse();
+    // (a*b - c = 0 => c = a*b)
+    for j in 0..ROWS {
+        let a = Fp::new(rng.r#gen());
+        let b = Fp::new(rng.r#gen());
 
-        // g(2): use multilinear polynomial identity
-        round_coeffs[2] +=
-            (a[i << 1] + a[(i << 1) | 1].double()) * (b[i << 1] + b[(i << 1) | 1].double()) -
-            (c[i << 1] + c[(i << 1) | 1].double());
+        let i_0 = rng.gen_range(0..COLS);
+        let i_1 = rng.gen_range(0..COLS);
+
+        A.insert((j, i_0), a);
+        B.insert((j, i_1), b);
+
+        // Trivial equation a.b/z_inv_const
+        C.insert((j, j), a * b * z_const);
     }
 
-    // g(1): derived from sum-check constraint
-    round_coeffs[1] = (current_claim - round_coeffs[0] * (Fp4::ONE + eq_point[0])) / eq_point[0];
+    let A = SparseMLE::new(A)?;
+    let B = SparseMLE::new(B)?;
+    let C = SparseMLE::new(C)?;
 
-    let mut round_proof = UnivariatePoly::new(round_coeffs).unwrap();
-    round_proof.interpolate().unwrap();
+    let a = A.multiply_by_mle(&z)?;
+    let b = B.multiply_by_mle(&z)?;
+    let c = C.multiply_by_mle(&z)?;
 
-    round_proof
+    for (&a_i, &b_i, &c_i) in multizip((a.coeffs(), b.coeffs(), c.coeffs())) {
+        if c_i != a_i * b_i {
+            bail!("R1CS instance not satisfied");
+        }
+    }
+
+    let mut challenger = Challenger::new();
+    let proof = OuterSumCheckProof::prove(&A, &B, &C, &z, &mut challenger);
+
+    let mut challenger = Challenger::new();
+    proof.verify(&mut challenger)?;
+    Ok(())
 }
-
-

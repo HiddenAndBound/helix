@@ -9,6 +9,8 @@ use crate::{
     spartan::univariate::UnivariatePoly,
 };
 
+use anyhow::bail;
+
 /// Sum-check proof for cubic product constraints of the form:
 /// `f(x₁, ..., xₙ) = ∑_{w∈{0,1}ⁿ} left(w) * right(w) * eq(w)`
 /// where left and right are MLEs and eq is the equality polynomial.
@@ -201,21 +203,16 @@ impl BatchedCubicSumCheckProof {
         challenger: &mut Challenger
     ) -> Self {
         let num_claims = left_polys.len();
-        assert_eq!(
+        debug_assert_eq!(
             right_polys.len(),
             num_claims,
             "Number of left and right polynomials must match"
         );
-        assert_eq!(claimed_sums.len(), num_claims, "Number of claimed sums must match");
-
-        if num_claims == 0 {
-            return Self::new(vec![], vec![], 0);
-        }
-
+        debug_assert_eq!(claimed_sums.len(), num_claims, "Number of claimed sums must match");
         let rounds = left_polys[0].n_vars();
 
         // Error case: polynomials must have at least 1 variable for sum-check
-        assert!(
+        debug_assert!(
             rounds > 0,
             "BatchedCubicSumCheckProof requires polynomials with at least 1 variable"
         );
@@ -234,18 +231,20 @@ impl BatchedCubicSumCheckProof {
             );
         }
 
+        println!("{:?}", claimed_sums.len());
         // Get random evaluation point from challenger (Fiat-Shamir)
         let eq_point = challenger.get_challenges(rounds);
         // Compute batched claim using gamma powers
         let gamma = challenger.get_challenge();
-        let mut batched_claim = Fp4::ZERO;
 
-        for (i, &claimed_sum) in claimed_sums.iter().enumerate() {
-            let gamma_power = gamma.exp_u64((i as u64) + 1);
-            batched_claim += gamma_power * claimed_sum;
-        }
-
-        let mut eq_evals = EqEvals::gen_from_point(&eq_point);
+        println!("PROVER GAMMA {gamma}");
+        let batched_claim = claimed_sums
+            .iter()
+            .zip(gamma.powers())
+            .map(|(&val, g)| val * g)
+            .sum();
+        println!("PROVER CLAIM {batched_claim}");
+        let mut eq_evals = EqEvals::gen_from_point(&eq_point[1..]);
         let mut current_claim = batched_claim;
         let mut round_proofs = Vec::new();
         let mut round_challenges = Vec::new();
@@ -323,25 +322,36 @@ impl BatchedCubicSumCheckProof {
     /// # Arguments
     /// * `claimed_sums` - Vector of claimed sum values for each claim
     /// * `challenger` - Challenger for Fiat-Shamir randomness
-    pub fn verify(&self, claimed_sums: &[Fp4], challenger: &mut Challenger) -> bool {
+    ///
+    /// # Returns
+    /// * `Ok(())` - If proof verification succeeds
+    /// * `Err(anyhow::Error)` - If verification fails with descriptive error
+    pub fn verify(&self, claimed_sums: &[Fp4], challenger: &mut Challenger) -> anyhow::Result<()> {
         if claimed_sums.len() != self.num_claims {
-            return false;
+            bail!(
+                "Claimed sums length mismatch: expected {} claims, got {}",
+                self.num_claims,
+                claimed_sums.len()
+            );
         }
 
         if self.num_claims == 0 {
-            return true;
+            return Ok(());
         }
+        println!("{:?}", self.num_claims);
 
         let rounds = self.round_proofs.len();
         let eq_point = challenger.get_challenges(rounds);
         let gamma = challenger.get_challenge();
 
+        println!("VERIFIER GAMMA {gamma}");
         // Recompute batched claim
-        let mut batched_claim = Fp4::ZERO;
-        for (i, &claimed_sum) in claimed_sums.iter().enumerate() {
-            batched_claim = claimed_sum + gamma * batched_claim;
-        }
-
+        let batched_claim = claimed_sums
+            .iter()
+            .zip(gamma.powers())
+            .map(|(&val, g)| val * g)
+            .sum();
+        println!("BATCHED CLAIM {batched_claim}");
         let mut current_claim = batched_claim;
         let mut round_challenges = Vec::new();
 
@@ -355,7 +365,12 @@ impl BatchedCubicSumCheckProof {
                 (Fp4::ONE - eq_point[round]) * round_poly.evaluate(Fp4::ZERO) +
                 eq_point[round] * round_poly.evaluate(Fp4::ONE);
             if current_claim != expected_claim {
-                return false;
+                bail!(
+                    "Sum-check verification failed in round {}: current claim {:?} != expected claim {:?}",
+                    round,
+                    current_claim,
+                    expected_claim
+                );
             }
 
             challenger.observe_fp4_elems(&round_poly.coefficients());
@@ -370,7 +385,15 @@ impl BatchedCubicSumCheckProof {
             expected_claim = left_eval * right_eval + gamma * expected_claim;
         }
 
-        current_claim == expected_claim
+        if current_claim != expected_claim {
+            bail!(
+                "Final batched evaluation verification failed: current claim {:?} != expected claim {:?}",
+                current_claim,
+                expected_claim
+            );
+        }
+
+        Ok(())
     }
 }
 
@@ -477,11 +500,11 @@ pub fn compute_batched_cubic_round(
     let mut batched_coeffs = vec![Fp4::ZERO; 3];
     for i in 0..num_claims {
         batched_coeffs[0] = round_coeffs[i][0] + gamma * batched_coeffs[0];
-        batched_coeffs[2] = round_coeffs[i][0] + gamma * batched_coeffs[0];
+        batched_coeffs[2] = round_coeffs[i][2] + gamma * batched_coeffs[2];
     }
     // g(1): derived from sum-check constraint
     batched_coeffs[1] =
-        (current_claim - batched_coeffs[0] * (Fp4::ONE + eq_point[0])) / eq_point[0];
+        (current_claim - batched_coeffs[0] * (Fp4::ONE + eq_point[round])) / eq_point[round];
 
     let mut round_proof = UnivariatePoly::new(batched_coeffs).unwrap();
     round_proof.interpolate().unwrap();

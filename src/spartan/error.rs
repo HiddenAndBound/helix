@@ -6,14 +6,14 @@ pub enum SumCheckError {
     /// Input validation failed
     ValidationError(String),
     /// Mathematical constraint violation
-    ConstraintViolation(String),
+    ConstraintFail(String),
 }
 
 impl fmt::Display for SumCheckError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SumCheckError::ValidationError(msg) => write!(f, "Validation error: {}", msg),
-            SumCheckError::ConstraintViolation(msg) => write!(f, "Constraint violation: {}", msg),
+            SumCheckError::ConstraintFail(msg) => write!(f, "Constraint violation: {}", msg),
         }
     }
 }

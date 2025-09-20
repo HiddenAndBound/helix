@@ -449,7 +449,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sparse_mle_empty() {
+    fn test_sparse_xmle_empty() {
         let sparse_mle = SparseMLE::empty();
         assert_eq!(sparse_mle.num_nonzeros(), 0);
         assert_eq!(sparse_mle.dimensions(), (0, 0));

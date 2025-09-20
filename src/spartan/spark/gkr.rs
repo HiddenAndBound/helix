@@ -5,6 +5,7 @@ use crate::spartan::sumcheck::BatchedCubicSumCheckProof;
 use crate::utils::eq::EqEvals;
 use crate::utils::polynomial::MLE;
 
+use anyhow::bail;
 use p3_field::PrimeCharacteristicRing;
 pub struct GKRProof {
     /// Batched proofs for each layer (one proof per layer for all trees)
@@ -21,7 +22,7 @@ impl GKRProof {
     pub fn new(
         layer_proofs: Vec<LayerProof>,
         final_products: Vec<Fp4>,
-        layer_claims: Vec<Vec<(Fp4, Fp4)>>,
+        layer_claims: Vec<Vec<(Fp4, Fp4)>>
     ) -> Self {
         Self {
             layer_proofs,
@@ -68,83 +69,84 @@ impl GKRProof {
                 .map(|tree| MLE::new(tree.get_layer_right(layer_depth).clone()))
                 .collect();
             // Generate batched proof for this layer
+
             let layer_proof = BatchedCubicSumCheckProof::prove(
                 &left_mles,
                 &right_mles,
                 &current_claims,
-                challenger,
+                challenger
             );
 
             // Get random challenge for next layer
             layer_claims.push(layer_proof.final_evals.clone());
             layer_proofs.push(layer_proof);
         }
-
+        
         // Final products are the root values
-        let final_products: Vec<Fp4> = circuits.iter().map(|tree| tree.root_value()).collect();
+        let final_products: Vec<Fp4> = circuits
+            .iter()
+            .map(|tree| tree.root_value())
+            .collect();
 
         Self::new(layer_proofs, final_products, layer_claims)
     }
 
     /// Verifies the batched GKR proof
-    pub fn verify(&self, expected_products: &[Fp4], challenger: &mut Challenger) -> bool {
+    pub fn verify(
+        &self,
+        expected_products: &[Fp4],
+        challenger: &mut Challenger
+    ) -> anyhow::Result<()> {
         if self.final_products.len() != expected_products.len() {
-            return false;
-        }
-
-        // Verify that claimed final products match expected products
-        for (claimed, &expected) in self.final_products.iter().zip(expected_products.iter()) {
-            if *claimed != expected {
-                return false;
-            }
+            bail!("Expected product length is not equal to final products length.");
         }
 
         let initial_claims = &self.layer_claims[0];
 
         for (&(left, right), &expected) in initial_claims.iter().zip(expected_products) {
-            assert_eq!(left * right, expected, "Product did not match claim")
+            assert_eq!(left * right, expected, "Product did not match claim");
         }
         let mut random_point = Vec::new();
 
         // Initial claims from final layer (should match final products)
-        let r_final = challenger.get_challenge();
-        random_point.push(r_final);
+        let r = challenger.get_challenge();
+        random_point.push(r);
 
-        let mut current_claims = expected_products.to_vec();
+        let mut current_claims = initial_claims
+            .iter()
+            .map(|&(left, right)| (Fp4::ONE - r) * left + r * right)
+            .collect::<Vec<_>>();
 
         // Verify each layer proof
         for layer_proof in &self.layer_proofs {
             // Verify the batched cubic sumcheck proof for this layer
-            if !layer_proof.verify(&current_claims, challenger) {
-                return false;
-            }
+            layer_proof.verify(&current_claims, challenger)?;
 
             // Get random challenge for next layer
             let r = challenger.get_challenge();
             random_point.push(r);
 
             // Compute next layer claims from final evaluations
-            current_claims = layer_proof
-                .final_evals
+            current_claims = layer_proof.final_evals
                 .iter()
                 .map(|&(left_eval, right_eval)| (Fp4::ONE - r) * left_eval + r * right_eval)
                 .collect();
         }
 
-        true
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use p3_field::PrimeCharacteristicRing;
-    use rand::{Rng, thread_rng};
+    use rand::{ rngs::StdRng, thread_rng, Rng, SeedableRng };
 
     use crate::{
         Fp4,
-        challenger::{self, Challenger},
+        challenger::{ self, Challenger },
         polynomial::MLE,
-        spartan::spark::{gkr::GKRProof, gpa::ProductTree},
+        spartan::spark::{ gkr::GKRProof, gpa::ProductTree },
     };
 
     #[test]
@@ -190,13 +192,10 @@ mod tests {
                 input_size,
                 root_value: actual_product,
             }
-        };
+        }
 
-        let leaves = MLE::new(
-            (0..k)
-                .map(|_| Fp4::from_u128(thread_rng().r#gen()))
-                .collect(),
-        );
+        let mut rng = StdRng::seed_from_u64(0);
+        let leaves = MLE::new((0..k).map(|_| Fp4::from_u128(rng.r#gen())).collect());
 
         let actual_product = leaves.coeffs().iter().copied().product();
         let tree = build_tree(leaves.coeffs().to_owned(), actual_product);
@@ -207,6 +206,6 @@ mod tests {
 
         let mut challenger = Challenger::new();
 
-        proof.verify(&[actual_product], &mut challenger);
+        proof.verify(&[actual_product], &mut challenger).unwrap();
     }
 }

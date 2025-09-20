@@ -1,4 +1,4 @@
-use criterion::{black_box, Criterion, criterion_group, criterion_main, BenchmarkId};
+use criterion::{Criterion, criterion_group, criterion_main, BenchmarkId};
 use helix::Fp;
 use p3_field::PrimeCharacteristicRing;
 
@@ -48,11 +48,7 @@ fn bench_reslicing_comparison(c: &mut Criterion) {
             &(&poly_data, &eq_data, iterations),
             |b, (poly, eq, iter_count)| {
                 b.iter(|| {
-                    black_box(benchmark_direct_indexing(
-                        black_box(poly),
-                        black_box(eq), 
-                        black_box(*iter_count)
-                    ))
+                    benchmark_direct_indexing(poly, eq, *iter_count)
                 })
             },
         );
@@ -62,11 +58,7 @@ fn bench_reslicing_comparison(c: &mut Criterion) {
             &(&poly_data, &eq_data, iterations),
             |b, (poly, eq, iter_count)| {
                 b.iter(|| {
-                    black_box(benchmark_reslicing(
-                        black_box(poly),
-                        black_box(eq),
-                        black_box(*iter_count)
-                    ))
+                    benchmark_reslicing(poly, eq, *iter_count)
                 })
             },
         );
@@ -86,21 +78,13 @@ fn bench_sumcheck_realistic_reslicing(c: &mut Criterion) {
 
     group.bench_function("direct_indexing_sumcheck", |b| {
         b.iter(|| {
-            black_box(benchmark_direct_indexing(
-                black_box(&poly_data),
-                black_box(&eq_data),
-                black_box(iterations)
-            ))
+            benchmark_direct_indexing(&poly_data, &eq_data, iterations)
         })
     });
 
     group.bench_function("reslicing_sumcheck", |b| {
         b.iter(|| {
-            black_box(benchmark_reslicing(
-                black_box(&poly_data),
-                black_box(&eq_data),
-                black_box(iterations)
-            ))
+            benchmark_reslicing(&poly_data, &eq_data, iterations)
         })
     });
 

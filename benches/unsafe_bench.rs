@@ -1,4 +1,4 @@
-use criterion::{black_box, Criterion, criterion_group, criterion_main, BenchmarkId};
+use criterion::{Criterion, criterion_group, criterion_main, BenchmarkId};
 use helix::Fp;
 use p3_field::PrimeCharacteristicRing;
 
@@ -60,11 +60,7 @@ fn bench_unsafe_comparison(c: &mut Criterion) {
             &(&poly_data, &eq_data, iterations),
             |b, (poly, eq, iter_count)| {
                 b.iter(|| {
-                    black_box(benchmark_direct_indexing(
-                        black_box(poly),
-                        black_box(eq), 
-                        black_box(*iter_count)
-                    ))
+                    benchmark_direct_indexing(poly, eq, *iter_count)
                 })
             },
         );
@@ -74,11 +70,7 @@ fn bench_unsafe_comparison(c: &mut Criterion) {
             &(&poly_data, &eq_data, iterations),
             |b, (poly, eq, iter_count)| {
                 b.iter(|| {
-                    black_box(benchmark_unsafe_unchecked(
-                        black_box(poly),
-                        black_box(eq),
-                        black_box(*iter_count)
-                    ))
+                    benchmark_unsafe_unchecked(poly, eq, *iter_count)
                 })
             },
         );
@@ -98,21 +90,13 @@ fn bench_sumcheck_realistic_unsafe(c: &mut Criterion) {
 
     group.bench_function("direct_indexing_sumcheck", |b| {
         b.iter(|| {
-            black_box(benchmark_direct_indexing(
-                black_box(&poly_data),
-                black_box(&eq_data),
-                black_box(iterations)
-            ))
+            benchmark_direct_indexing(&poly_data, &eq_data, iterations)
         })
     });
 
     group.bench_function("unsafe_unchecked_sumcheck", |b| {
         b.iter(|| {
-            black_box(benchmark_unsafe_unchecked(
-                black_box(&poly_data),
-                black_box(&eq_data),
-                black_box(iterations)
-            ))
+            benchmark_unsafe_unchecked(&poly_data, &eq_data, iterations)
         })
     });
 

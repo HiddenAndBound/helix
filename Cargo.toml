@@ -41,3 +41,7 @@ harness = false
 [[bench]]
 name = "unsafe_bench"
 harness = false
+
+[[bench]]
+name = "parallelism_bench"
+harness = false
