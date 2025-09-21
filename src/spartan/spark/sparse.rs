@@ -347,9 +347,9 @@ impl SpartanMetadata {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TimeStamps {
     /// Read timestamps for each address
-    read_ts: Vec<BabyBear>,
+    read_ts: MLE<Fp>,
     /// Final write timestamps for each address
-    final_ts: Vec<BabyBear>,
+    final_ts: MLE<Fp>,
 }
 
 impl TimeStamps {
@@ -359,7 +359,7 @@ impl TimeStamps {
         // - read_ts[i] = timestamp before i-th memory access (size = padded accesses)
         // - final_ts[j] = final write count for address j (size = address space)
 
-        Ok(TimeStamps { read_ts, final_ts })
+        Ok(TimeStamps { read_ts: MLE::new(read_ts), final_ts: MLE::new(final_ts) })
     }
 
     /// Computes timestamps from memory access sequence.
@@ -414,12 +414,12 @@ impl TimeStamps {
     }
 
     /// Returns a reference to the read timestamps
-    pub fn read_ts(&self) -> &[BabyBear] {
+    pub fn read_ts(&self) -> &MLE<Fp> {
         &self.read_ts
     }
 
     /// Returns a reference to the final timestamps
-    pub fn final_ts(&self) -> &[BabyBear] {
+    pub fn final_ts(&self) -> &MLE<Fp> {
         &self.final_ts
     }
 }

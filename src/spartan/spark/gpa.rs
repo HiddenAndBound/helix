@@ -1,4 +1,4 @@
-use crate::{Fp, Fp4, spartan::spark::gkr::GKRProof};
+use crate::{ Fp, Fp4, spartan::spark::gkr::GKRProof };
 use p3_field::PrimeCharacteristicRing;
 
 //Offline Memory Check
@@ -19,7 +19,7 @@ pub struct ProductTree {
     /// Left halves for each layer (root to leaves)
     /// layer_left[0] is root layer, layer_left[depth-1] is leaf layer
     pub layer_left: Vec<Vec<Fp4>>,
-    /// Right halves for each layer (root to leaves)  
+    /// Right halves for each layer (root to leaves)
     pub layer_right: Vec<Vec<Fp4>>,
     /// Tree depth (log₂ of input size)
     pub depth: usize,
@@ -32,11 +32,7 @@ pub struct ProductTree {
 impl ProductTree {
     pub fn new(layer_left: Vec<Vec<Fp4>>, layer_right: Vec<Vec<Fp4>>) -> Self {
         let depth = layer_left.len();
-        let input_size = if depth > 0 {
-            layer_left[depth - 1].len() * 2
-        } else {
-            0
-        };
+        let input_size = if depth > 0 { layer_left[depth - 1].len() * 2 } else { 0 };
         let root_value = if depth > 0 && !layer_left[0].is_empty() {
             layer_left[0][0] * layer_right[0][0]
         } else {
@@ -115,7 +111,7 @@ impl ProductTree {
                 input_size,
                 root_value: actual_product,
             }
-        };
+        }
 
         let left_tree = build_tree(left_leaves, left_actual_product);
         let right_tree = build_tree(right_leaves, right_actual_product);
@@ -150,7 +146,7 @@ impl ProductTree {
         &self.layer_left[depth]
     }
 
-    /// Returns the right layer data at the specified depth  
+    /// Returns the right layer data at the specified depth
     pub fn get_layer_right(&self, depth: usize) -> &Vec<Fp4> {
         &self.layer_right[depth]
     }
@@ -158,13 +154,13 @@ impl ProductTree {
 
 impl Fingerprints {
     pub fn generate(
-        indices: Vec<Fp>,
-        values: Vec<Fp>,
-        table: Vec<Fp4>,
-        read_ts: Vec<Fp>,
-        final_ts: Vec<Fp>,
+        indices: &[Fp],
+        values: &[Fp],
+        table: &[Fp4],
+        read_ts: &[Fp],
+        final_ts: &[Fp],
         gamma: Fp4,
-        tau: Fp4,
+        tau: Fp4
     ) -> Self {
         // Basic validation - all read operation vectors should have same length
         assert_eq!(indices.len(), values.len());
@@ -215,7 +211,7 @@ mod tests {
             Fp4::from(Fp::from_usize(10)), // table[0] = 10
             Fp4::from(Fp::from_usize(20)), // table[1] = 20
             Fp4::from(Fp::from_usize(30)), // table[2] = 30
-            Fp4::from(Fp::from_usize(40)), // table[3] = 40
+            Fp4::from(Fp::from_usize(40)) // table[3] = 40
         ];
 
         // Memory access pattern: read from addresses [0, 1, 0, 2]
@@ -223,13 +219,13 @@ mod tests {
             Fp::from_usize(0), // Access address 0 first time
             Fp::from_usize(1), // Access address 1 first time
             Fp::from_usize(0), // Access address 0 second time
-            Fp::from_usize(2), // Access address 2 first time
+            Fp::from_usize(2) // Access address 2 first time
         ];
         let read_values = vec![
             Fp::from_usize(10), // Value at address 0
             Fp::from_usize(20), // Value at address 1
             Fp::from_usize(10), // Value at address 0 (unchanged)
-            Fp::from_usize(30), // Value at address 2
+            Fp::from_usize(30) // Value at address 2
         ];
 
         // Step 2: Use TimeStamps::compute to generate correct timestamps
@@ -239,11 +235,12 @@ mod tests {
         // Extract read_ts and final_ts from TimeStamps using getter methods
         let read_timestamps: Vec<Fp> = timestamps
             .read_ts()
+            .coeffs()
             .iter()
             .take(read_addresses_fp.len())
             .cloned()
             .collect();
-        let final_timestamps: Vec<Fp> = timestamps.final_ts().to_vec();
+        let final_timestamps: &[Fp] = timestamps.final_ts().coeffs();
 
         // Step 3: Set up challenges
         let gamma = Fp4::from(Fp::from_usize(7));
@@ -251,13 +248,13 @@ mod tests {
 
         // Step 4: Generate all four fingerprint multisets using correct timestamps
         let fingerprints = Fingerprints::generate(
-            read_addresses_fp,
-            read_values,
-            memory_table,
-            read_timestamps,
-            final_timestamps,
+            &read_addresses_fp,
+            &read_values,
+            &memory_table,
+            &read_timestamps,
+            &final_timestamps,
             gamma,
-            tau,
+            tau
         );
 
         // Step 5: Compute products of the multisets
@@ -284,7 +281,8 @@ mod tests {
         // Step 6: Test the core memory consistency property
         // This should hold for any valid memory trace with correct timestamps
         assert_eq!(
-            product_initial_and_writes, product_reads_and_final,
+            product_initial_and_writes,
+            product_reads_and_final,
             "Memory consistency failed: ∏(w_init ∪ w) ≠ ∏(r ∪ s)"
         );
 
@@ -309,7 +307,7 @@ mod tests {
             Fp4::from(Fp::from_usize(500)), // table[4] = 500
             Fp4::from(Fp::from_usize(600)), // table[5] = 600
             Fp4::from(Fp::from_usize(700)), // table[6] = 700
-            Fp4::from(Fp::from_usize(800)), // table[7] = 800
+            Fp4::from(Fp::from_usize(800)) // table[7] = 800
         ];
 
         // Complex memory access pattern: [0, 1, 0, 2, 3, 1, 4, 0]
@@ -321,7 +319,7 @@ mod tests {
             Fp::from_usize(3), // Access address 3 first time
             Fp::from_usize(1), // Access address 1 second time
             Fp::from_usize(4), // Access address 4 first time
-            Fp::from_usize(0), // Access address 0 third time
+            Fp::from_usize(0) // Access address 0 third time
         ];
         let read_values = vec![
             Fp::from_usize(100), // Value at address 0
@@ -331,7 +329,7 @@ mod tests {
             Fp::from_usize(400), // Value at address 3
             Fp::from_usize(200), // Value at address 1 (unchanged)
             Fp::from_usize(500), // Value at address 4
-            Fp::from_usize(100), // Value at address 0 (unchanged)
+            Fp::from_usize(100) // Value at address 0 (unchanged)
         ];
 
         // Step 2: Use TimeStamps::compute to generate correct timestamps
@@ -341,11 +339,12 @@ mod tests {
         // Extract read_ts and final_ts from TimeStamps using getter methods
         let read_timestamps: Vec<Fp> = timestamps
             .read_ts()
+            .coeffs()
             .iter()
             .take(read_addresses_fp.len())
             .cloned()
             .collect();
-        let final_timestamps: Vec<Fp> = timestamps.final_ts().to_vec();
+        let final_timestamps: &[Fp] = timestamps.final_ts().coeffs();
 
         // Step 3: Set up challenges
         let gamma = Fp4::from(Fp::from_usize(13));
@@ -353,13 +352,13 @@ mod tests {
 
         // Step 4: Generate all four fingerprint multisets using correct timestamps
         let fingerprints = Fingerprints::generate(
-            read_addresses_fp,
-            read_values,
-            memory_table,
-            read_timestamps,
-            final_timestamps,
+            &read_addresses_fp,
+            &read_values,
+            &memory_table,
+            &read_timestamps,
+            &final_timestamps,
             gamma,
-            tau,
+            tau
         );
 
         // Step 5: Compute products of the multisets
@@ -381,14 +380,15 @@ mod tests {
 
         // Step 6: Test the core memory consistency property
         assert_eq!(
-            product_initial_and_writes, product_reads_and_final,
+            product_initial_and_writes,
+            product_reads_and_final,
             "Memory consistency failed: ∏(w_init ∪ w) ≠ ∏(r ∪ s)"
         );
 
         // Step 7: Verify the fingerprint vectors have correct sizes
         assert_eq!(fingerprints.w_init.len(), 8); // 8 memory locations
         assert_eq!(fingerprints.r.len(), 8); // 8 read operations
-        assert_eq!(fingerprints.w.len(), 8); // 8 write operations  
+        assert_eq!(fingerprints.w.len(), 8); // 8 write operations
         assert_eq!(fingerprints.s.len(), 8); // 8 memory locations (final state)
     }
 
@@ -401,7 +401,7 @@ mod tests {
             Fp4::from(Fp::from_usize(10)), // table[0] = 10
             Fp4::from(Fp::from_usize(20)), // table[1] = 20
             Fp4::from(Fp::from_usize(30)), // table[2] = 30
-            Fp4::from(Fp::from_usize(40)), // table[3] = 40
+            Fp4::from(Fp::from_usize(40)) // table[3] = 40
         ];
 
         // Memory access pattern: read from addresses [0, 1, 0, 2]
@@ -409,13 +409,13 @@ mod tests {
             Fp::from_usize(0), // Access address 0 first time
             Fp::from_usize(1), // Access address 1 first time
             Fp::from_usize(0), // Access address 0 second time
-            Fp::from_usize(2), // Access address 2 first time
+            Fp::from_usize(2) // Access address 2 first time
         ];
         let read_values = vec![
             Fp::from_usize(10), // Value at address 0
             Fp::from_usize(20), // Value at address 1
             Fp::from_usize(10), // Value at address 0 (unchanged)
-            Fp::from_usize(30), // Value at address 2
+            Fp::from_usize(30) // Value at address 2
         ];
 
         // Use TimeStamps::compute to generate correct timestamps
@@ -425,24 +425,25 @@ mod tests {
         // Extract read_ts and final_ts from TimeStamps using getter methods
         let read_timestamps: Vec<Fp> = timestamps
             .read_ts()
+            .coeffs()
             .iter()
             .take(read_addresses_fp.len())
             .cloned()
             .collect();
-        let final_timestamps: Vec<Fp> = timestamps.final_ts().to_vec();
+        let final_timestamps: &[Fp] = timestamps.final_ts().coeffs();
 
         let gamma = Fp4::from(Fp::from_usize(7));
         let tau = Fp4::from(Fp::from_usize(11));
 
         // Step 2: Generate fingerprints using the same parameters as the working test
         let fingerprints = Fingerprints::generate(
-            read_addresses_fp,
-            read_values,
-            memory_table,
-            read_timestamps,
-            final_timestamps,
+            &read_addresses_fp,
+            &read_values,
+            &memory_table,
+            &read_timestamps,
+            &final_timestamps,
             gamma,
-            tau,
+            tau
         );
 
         // Step 3: Generate product trees
@@ -482,24 +483,18 @@ mod tests {
         // The memory consistency property would hold only for valid memory traces
 
         // Step 6: Verify tree structure properties
-        assert_eq!(
-            left_tree.depth(),
-            right_tree.depth(),
-            "Both trees should have same depth"
-        );
+        assert_eq!(left_tree.depth(), right_tree.depth(), "Both trees should have same depth");
         assert_eq!(
             left_tree.input_size(),
             right_tree.input_size(),
             "Both trees should have same input size"
         );
-        assert!(
-            left_tree.input_size().is_power_of_two(),
-            "Input size should be power of 2"
-        );
+        assert!(left_tree.input_size().is_power_of_two(), "Input size should be power of 2");
 
         // Step 7: Verify tree dimensions
-        let expected_leaves = (fingerprints.w.len() + fingerprints.r.len())
-            .max(fingerprints.w_init.len() + fingerprints.s.len());
+        let expected_leaves = (fingerprints.w.len() + fingerprints.r.len()).max(
+            fingerprints.w_init.len() + fingerprints.s.len()
+        );
         let expected_size = expected_leaves.next_power_of_two();
         assert_eq!(left_tree.input_size(), expected_size);
         assert_eq!(right_tree.input_size(), expected_size);
