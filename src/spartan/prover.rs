@@ -43,17 +43,14 @@ impl SpartanProof {
         let (A, B, C) = (&instance.r1cs.a, &instance.r1cs.b, &instance.r1cs.c);
         // Phase 1: OuterSumCheck - proves R1CS constraint satisfaction
         // Generates evaluation claims A(r_x), B(r_x), C(r_x) at random point r_x
-        let outer_sum_check = OuterSumCheckProof::prove(A, B, C, z, challenger);
+        let (outer_sum_check, rx) = OuterSumCheckProof::prove(A, B, C, z, challenger);
 
         // Extract the random point from outer sumcheck to bind first half of variables
         let outer_claims = outer_sum_check.final_evals.clone();
 
         // Use the random challenge from outer sumcheck to compute bound matrices
         // This gives us A_bound(y) = A(r_x, y), B_bound(y) = B(r_x, y), C_bound(y) = C(r_x, y)
-        let r_x_point: Vec<Fp4> = challenger.get_challenges(
-            A.dimensions().0.trailing_zeros() as usize
-        );
-        let (a_bound, b_bound, c_bound) = instance.compute_bound_matrices(&r_x_point).unwrap();
+        let (a_bound, b_bound, c_bound) = instance.compute_bound_matrices(&rx).unwrap();
 
         challenger.observe_fp4_elems(&outer_sum_check.final_evals);
         // Phase 2: InnerSumCheck - proves evaluation claims using bound matrices
@@ -73,21 +70,22 @@ impl SpartanProof {
         SpartanProof::new(outer_sum_check, inner_sum_check)
     }
     /// Verifies the Spartan proof. Panics if verification fails.
-    pub fn verify(&self, challenger: &mut crate::challenger::Challenger) {
+    pub fn verify(&self, challenger: &mut crate::challenger::Challenger) -> anyhow::Result<()> {
         // Phase 1: Verify the outer sum-check proof
         // This ensures R1CS constraints are satisfied
-        self.outer_sumcheck_proof.verify(challenger);
+        let (rx, outer_claims) = self.outer_sumcheck_proof.verify(challenger)?;
 
         // Phase 2: Verify the inner sum-check proof
         // This ensures evaluation claims from outer sumcheck are correct
         challenger.observe_fp4_elems(&self.outer_sumcheck_proof.final_evals);
         let gamma = challenger.get_challenge();
-        self.inner_sumcheck_proof.verify(self.outer_sumcheck_proof.final_evals, gamma, challenger);
+        self.inner_sumcheck_proof.verify(outer_claims, gamma, challenger);
 
         // Note: In a complete Spartan implementation, additional steps would include:
         // - Polynomial commitment opening verifications (SparkSumCheck)
         // - Consistency checks between proof phases
         // - Final point evaluation verification
+        Ok(())
     }
 }
 #[cfg(test)]

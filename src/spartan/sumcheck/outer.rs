@@ -43,7 +43,7 @@ impl OuterSumCheckProof {
         C: &SparseMLE,
         z: &MLE<Fp>,
         challenger: &mut Challenger
-    ) -> Self {
+    ) -> (Self, Vec<Fp4>) {
         // Compute A·z, B·z, C·z (sparse matrix-MLE multiplications)
         let (a, b, c) = (
             A.multiply_by_mle(z).unwrap(),
@@ -52,9 +52,7 @@ impl OuterSumCheckProof {
         );
         let rounds = a.n_vars();
 
-        if rounds == 0 {
-            return OuterSumCheckProof::new(vec![], [a[0].into(), b[0].into(), c[0].into()]);
-        }
+        assert!(rounds > 0, "MLEs need to be non empty");
 
         // Get random evaluation point from challenger (Fiat-Shamir)
         let eq_point = challenger.get_challenges(rounds);
@@ -114,10 +112,9 @@ impl OuterSumCheckProof {
         }
 
         // Extract final evaluations A(r), B(r), C(r)
-        println!("{:?}", a_fold.len());
         let final_evals = [a_fold[0], b_fold[0], c_fold[0]];
 
-        OuterSumCheckProof::new(round_proofs, final_evals)
+        (OuterSumCheckProof::new(round_proofs, final_evals), round_challenges)
     }
 
     /// Verifies the sum-check proof. Panics if verification fails.
@@ -242,7 +239,7 @@ fn outer_sum_check_test() -> anyhow::Result<()> {
     }
 
     let mut challenger = Challenger::new();
-    let proof = OuterSumCheckProof::prove(&A, &B, &C, &z, &mut challenger);
+    let (proof, _) = OuterSumCheckProof::prove(&A, &B, &C, &z, &mut challenger);
 
     let mut challenger = Challenger::new();
     proof.verify(&mut challenger)?;

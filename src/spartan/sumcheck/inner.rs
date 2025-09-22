@@ -44,7 +44,7 @@ impl InnerSumCheckProof {
     ) -> Self {
         // Use the bound matrices from outer sumcheck
         let rounds = a_bound.n_vars();
-
+        
         let mut current_claim =
             gamma * outer_claims[0] +
             gamma.square() * outer_claims[1] +
