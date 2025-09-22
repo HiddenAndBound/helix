@@ -215,7 +215,7 @@ mod tests {
     fn test_bit_reverse_sort_empty() {
         let mut vec: Vec<i32> = vec![];
         bit_reverse_sort(&mut vec);
-        assert_eq!(vec, vec![]);
+        assert!(vec.is_empty());
     }
 
     #[test]

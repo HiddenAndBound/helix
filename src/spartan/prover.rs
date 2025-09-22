@@ -90,3 +90,94 @@ impl SpartanProof {
         // - Final point evaluation verification
     }
 }
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use anyhow::bail;
+    use itertools::multizip;
+    use rand::{ rngs::StdRng, Rng, SeedableRng };
+    use crate::{
+        challenger::Challenger,
+        polynomial::MLE,
+        spartan::{
+            prover::SpartanProof,
+            r1cs::{ R1CS, R1CSInstance, Witness },
+            spark::sparse::SparseMLE,
+        },
+        *,
+    };
+    use p3_field::{ Field, PrimeCharacteristicRing };
+    #[test]
+    fn spartan_test() -> anyhow::Result<()> {
+        // This is also the number of nonlinear constraints.
+        const ROWS: usize = 1 << 10;
+        const COLS: usize = ROWS;
+        let mut rng = StdRng::seed_from_u64(0);
+        let mut a_matrix = HashMap::<(usize, usize), Fp>::new();
+        let mut b_matrix = HashMap::<(usize, usize), Fp>::new();
+        let mut c_matrix = HashMap::<(usize, usize), Fp>::new();
+
+        let mut witness_vals: Vec<Fp> = (0..COLS).map(|_| Fp::new(rng.r#gen::<u32>())).collect();
+        if witness_vals[0] == Fp::ZERO {
+            witness_vals[0] = Fp::ONE;
+        }
+        let z_const = witness_vals[0];
+        let z_const_inv = z_const.inverse();
+
+        // (a*b - c = 0 => c = a*b)
+        for j in 0..ROWS {
+            let a = Fp::new(rng.r#gen());
+            let b = Fp::new(rng.r#gen());
+
+            let (i_0, i_1) = if j == 0 {
+                (0, 0)
+            } else {
+                (rng.gen_range(0..j), rng.gen_range(0..j))
+            };
+
+            a_matrix.insert((j, i_0), a);
+            b_matrix.insert((j, i_1), b);
+
+            // Trivial equation a·b - c = 0 ⇒ c = a·b
+            c_matrix.insert((j, j), a * b * z_const);
+
+            if j != 0 {
+                witness_vals[j] = witness_vals[i_0] * witness_vals[i_1] * z_const_inv;
+            }
+        }
+
+        let z = MLE::new(witness_vals.clone());
+
+        let A = SparseMLE::new(a_matrix)?;
+        let B = SparseMLE::new(b_matrix)?;
+        let C = SparseMLE::new(c_matrix)?;
+
+        let a = A.multiply_by_mle(&z)?;
+        let b = B.multiply_by_mle(&z)?;
+        let c = C.multiply_by_mle(&z)?;
+
+        for (&a_i, &b_i, &c_i) in multizip((a.coeffs(), b.coeffs(), c.coeffs())) {
+            if c_i != a_i * b_i {
+                bail!("R1CS instance not satisfied");
+            }
+        }
+
+        let mut prover_challenger = Challenger::new();
+
+        // Form an R1CS instance from the sparse matrices and witness vector
+        let num_public_inputs = 0;
+        let r1cs = R1CS::new(A, B, C, num_public_inputs)?;
+        let witness = Witness::from_vec(witness_vals, num_public_inputs);
+        let instance = R1CSInstance::new(r1cs, witness)?;
+
+        assert!(instance.verify()?);
+
+        let proof = SpartanProof::prove(instance.clone(), &mut prover_challenger);
+
+        let mut verifier_challenger = Challenger::new();
+        proof.verify(&mut verifier_challenger);
+
+        Ok(())
+    }
+}

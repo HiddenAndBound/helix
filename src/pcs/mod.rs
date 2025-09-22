@@ -128,9 +128,6 @@ impl BaseFoldConfig {
 /// The actual implementation methods are defined in the `prover` and `verifier` modules.
 pub struct Basefold;
 
-/// Default number of queries for soundness (provides ~100-bit security)
-pub const QUERIES: usize = 144;
-
 // TODO: Optimizations - hash pruning, oracle skipping, early stopping, rate customisation
 // Implementation methods are in the prover and verifier modules
 

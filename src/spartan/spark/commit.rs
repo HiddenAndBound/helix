@@ -1,7 +1,7 @@
 use crate::challenger::Challenger;
 use crate::pcs::{ BaseFoldConfig, Basefold, BasefoldCommitment, EvalProof, ProverData };
 use crate::spartan::spark::sparse::SparkMetadata;
-use crate::{ Fp, Fp4 };         
+use crate::{ Fp, Fp4 };
 
 type Commitment = [u8; 32];
 #[derive(Debug, Clone)]
@@ -20,7 +20,7 @@ pub struct SparkCommitment {
 }
 
 impl SparkCommitment {
-    /// Creates a new   
+    /// Creates a new
     pub fn new(
         row: Commitment,
         col: Commitment,
@@ -40,6 +40,8 @@ impl SparkCommitment {
             col_final_ts,
         }
     }
+
+    pub fn evaluate(&self, prover_data: SparkProverData, evaluations: [Fp4; 7]) {}
 }
 
 /// Prover-side data corresponding to each Spark commitment component.
