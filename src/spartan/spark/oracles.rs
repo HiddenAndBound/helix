@@ -103,7 +103,7 @@ pub fn generate_spark_opening_oracles(
 /// For each position i in each metadata:
 /// - e_rx[i] = eq_rx[row[i]] (equality polynomial evaluated at row index)
 /// - e_ry[i] = eq_ry[col[i]] (equality polynomial evaluated at column index)
-fn generate_oracle_pair(
+pub fn generate_oracle_pair(
     metadata_a: &SparkMetadata,
     metadata_b: &SparkMetadata,
     metadata_c: &SparkMetadata,

@@ -1,9 +1,35 @@
+use std::fs::Metadata;
+
 use crate::challenger::Challenger;
+use crate::eq::EqEvals;
+use crate::pcs::utils::Commitment;
 use crate::pcs::{ BaseFoldConfig, Basefold, BasefoldCommitment, EvalProof, ProverData };
+use crate::spartan::spark::oracles::{ generate_oracle_pair, generate_spark_opening_oracles };
 use crate::spartan::spark::sparse::SparkMetadata;
 use crate::{ Fp, Fp4 };
 
-type Commitment = [u8; 32];
+pub struct SparkProof {}
+
+impl SparkProof {
+    pub fn prove(
+        metadata: [SparkMetadata; 3],
+        commitments: [SparkCommitment; 3],
+        prover_data: [SparkProverData; 3],
+        rx: &[Fp4],
+        ry: &[Fp4],
+        claimed_evaluations: [Fp4; 3]
+    ) -> anyhow::Result<SparkProof> {
+        let [metadata_a, metadata_b, metadata_c] = &metadata;
+        let (eq_rx, eq_ry) = (EqEvals::gen_from_point(rx), EqEvals::gen_from_point(ry));
+        let oracles = generate_oracle_pair(metadata_a, metadata_b, metadata_c, &eq_rx, &eq_ry)?;
+        //Generate and commit to lookup_vals for A,B and C
+        
+        //SparkSumCheck
+
+        //Memory check for lookup vals
+        todo!()
+    }
+}
 #[derive(Debug, Clone)]
 pub struct SparkCommitment {
     /// Row indices as multilinear extension
@@ -40,8 +66,6 @@ impl SparkCommitment {
             col_final_ts,
         }
     }
-
-    pub fn evaluate(&self, prover_data: SparkProverData, evaluations: [Fp4; 7]) {}
 }
 
 /// Prover-side data corresponding to each Spark commitment component.

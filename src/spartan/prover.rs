@@ -4,9 +4,13 @@
 //! Uses sum-check protocols for efficient proving with logarithmic verification time.
 
 use crate::{
-    Fp4,
     challenger::Challenger,
-    spartan::{ R1CSInstance, sumcheck::{ InnerSumCheckProof, OuterSumCheckProof } },
+    spartan::{
+        spark::{ commit::SparkCommitment, sparse::SparkMetadata },
+        sumcheck::{ InnerSumCheckProof, OuterSumCheckProof },
+        R1CSInstance,
+    },
+    Fp4,
 };
 
 /// Spartan zkSNARK proof for an R1CS instance.
@@ -45,9 +49,6 @@ impl SpartanProof {
         // Generates evaluation claims A(r_x), B(r_x), C(r_x) at random point r_x
         let (outer_sum_check, rx) = OuterSumCheckProof::prove(A, B, C, z, challenger);
 
-        // Extract the random point from outer sumcheck to bind first half of variables
-        let outer_claims = outer_sum_check.final_evals.clone();
-
         // Use the random challenge from outer sumcheck to compute bound matrices
         // This gives us A_bound(y) = A(r_x, y), B_bound(y) = B(r_x, y), C_bound(y) = C(r_x, y)
         let (a_bound, b_bound, c_bound) = instance.compute_bound_matrices(&rx).unwrap();
@@ -61,7 +62,7 @@ impl SpartanProof {
             &b_bound,
             &c_bound,
             z,
-            [outer_claims[0], outer_claims[1], outer_claims[2]],
+            outer_sum_check.final_evals,
             gamma,
 
             challenger
@@ -168,13 +169,12 @@ mod tests {
         let r1cs = R1CS::new(A, B, C, num_public_inputs)?;
         let witness = Witness::from_vec(witness_vals, num_public_inputs);
         let instance = R1CSInstance::new(r1cs, witness)?;
-
         assert!(instance.verify()?);
 
         let proof = SpartanProof::prove(instance.clone(), &mut prover_challenger);
 
         let mut verifier_challenger = Challenger::new();
-        proof.verify(&mut verifier_challenger);
+        proof.verify(&mut verifier_challenger)?;
 
         Ok(())
     }
