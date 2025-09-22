@@ -11,7 +11,7 @@
 //! - [`generate_single_oracle_pair`]: Utility function to generate oracles for a single matrix
 
 use crate::spartan::error::{ SparseError, SparseResult };
-use crate::spartan::spark::sparse::SpartanMetadata;
+use crate::spartan::spark::sparse::SparkMetadata;
 use crate::utils::{ Fp4, eq::EqEvals, polynomial::MLE };
 use p3_field::PrimeField32;
 
@@ -67,9 +67,9 @@ pub struct SparkOracles {
 ///    - e_rx[i] = eq_rx[row[i]] (row indices map to rx equality polynomial)
 ///    - e_ry[i] = eq_ry[col[i]] (column indices map to ry equality polynomial)
 pub fn generate_spark_opening_oracles(
-    metadata_a: &SpartanMetadata,
-    metadata_b: &SpartanMetadata,
-    metadata_c: &SpartanMetadata,
+    metadata_a: &SparkMetadata,
+    metadata_b: &SparkMetadata,
+    metadata_c: &SparkMetadata,
     evaluation_point: &[Fp4]
 ) -> SparseResult<SparkOracles> {
     // Validate evaluation point can be split into rx and ry
@@ -104,9 +104,9 @@ pub fn generate_spark_opening_oracles(
 /// - e_rx[i] = eq_rx[row[i]] (equality polynomial evaluated at row index)
 /// - e_ry[i] = eq_ry[col[i]] (equality polynomial evaluated at column index)
 fn generate_oracle_pair(
-    metadata_a: &SpartanMetadata,
-    metadata_b: &SpartanMetadata,
-    metadata_c: &SpartanMetadata,
+    metadata_a: &SparkMetadata,
+    metadata_b: &SparkMetadata,
+    metadata_c: &SparkMetadata,
     eq_rx: &EqEvals,
     eq_ry: &EqEvals
 ) -> SparseResult<SparkOracles> {
@@ -131,7 +131,7 @@ fn generate_oracle_pair(
 /// - e_rx[i] = eq_rx[row[i]] (equality polynomial evaluated at row index)
 /// - e_ry[i] = eq_ry[col[i]] (equality polynomial evaluated at column index)
 pub fn generate_single_oracle_pair(
-    metadata: &SpartanMetadata,
+    metadata: &SparkMetadata,
     eq_rx: &EqEvals,
     eq_ry: &EqEvals
 ) -> SparseResult<(MLE<Fp4>, MLE<Fp4>)> {
@@ -189,7 +189,7 @@ mod tests {
     use p3_field::PrimeCharacteristicRing;
     use std::collections::HashMap;
 
-    fn create_test_metadata(entries: Vec<(usize, usize, u32)>) -> SpartanMetadata {
+    fn create_test_metadata(entries: Vec<(usize, usize, u32)>) -> SparkMetadata {
         // Create sparse MLE from test entries
         let mut coeffs = HashMap::new();
         for (row, col, val) in entries {
@@ -198,7 +198,7 @@ mod tests {
         let sparse_mle = SparseMLE::new(coeffs).unwrap();
 
         // Preprocess to metadata
-        SpartanMetadata::preprocess(&sparse_mle).unwrap()
+        SparkMetadata::preprocess(&sparse_mle).unwrap()
     }
 
     #[test]

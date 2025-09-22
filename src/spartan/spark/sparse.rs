@@ -7,8 +7,11 @@
 //! - Sparse MLE representation: O(nnz) storage vs O(n²) dense
 //! - Metadata preprocessing for sum-check protocols
 //! - Twist & Shout memory checking timestamps
-
-use crate::spartan::error::{ SparseError, SparseResult };
+use crate::pcs::{ BaseFoldConfig, Basefold };
+use crate::spartan::{
+    error::{ SparseError, SparseResult },
+    spark::commit::{ SparkCommitment, SparkProverData },
+};
 use crate::utils::{ Fp, Fp4, eq::EqEvals, polynomial::MLE };
 use p3_baby_bear::BabyBear;
 use p3_field::{ PrimeCharacteristicRing, PrimeField32 };
@@ -220,7 +223,7 @@ impl SparseMLE {
 /// Converts sparse MLE into dense MLEs (row, col, val) with timestamps
 /// for efficient evaluation and memory consistency checking.
 #[derive(Debug, Clone)]
-pub struct SpartanMetadata {
+pub struct SparkMetadata {
     /// Row indices as multilinear extension
     row: MLE<Fp>,
     /// Column indices as multilinear extension
@@ -228,20 +231,23 @@ pub struct SpartanMetadata {
     /// Coefficient values as multilinear extension
     val: MLE<Fp>,
     /// Timestamp information for row accesses
-    row_ts: TimeStamps,
-    /// Timestamp information for column accesses
-    col_ts: TimeStamps,
+    row_read_ts: MLE<Fp>,
+    row_final_ts: MLE<Fp>,
+    col_read_ts: MLE<Fp>,
+    col_final_ts: MLE<Fp>,
 }
 
-impl SpartanMetadata {
+impl SparkMetadata {
     /// Creates metadata from preprocessed components.
     /// All MLEs must have the same length.
     pub fn new(
         row: MLE<Fp>,
         col: MLE<Fp>,
         val: MLE<Fp>,
-        row_ts: TimeStamps,
-        col_ts: TimeStamps
+        row_read_ts: MLE<Fp>,
+        row_final_ts: MLE<Fp>,
+        col_read_ts: MLE<Fp>,
+        col_final_ts: MLE<Fp>
     ) -> SparseResult<Self> {
         // Validate that all MLEs have the same length
         if row.len() != col.len() || col.len() != val.len() {
@@ -257,12 +263,14 @@ impl SpartanMetadata {
             );
         }
 
-        Ok(SpartanMetadata {
+        Ok(SparkMetadata {
             row,
-            col,
             val,
-            row_ts,
-            col_ts,
+            col,
+            row_read_ts,
+            row_final_ts,
+            col_read_ts,
+            col_final_ts,
         })
     }
 
@@ -286,15 +294,21 @@ impl SpartanMetadata {
         let (row_vec, col_vec, val_vec) = Self::extract_dense_vectors(sparse_mle)?;
 
         // Compute timestamp information for memory consistency checking
-        let row_ts = TimeStamps::compute(&row_vec, max_rows)?;
-        let col_ts = TimeStamps::compute(&col_vec, max_cols)?;
+        let TimeStamps { read_ts: row_read_ts, final_ts: row_final_ts } = TimeStamps::compute(
+            &row_vec,
+            max_rows
+        )?;
+        let TimeStamps { read_ts: col_read_ts, final_ts: col_final_ts } = TimeStamps::compute(
+            &col_vec,
+            max_cols
+        )?;
 
         // Convert vectors to MLEs
         let row_mle = MLE::new(row_vec);
         let col_mle = MLE::new(col_vec);
         let val_mle = MLE::new(val_vec);
 
-        Self::new(row_mle, col_mle, val_mle, row_ts, col_ts)
+        Self::new(row_mle, col_mle, val_mle, row_read_ts, row_final_ts, col_read_ts, col_final_ts)
     }
 
     /// Extracts dense vectors from sparse representation in deterministic order.
@@ -338,6 +352,90 @@ impl SpartanMetadata {
     /// Provides read-only access to the value MLE.
     pub fn val(&self) -> &MLE<Fp> {
         &self.val
+    }
+
+    /// Returns the maximum number of variables across all stored MLEs.
+    pub fn max_n_vars(&self) -> Option<usize> {
+        [
+            self.row.n_vars(),
+            self.col.n_vars(),
+            self.val.n_vars(),
+            self.row_read_ts.n_vars(),
+            self.row_final_ts.n_vars(),
+            self.col_read_ts.n_vars(),
+            self.col_final_ts.n_vars(),
+        ]
+            .into_iter()
+            .max()
+    }
+
+    /// Commits to each component MLE using the BaseFold PCS and aggregates the roots
+    /// along with prover-side artifacts.
+    pub fn commit(
+        &self,
+        roots: &[Vec<Fp>],
+        config: &BaseFoldConfig
+    ) -> anyhow::Result<(SparkCommitment, SparkProverData)> {
+        // TODO:Constrain this in all constructors.
+        let max_vars = self.max_n_vars().expect("Fields will be non empty.");
+        let Self { row, col, val, row_read_ts, row_final_ts, col_read_ts, col_final_ts } = &self;
+        let (row_commitment, row_prover) = Basefold::commit(
+            row,
+            &roots[max_vars - row.n_vars()..],
+            config
+        )?;
+        let (col_commitment, col_prover) = Basefold::commit(
+            col,
+            &roots[max_vars - col.n_vars()..],
+            config
+        )?;
+        let (val_commitment, val_prover) = Basefold::commit(
+            val,
+            &roots[max_vars - val.n_vars()..],
+            config
+        )?;
+        let (row_read_ts_commitment, row_read_ts_prover) = Basefold::commit(
+            row_read_ts,
+            &roots[max_vars - row_read_ts.n_vars()..],
+            config
+        )?;
+        let (row_final_ts_commitment, row_final_ts_prover) = Basefold::commit(
+            row_final_ts,
+            &roots[max_vars - row_final_ts.n_vars()..],
+            config
+        )?;
+        let (col_read_ts_commitment, col_read_ts_prover) = Basefold::commit(
+            col_read_ts,
+            &roots[max_vars - col_read_ts.n_vars()..],
+            config
+        )?;
+        let (col_final_ts_commitment, col_final_ts_prover) = Basefold::commit(
+            col_final_ts,
+            &roots[max_vars - col_final_ts.n_vars()..],
+            config
+        )?;
+
+        let commitment = SparkCommitment::new(
+            row_commitment.commitment,
+            col_commitment.commitment,
+            val_commitment.commitment,
+            row_read_ts_commitment.commitment,
+            row_final_ts_commitment.commitment,
+            col_read_ts_commitment.commitment,
+            col_final_ts_commitment.commitment
+        );
+
+        let prover_data = SparkProverData::new(
+            row_prover,
+            col_prover,
+            val_prover,
+            row_read_ts_prover,
+            row_final_ts_prover,
+            col_read_ts_prover,
+            col_final_ts_prover
+        );
+
+        Ok((commitment, prover_data))
     }
 }
 
@@ -583,21 +681,6 @@ mod tests {
     }
 
     #[test]
-    fn test_spartan_metadata_new_valid() {
-        let row_mle = MLE::new(vec![BabyBear::ZERO, BabyBear::ONE]);
-        let col_mle = MLE::new(vec![BabyBear::ONE, BabyBear::ZERO]);
-        let val_mle = MLE::new(vec![BabyBear::from_u32(5), BabyBear::from_u32(10)]);
-
-        let read_ts = vec![BabyBear::ZERO, BabyBear::ONE];
-        let final_ts = vec![BabyBear::ONE, BabyBear::from_u32(2)];
-        let row_ts = TimeStamps::new(read_ts.clone(), final_ts.clone()).unwrap();
-        let col_ts = TimeStamps::new(read_ts, final_ts).unwrap();
-
-        let metadata = SpartanMetadata::new(row_mle, col_mle, val_mle, row_ts, col_ts).unwrap();
-        assert_eq!(metadata.len(), 2);
-    }
-
-    #[test]
     fn test_spartan_metadata_new_length_mismatch() {
         let row_mle = MLE::new(vec![BabyBear::ZERO, BabyBear::ZERO]); // Length 2
         let col_mle = MLE::new(vec![BabyBear::ONE, BabyBear::ZERO, BabyBear::ONE, BabyBear::ZERO]); // Length 4 (different)
@@ -605,10 +688,24 @@ mod tests {
 
         let read_ts = vec![BabyBear::ZERO];
         let final_ts = vec![BabyBear::ONE];
-        let row_ts = TimeStamps::new(read_ts.clone(), final_ts.clone()).unwrap();
-        let col_ts = TimeStamps::new(read_ts, final_ts).unwrap();
+        let TimeStamps { read_ts: row_read_ts, final_ts: row_final_ts } = TimeStamps::new(
+            read_ts.clone(),
+            final_ts.clone()
+        ).unwrap();
+        let TimeStamps { read_ts: col_read_ts, final_ts: col_final_ts } = TimeStamps::new(
+            read_ts,
+            final_ts
+        ).unwrap();
 
-        let result = SpartanMetadata::new(row_mle, col_mle, val_mle, row_ts, col_ts);
+        let result = SparkMetadata::new(
+            row_mle,
+            col_mle,
+            val_mle,
+            row_read_ts,
+            row_final_ts,
+            col_read_ts,
+            col_final_ts
+        );
         assert!(matches!(result, Err(SparseError::ValidationError(_))));
     }
 
@@ -619,7 +716,7 @@ mod tests {
         coeffs.insert((1, 0), BabyBear::from_u32(10));
 
         let sparse_mle = SparseMLE::new(coeffs).unwrap();
-        let metadata = SpartanMetadata::preprocess(&sparse_mle).unwrap();
+        let metadata = SparkMetadata::preprocess(&sparse_mle).unwrap();
 
         assert_eq!(metadata.len(), 2);
     }
@@ -627,7 +724,7 @@ mod tests {
     #[test]
     fn test_spartan_metadata_preprocess_empty_matrix() {
         let sparse_mle = SparseMLE::empty();
-        let result = SpartanMetadata::preprocess(&sparse_mle);
+        let result = SparkMetadata::preprocess(&sparse_mle);
         assert!(matches!(result, Err(SparseError::EmptyMatrix)));
     }
 
@@ -638,7 +735,7 @@ mod tests {
         coeffs.insert((0, 1), BabyBear::from_u32(3));
 
         let sparse_mle = SparseMLE::new(coeffs).unwrap();
-        let (row_vec, col_vec, val_vec) = SpartanMetadata::extract_dense_vectors(
+        let (row_vec, col_vec, val_vec) = SparkMetadata::extract_dense_vectors(
             &sparse_mle
         ).unwrap();
 
@@ -748,8 +845,8 @@ mod tests {
         coeffs.insert((3, 2), BabyBear::from_u32(15)); // Add 4th entry to make it power of 2
 
         let sparse_mle = SparseMLE::new(coeffs).unwrap();
-        let metadata1 = SpartanMetadata::preprocess(&sparse_mle).unwrap();
-        let metadata2 = SpartanMetadata::preprocess(&sparse_mle).unwrap();
+        let metadata1 = SparkMetadata::preprocess(&sparse_mle).unwrap();
+        let metadata2 = SparkMetadata::preprocess(&sparse_mle).unwrap();
 
         // Should be deterministic
         assert_eq!(metadata1.row.coeffs(), metadata2.row.coeffs());

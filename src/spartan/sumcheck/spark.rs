@@ -1,10 +1,11 @@
 use p3_field::PrimeCharacteristicRing;
 
 use crate::{
-    Fp, Fp4,
+    Fp,
+    Fp4,
     challenger::Challenger,
     polynomial::MLE,
-    spartan::{spark::sparse::SpartanMetadata, univariate::UnivariatePoly},
+    spartan::{ spark::sparse::SparkMetadata, univariate::UnivariatePoly },
 };
 
 /// Sum-check proof for inner product constraints of the form:
@@ -32,18 +33,19 @@ impl SparkSumCheckProof {
     ///
     /// This verifies the evaluation claims from OuterSumCheck by proving the inner products.
     pub fn prove(
-        metadatas: &[SpartanMetadata; 3],
+        metadatas: &[SparkMetadata; 3],
         oracle_pairs: &[(MLE<Fp4>, MLE<Fp4>); 3],
         evaluation_claims: [Fp4; 3],
         gamma: Fp4,
-        challenger: &mut Challenger,
+        challenger: &mut Challenger
     ) -> Self {
         let rounds = metadatas[0].val().n_vars();
 
         // Batch the evaluation claims with gamma powers
-        let mut current_claim = gamma * evaluation_claims[0]
-            + gamma.square() * evaluation_claims[1]
-            + gamma.cube() * evaluation_claims[2];
+        let mut current_claim =
+            gamma * evaluation_claims[0] +
+            gamma.square() * evaluation_claims[1] +
+            gamma.cube() * evaluation_claims[2];
 
         let mut round_proofs = Vec::new();
         let mut round_challenges = Vec::new();
@@ -61,7 +63,7 @@ impl SparkSumCheckProof {
             &oracle_pairs[2].1,
             gamma,
             current_claim,
-            rounds,
+            rounds
         );
 
         round_proofs.push(round_proof.clone());
@@ -97,7 +99,7 @@ impl SparkSumCheckProof {
                 gamma,
                 current_claim,
                 round,
-                rounds,
+                rounds
             );
 
             round_proofs.push(round_proof.clone());
@@ -140,9 +142,10 @@ impl SparkSumCheckProof {
         let rounds = self.round_proofs.len();
 
         // Recompute the batched claim
-        let mut current_claim = gamma * evaluation_claims[0]
-            + gamma.square() * evaluation_claims[1]
-            + gamma.cube() * evaluation_claims[2];
+        let mut current_claim =
+            gamma * evaluation_claims[0] +
+            gamma.square() * evaluation_claims[1] +
+            gamma.cube() * evaluation_claims[2];
 
         // Verify each round of the sum-check protocol
         for round in 0..rounds {
@@ -160,17 +163,8 @@ impl SparkSumCheckProof {
         }
 
         // Final check: batched evaluation of final values must match the final claim
-        let [
-            val_a,
-            e_rx_a,
-            e_ry_a,
-            val_b,
-            e_rx_b,
-            e_ry_b,
-            val_c,
-            e_rx_c,
-            e_ry_c,
-        ] = self.final_evals;
+        let [val_a, e_rx_a, e_ry_a, val_b, e_rx_b, e_ry_b, val_c, e_rx_c, e_ry_c] =
+            self.final_evals;
 
         let final_eval_a = val_a * e_rx_a * e_ry_a;
         let final_eval_b = val_b * e_rx_b * e_ry_b;
@@ -198,7 +192,7 @@ pub fn compute_spark_round_batched(
     gamma: Fp4,
     current_claim: Fp4,
     round: usize,
-    rounds: usize,
+    rounds: usize
 ) -> UnivariatePoly {
     // Use Gruen's optimization: compute evaluations at X = 0 and 2
     let mut round_coeffs = vec![Fp4::ZERO; 3];
@@ -213,16 +207,16 @@ pub fn compute_spark_round_batched(
         round_coeffs[0] += gamma * term_a_0 + gamma_squared * term_b_0 + gamma_cubed * term_c_0;
 
         // Terms for g(2)
-        let val_a_2 = val_a[i << 1] + val_a[i << 1 | 1].double();
-        let val_b_2 = val_b[i << 1] + val_b[i << 1 | 1].double();
-        let val_c_2 = val_c[i << 1] + val_c[i << 1 | 1].double();
+        let val_a_2 = val_a[i << 1] + val_a[(i << 1) | 1].double();
+        let val_b_2 = val_b[i << 1] + val_b[(i << 1) | 1].double();
+        let val_c_2 = val_c[i << 1] + val_c[(i << 1) | 1].double();
 
-        let e_rx_a_2 = e_rx_a[i << 1] + e_rx_a[i << 1 | 1].double();
-        let e_ry_a_2 = e_ry_a[i << 1] + e_ry_a[i << 1 | 1].double();
-        let e_rx_b_2 = e_rx_b[i << 1] + e_rx_b[i << 1 | 1].double();
-        let e_ry_b_2 = e_ry_b[i << 1] + e_ry_b[i << 1 | 1].double();
-        let e_rx_c_2 = e_rx_c[i << 1] + e_rx_c[i << 1 | 1].double();
-        let e_ry_c_2 = e_ry_c[i << 1] + e_ry_c[i << 1 | 1].double();
+        let e_rx_a_2 = e_rx_a[i << 1] + e_rx_a[(i << 1) | 1].double();
+        let e_ry_a_2 = e_ry_a[i << 1] + e_ry_a[(i << 1) | 1].double();
+        let e_rx_b_2 = e_rx_b[i << 1] + e_rx_b[(i << 1) | 1].double();
+        let e_ry_b_2 = e_ry_b[i << 1] + e_ry_b[(i << 1) | 1].double();
+        let e_rx_c_2 = e_rx_c[i << 1] + e_rx_c[(i << 1) | 1].double();
+        let e_ry_c_2 = e_ry_c[i << 1] + e_ry_c[(i << 1) | 1].double();
 
         let term_a_2 = val_a_2 * e_rx_a_2 * e_ry_a_2;
         let term_b_2 = val_b_2 * e_rx_b_2 * e_ry_b_2;
@@ -253,7 +247,7 @@ pub fn compute_spark_first_round_batched(
     e_ry_c: &MLE<Fp4>,
     gamma: Fp4,
     current_claim: Fp4,
-    rounds: usize,
+    rounds: usize
 ) -> UnivariatePoly {
     // Use Gruen's optimization: compute evaluations at X = 0 and 2
     let mut round_coeffs = vec![Fp4::ZERO; 3];
@@ -268,16 +262,16 @@ pub fn compute_spark_first_round_batched(
         round_coeffs[0] += gamma * term_a_0 + gamma_squared * term_b_0 + gamma_cubed * term_c_0;
 
         // Terms for g(2)
-        let val_a_2 = Fp4::from(val_a[i << 1]) + Fp4::from(val_a[i << 1 | 1]).double();
-        let val_b_2 = Fp4::from(val_b[i << 1]) + Fp4::from(val_b[i << 1 | 1]).double();
-        let val_c_2 = Fp4::from(val_c[i << 1]) + Fp4::from(val_c[i << 1 | 1]).double();
+        let val_a_2 = Fp4::from(val_a[i << 1]) + Fp4::from(val_a[(i << 1) | 1]).double();
+        let val_b_2 = Fp4::from(val_b[i << 1]) + Fp4::from(val_b[(i << 1) | 1]).double();
+        let val_c_2 = Fp4::from(val_c[i << 1]) + Fp4::from(val_c[(i << 1) | 1]).double();
 
-        let e_rx_a_2 = e_rx_a[i << 1] + e_rx_a[i << 1 | 1].double();
-        let e_ry_a_2 = e_ry_a[i << 1] + e_ry_a[i << 1 | 1].double();
-        let e_rx_b_2 = e_rx_b[i << 1] + e_rx_b[i << 1 | 1].double();
-        let e_ry_b_2 = e_ry_b[i << 1] + e_ry_b[i << 1 | 1].double();
-        let e_rx_c_2 = e_rx_c[i << 1] + e_rx_c[i << 1 | 1].double();
-        let e_ry_c_2 = e_ry_c[i << 1] + e_ry_c[i << 1 | 1].double();
+        let e_rx_a_2 = e_rx_a[i << 1] + e_rx_a[(i << 1) | 1].double();
+        let e_ry_a_2 = e_ry_a[i << 1] + e_ry_a[(i << 1) | 1].double();
+        let e_rx_b_2 = e_rx_b[i << 1] + e_rx_b[(i << 1) | 1].double();
+        let e_ry_b_2 = e_ry_b[i << 1] + e_ry_b[(i << 1) | 1].double();
+        let e_rx_c_2 = e_rx_c[i << 1] + e_rx_c[(i << 1) | 1].double();
+        let e_ry_c_2 = e_ry_c[i << 1] + e_ry_c[(i << 1) | 1].double();
 
         let term_a_2 = val_a_2 * e_rx_a_2 * e_ry_a_2;
         let term_b_2 = val_b_2 * e_rx_b_2 * e_ry_b_2;
