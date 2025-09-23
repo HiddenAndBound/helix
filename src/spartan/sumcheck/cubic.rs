@@ -1,11 +1,7 @@
 use p3_field::PrimeCharacteristicRing;
 
 use crate::{
-    Fp,
-    Fp4,
-    challenger::Challenger,
-    eq::EqEvals,
-    polynomial::MLE,
+    Fp, Fp4, challenger::Challenger, eq::EqEvals, polynomial::MLE,
     spartan::univariate::UnivariatePoly,
 };
 
@@ -46,7 +42,7 @@ impl CubicSumCheckProof {
         right: &MLE<Fp>,
         eq_evals: &EqEvals,
         claimed_sum: Fp4,
-        challenger: &mut Challenger
+        challenger: &mut Challenger,
     ) -> Self {
         let rounds = left.n_vars();
         assert_eq!(
@@ -54,7 +50,11 @@ impl CubicSumCheckProof {
             rounds,
             "Left and right MLEs must have same number of variables"
         );
-        assert_eq!(eq_evals.n_vars(), rounds, "Equality polynomial must match MLE dimensions");
+        assert_eq!(
+            eq_evals.n_vars(),
+            rounds,
+            "Equality polynomial must match MLE dimensions"
+        );
 
         // Get random evaluation point from challenger (Fiat-Shamir)
         let eq_point = challenger.get_challenges(rounds);
@@ -64,14 +64,8 @@ impl CubicSumCheckProof {
         let mut round_challenges = Vec::new();
 
         // Handle first round separately (uses base field Fp for efficiency)
-        let round_proof = compute_cubic_first_round(
-            left,
-            right,
-            eq_evals,
-            &eq_point,
-            current_claim,
-            rounds
-        );
+        let round_proof =
+            compute_cubic_first_round(left, right, eq_evals, &eq_point, current_claim, rounds);
 
         // Process first round proof
         round_proofs.push(round_proof.clone());
@@ -96,7 +90,7 @@ impl CubicSumCheckProof {
                 &eq_point,
                 current_claim,
                 round,
-                rounds
+                rounds,
             );
 
             challenger.observe_fp4_elems(&round_proof.coefficients());
@@ -131,8 +125,8 @@ impl CubicSumCheckProof {
             let eq_point = challenger.get_challenge();
             assert_eq!(
                 current_claim,
-                (Fp4::ONE - eq_point) * round_poly.evaluate(Fp4::ZERO) +
-                    eq_point * round_poly.evaluate(Fp4::ONE)
+                (Fp4::ONE - eq_point) * round_poly.evaluate(Fp4::ZERO)
+                    + eq_point * round_poly.evaluate(Fp4::ONE)
             );
 
             challenger.observe_fp4_elems(&round_poly.coefficients());
@@ -171,7 +165,7 @@ impl BatchedCubicSumCheckProof {
     pub fn new(
         round_proofs: Vec<UnivariatePoly>,
         final_evals: Vec<(Fp4, Fp4)>,
-        num_claims: usize
+        num_claims: usize,
     ) -> Self {
         assert_eq!(
             final_evals.len(),
@@ -200,7 +194,7 @@ impl BatchedCubicSumCheckProof {
         left_polys: &[MLE<Fp4>],
         right_polys: &[MLE<Fp4>],
         claimed_sums: &[Fp4],
-        challenger: &mut Challenger
+        challenger: &mut Challenger,
     ) -> Self {
         let num_claims = left_polys.len();
         debug_assert_eq!(
@@ -208,7 +202,11 @@ impl BatchedCubicSumCheckProof {
             num_claims,
             "Number of left and right polynomials must match"
         );
-        debug_assert_eq!(claimed_sums.len(), num_claims, "Number of claimed sums must match");
+        debug_assert_eq!(
+            claimed_sums.len(),
+            num_claims,
+            "Number of claimed sums must match"
+        );
         let rounds = left_polys[0].n_vars();
 
         // Error case: polynomials must have at least 1 variable for sum-check
@@ -259,7 +257,7 @@ impl BatchedCubicSumCheckProof {
             gamma,
             num_claims,
             0,
-            rounds
+            rounds,
         );
 
         // Process first round proof
@@ -292,7 +290,7 @@ impl BatchedCubicSumCheckProof {
                 gamma,
                 num_claims,
                 round,
-                rounds
+                rounds,
             );
 
             challenger.observe_fp4_elems(&round_proof.coefficients());
@@ -361,9 +359,8 @@ impl BatchedCubicSumCheckProof {
 
             // Check sum-check relation: current_claim = (1-r_i) * g_i(0) + r_i * g_i(1)
 
-            let expected_claim =
-                (Fp4::ONE - eq_point[round]) * round_poly.evaluate(Fp4::ZERO) +
-                eq_point[round] * round_poly.evaluate(Fp4::ONE);
+            let expected_claim = (Fp4::ONE - eq_point[round]) * round_poly.evaluate(Fp4::ZERO)
+                + eq_point[round] * round_poly.evaluate(Fp4::ONE);
             if current_claim != expected_claim {
                 bail!(
                     "Sum-check verification failed in round {}: current claim {:?} != expected claim {:?}",
@@ -406,7 +403,7 @@ pub fn compute_cubic_round(
     eq_point: &Vec<Fp4>,
     current_claim: Fp4,
     round: usize,
-    rounds: usize
+    rounds: usize,
 ) -> UnivariatePoly {
     // Use Gruen's optimization: compute evaluations at X = 0, 1, 2
     let mut round_coeffs = vec![Fp4::ZERO; 3];
@@ -439,7 +436,7 @@ pub fn compute_cubic_first_round(
     eq: &EqEvals,
     eq_point: &Vec<Fp4>,
     current_claim: Fp4,
-    rounds: usize
+    rounds: usize,
 ) -> UnivariatePoly {
     // Use Gruen's optimization: compute evaluations at X = 0, 1, 2
     let mut round_coeffs = vec![Fp4::ZERO; 3];
@@ -476,7 +473,7 @@ pub fn compute_batched_cubic_round(
     gamma: Fp4,
     num_claims: usize,
     round: usize,
-    rounds: usize
+    rounds: usize,
 ) -> UnivariatePoly {
     // Use Gruen's optimization: compute evaluations at X = 0, 1, 2
     let mut round_coeffs = vec![vec![Fp4::ZERO; 3]; num_claims];

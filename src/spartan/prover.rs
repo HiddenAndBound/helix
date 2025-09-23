@@ -4,13 +4,13 @@
 //! Uses sum-check protocols for efficient proving with logarithmic verification time.
 
 use crate::{
+    Fp4,
     challenger::Challenger,
     spartan::{
-        spark::{ commit::SparkCommitment, sparse::SparkMetadata },
-        sumcheck::{ InnerSumCheckProof, OuterSumCheckProof },
         R1CSInstance,
+        spark::{commit::SparkCommitment, sparse::SparkMetadata},
+        sumcheck::{InnerSumCheckProof, OuterSumCheckProof},
     },
-    Fp4,
 };
 
 /// Spartan zkSNARK proof for an R1CS instance.
@@ -25,7 +25,7 @@ impl SpartanProof {
     /// Creates a new Spartan proof from an outer sum-check proof.
     pub fn new(
         outer_sumcheck_proof: OuterSumCheckProof,
-        inner_sumcheck_proof: InnerSumCheckProof
+        inner_sumcheck_proof: InnerSumCheckProof,
     ) -> Self {
         Self {
             outer_sumcheck_proof,
@@ -64,8 +64,7 @@ impl SpartanProof {
             z,
             outer_sum_check.final_evals,
             gamma,
-
-            challenger
+            challenger,
         );
 
         SpartanProof::new(outer_sum_check, inner_sum_check)
@@ -80,7 +79,8 @@ impl SpartanProof {
         // This ensures evaluation claims from outer sumcheck are correct
         challenger.observe_fp4_elems(&self.outer_sumcheck_proof.final_evals);
         let gamma = challenger.get_challenge();
-        self.inner_sumcheck_proof.verify(outer_claims, gamma, challenger);
+        self.inner_sumcheck_proof
+            .verify(outer_claims, gamma, challenger);
 
         // Note: In a complete Spartan implementation, additional steps would include:
         // - Polynomial commitment opening verifications (SparkSumCheck)
@@ -93,20 +93,20 @@ impl SpartanProof {
 mod tests {
     use std::collections::HashMap;
 
-    use anyhow::bail;
-    use itertools::multizip;
-    use rand::{ rngs::StdRng, Rng, SeedableRng };
     use crate::{
         challenger::Challenger,
         polynomial::MLE,
         spartan::{
             prover::SpartanProof,
-            r1cs::{ R1CS, R1CSInstance, Witness },
+            r1cs::{R1CS, R1CSInstance, Witness},
             spark::sparse::SparseMLE,
         },
         *,
     };
-    use p3_field::{ Field, PrimeCharacteristicRing };
+    use anyhow::bail;
+    use itertools::multizip;
+    use p3_field::{Field, PrimeCharacteristicRing};
+    use rand::{Rng, SeedableRng, rngs::StdRng};
     #[test]
     fn spartan_test() -> anyhow::Result<()> {
         // This is also the number of nonlinear constraints.

@@ -1,6 +1,6 @@
-use blake3::{ self, Hasher };
+use blake3::{self, Hasher};
 use p3_baby_bear::BabyBear;
-use p3_field::{ BasedVectorSpace, PackedValue, PrimeCharacteristicRing, RawDataSerializable };
+use p3_field::{BasedVectorSpace, PackedValue, PrimeCharacteristicRing, RawDataSerializable};
 
 use crate::Fp4;
 pub struct Challenger {
@@ -50,9 +50,7 @@ impl Challenger {
     }
 
     pub fn get_challenge(&mut self) -> crate::utils::Fp4 {
-        let challenge_bytes: [u8; 16] = self.state
-            .finalize()
-            .as_bytes()[0..16]
+        let challenge_bytes: [u8; 16] = self.state.finalize().as_bytes()[0..16]
             .try_into()
             .expect("Hash output is 32 bytes, should be able to get array of size 16");
 
@@ -71,9 +69,8 @@ impl Challenger {
         // Create Fp4 from the coefficients using the extension field constructor
         // Fp4 is BinomialExtensionField<BabyBear, 4>
         // Use the array constructor for BinomialExtensionField
-        let challenge_fp4 = Fp4::from_basis_coefficients_slice(&coeffs).expect(
-            "Should be of the expected length"
-        );
+        let challenge_fp4 =
+            Fp4::from_basis_coefficients_slice(&coeffs).expect("Should be of the expected length");
 
         // Observe the challenge for the next round
         self.state.update(&self.round.to_le_bytes());
@@ -90,9 +87,7 @@ impl Challenger {
     }
 
     pub fn get_index(&mut self, n: u32) -> usize {
-        let challenge_bytes: [u8; 8] = self.state
-            .finalize()
-            .as_bytes()[0..8]
+        let challenge_bytes: [u8; 8] = self.state.finalize().as_bytes()[0..8]
             .try_into()
             .expect("Hash output is 32 bytes, should be able to get array of size 8");
 

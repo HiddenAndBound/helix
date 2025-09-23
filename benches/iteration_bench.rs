@@ -1,4 +1,4 @@
-use criterion::{ Criterion, criterion_group, criterion_main, BenchmarkId };
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use helix::Fp;
 use p3_field::PrimeCharacteristicRing;
 
@@ -16,7 +16,7 @@ fn benchmark_step_by(data: &[Fp], eq_data: &[Fp], iterations: usize) -> Fp {
     data.iter()
         .step_by(2)
         .zip(eq_data.iter())
-        .map(|(&d, &e)| { d * e })
+        .map(|(&d, &e)| d * e)
         .sum()
 }
 
@@ -24,13 +24,15 @@ fn benchmark_chunks_exact(data: &[Fp], eq_data: &[Fp], iterations: usize) -> Fp 
     let mut result = Fp::ZERO;
     data.chunks(2)
         .zip(eq_data.iter())
-        .map(|(d, &e)| { d[0] * e })
+        .map(|(d, &e)| d[0] * e)
         .sum()
 }
 
 fn create_test_data(size: usize) -> (Vec<Fp>, Vec<Fp>) {
     let poly_data: Vec<Fp> = (0..size).map(|i| Fp::from_u32((i as u32) + 1)).collect();
-    let eq_data: Vec<Fp> = (0..size / 2).map(|i| Fp::from_u32((i * 3 + 7) as u32)).collect();
+    let eq_data: Vec<Fp> = (0..size / 2)
+        .map(|i| Fp::from_u32((i * 3 + 7) as u32))
+        .collect();
     (poly_data, eq_data)
 }
 
@@ -38,7 +40,7 @@ fn bench_iteration_methods(c: &mut Criterion) {
     let sizes = vec![
         (1 << 20, "1M"), // ~1 million elements
         (1 << 21, "2M"), // ~2 million elements
-        (1 << 22, "4M") // ~4 million elements
+        (1 << 22, "4M"), // ~4 million elements
     ];
 
     for (size, size_name) in sizes {
@@ -50,23 +52,19 @@ fn bench_iteration_methods(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("direct_indexing", size_name),
             &(&poly_data, &eq_data, iterations),
-            |b, (poly, eq, iter_count)| {
-                b.iter(|| { benchmark_direct_indexing(poly, eq, *iter_count) })
-            }
+            |b, (poly, eq, iter_count)| b.iter(|| benchmark_direct_indexing(poly, eq, *iter_count)),
         );
 
         group.bench_with_input(
             BenchmarkId::new("step_by", size_name),
             &(&poly_data, &eq_data, iterations),
-            |b, (poly, eq, iter_count)| { b.iter(|| { benchmark_step_by(poly, eq, *iter_count) }) }
+            |b, (poly, eq, iter_count)| b.iter(|| benchmark_step_by(poly, eq, *iter_count)),
         );
 
         group.bench_with_input(
             BenchmarkId::new("chunks_exact", size_name),
             &(&poly_data, &eq_data, iterations),
-            |b, (poly, eq, iter_count)| {
-                b.iter(|| { benchmark_chunks_exact(poly, eq, *iter_count) })
-            }
+            |b, (poly, eq, iter_count)| b.iter(|| benchmark_chunks_exact(poly, eq, *iter_count)),
         );
 
         group.finish();

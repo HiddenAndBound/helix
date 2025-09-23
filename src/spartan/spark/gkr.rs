@@ -22,7 +22,7 @@ impl GKRProof {
     pub fn new(
         layer_proofs: Vec<LayerProof>,
         final_products: Vec<Fp4>,
-        layer_claims: Vec<Vec<(Fp4, Fp4)>>
+        layer_claims: Vec<Vec<(Fp4, Fp4)>>,
     ) -> Self {
         Self {
             layer_proofs,
@@ -74,19 +74,16 @@ impl GKRProof {
                 &left_mles,
                 &right_mles,
                 &current_claims,
-                challenger
+                challenger,
             );
 
             // Get random challenge for next layer
             layer_claims.push(layer_proof.final_evals.clone());
             layer_proofs.push(layer_proof);
         }
-        
+
         // Final products are the root values
-        let final_products: Vec<Fp4> = circuits
-            .iter()
-            .map(|tree| tree.root_value())
-            .collect();
+        let final_products: Vec<Fp4> = circuits.iter().map(|tree| tree.root_value()).collect();
 
         Self::new(layer_proofs, final_products, layer_claims)
     }
@@ -95,7 +92,7 @@ impl GKRProof {
     pub fn verify(
         &self,
         expected_products: &[Fp4],
-        challenger: &mut Challenger
+        challenger: &mut Challenger,
     ) -> anyhow::Result<()> {
         if self.final_products.len() != expected_products.len() {
             bail!("Expected product length is not equal to final products length.");
@@ -127,7 +124,8 @@ impl GKRProof {
             random_point.push(r);
 
             // Compute next layer claims from final evaluations
-            current_claims = layer_proof.final_evals
+            current_claims = layer_proof
+                .final_evals
                 .iter()
                 .map(|&(left_eval, right_eval)| (Fp4::ONE - r) * left_eval + r * right_eval)
                 .collect();
@@ -140,13 +138,13 @@ impl GKRProof {
 #[cfg(test)]
 mod tests {
     use p3_field::PrimeCharacteristicRing;
-    use rand::{ rngs::StdRng, thread_rng, Rng, SeedableRng };
+    use rand::{Rng, SeedableRng, rngs::StdRng, thread_rng};
 
     use crate::{
         Fp4,
-        challenger::{ self, Challenger },
+        challenger::{self, Challenger},
         polynomial::MLE,
-        spartan::spark::{ gkr::GKRProof, gpa::ProductTree },
+        spartan::spark::{gkr::GKRProof, gpa::ProductTree},
     };
 
     #[test]

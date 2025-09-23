@@ -22,11 +22,12 @@ impl SparkProof {
         let [metadata_a, metadata_b, metadata_c] = &metadata;
         let (eq_rx, eq_ry) = (EqEvals::gen_from_point(rx), EqEvals::gen_from_point(ry));
         let oracles = generate_oracle_pair(metadata_a, metadata_b, metadata_c, &eq_rx, &eq_ry)?;
-        //Generate and commit to lookup_vals for A,B and C
-        
-        //SparkSumCheck
 
-        //Memory check for lookup vals
+        //Spark sum check
+
+        //Offline memory check to prove correctness of oracles
+
+        //Opening all the commitments.
         todo!()
     }
 }

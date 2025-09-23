@@ -6,16 +6,15 @@
 use itertools::multizip;
 use p3_field::PrimeCharacteristicRing;
 
-use crate::pcs::utils::{ fold_pair, hash_field_pair };
+use crate::pcs::utils::{fold_pair, hash_field_pair};
 use crate::{
-    Fp,
-    Fp4,
+    Fp, Fp4,
     challenger::Challenger,
-    merkle_tree::{ MerklePath, MerkleTree },
+    merkle_tree::{MerklePath, MerkleTree},
     spartan::univariate::UnivariatePoly,
 };
 
-use super::{ Basefold, BaseFoldConfig, BasefoldCommitment, EvalProof };
+use super::{BaseFoldConfig, Basefold, BasefoldCommitment, EvalProof};
 
 impl Basefold {
     /// Verifies an evaluation proof, checking that a committed polynomial evaluates to the claimed value.
@@ -85,7 +84,7 @@ impl Basefold {
         commitment: BasefoldCommitment,
         roots: &[Vec<Fp>],
         challenger: &mut Challenger,
-        config: &BaseFoldConfig
+        config: &BaseFoldConfig,
     ) -> anyhow::Result<()> {
         // TODO: Observe statement (eval, eval_point, commitment)
         let mut current_claim = evaluation;
@@ -127,7 +126,7 @@ impl Basefold {
                 &folded_codewords,
                 &codewords,
                 query_range,
-                round
+                round,
             )?;
 
             verify_paths(codewords, paths, &queries, oracle_commitment)?;
@@ -137,7 +136,7 @@ impl Basefold {
                 codewords,
                 &queries,
                 random_point[round],
-                &roots[round]
+                &roots[round],
             );
 
             query_range = halfsize;
@@ -163,7 +162,7 @@ pub fn fold_codewords(
     codewords: &[(Fp4, Fp4)],
     queries: &[usize],
     r: Fp4,
-    roots: &[Fp]
+    roots: &[Fp],
 ) {
     for (query, fold, &codeword_pair) in multizip((queries, folded_codewords, codewords)) {
         *fold = fold_pair(codeword_pair, r, roots[*query]);
@@ -178,7 +177,7 @@ pub fn verify_paths(
     codewords: &[(Fp4, Fp4)],
     paths: &[MerklePath],
     queries: &[usize],
-    oracle_commitment: [u8; 32]
+    oracle_commitment: [u8; 32],
 ) -> anyhow::Result<()> {
     for (query, path, &codeword_pair) in multizip((queries, paths, codewords)) {
         let (left, right) = codeword_pair;
@@ -197,15 +196,13 @@ pub fn check_query_consistency(
     folded_codewords: &[Fp4],
     codewords: &[(Fp4, Fp4)],
     query_range: usize,
-    round: usize
+    round: usize,
 ) -> anyhow::Result<()> {
     // Skip consistency check for first round (no previous folded codewords exist)
     if round > 0 {
-        for (query, &folded_codeword, &codeword_pair) in multizip((
-            queries,
-            folded_codewords,
-            codewords,
-        )) {
+        for (query, &folded_codeword, &codeword_pair) in
+            multizip((queries, folded_codewords, codewords))
+        {
             let (left, right) = codeword_pair;
             check_fold(folded_codeword, *query, query_range, left, right)?;
             update_query(query, query_range);
@@ -244,11 +241,10 @@ pub fn verify_sum_check_round(
     round_poly: &UnivariatePoly,
     current_claim: &mut Fp4,
     eval_point: &[Fp4],
-    round: usize
+    round: usize,
 ) -> anyhow::Result<()> {
-    let expected =
-        (Fp4::ONE - eval_point[round]) * round_poly.evaluate(Fp4::ZERO) +
-        eval_point[round] * round_poly.evaluate(Fp4::ONE);
+    let expected = (Fp4::ONE - eval_point[round]) * round_poly.evaluate(Fp4::ZERO)
+        + eval_point[round] * round_poly.evaluate(Fp4::ONE);
 
     if *current_claim != expected {
         anyhow::bail!(
@@ -306,7 +302,7 @@ pub fn check_fold(
     query: usize,
     halfsize: usize,
     left: Fp4,
-    right: Fp4
+    right: Fp4,
 ) -> anyhow::Result<()> {
     debug_assert!(halfsize.is_power_of_two(), "halfsize must be a power of 2");
 
