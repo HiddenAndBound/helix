@@ -1,11 +1,15 @@
-use crate::spartan::error::{SparseError, SparseResult};
-use crate::spartan::r1cs::{R1CS, Witness};
+use crate::spartan::error::{ SparseError, SparseResult };
+use crate::spartan::r1cs::{ R1CS, R1CSInstance, Witness };
 use crate::spartan::spark::sparse::SparseMLE;
 use p3_baby_bear::{
-    BABYBEAR_RC16_EXTERNAL_FINAL, BABYBEAR_RC16_EXTERNAL_INITIAL, BABYBEAR_RC16_INTERNAL, BabyBear,
-    Poseidon2BabyBear, default_babybear_poseidon2_16,
+    BABYBEAR_RC16_EXTERNAL_FINAL,
+    BABYBEAR_RC16_EXTERNAL_INITIAL,
+    BABYBEAR_RC16_INTERNAL,
+    BabyBear,
+    Poseidon2BabyBear,
+    default_babybear_poseidon2_16,
 };
-use p3_field::{Field, PrimeCharacteristicRing};
+use p3_field::{ Field, PrimeCharacteristicRing };
 use p3_symmetric::Permutation;
 use std::collections::HashMap;
 
@@ -47,6 +51,13 @@ pub struct Poseidon2Instance {
     pub witness: Poseidon2Witness,
 }
 
+impl Poseidon2Instance {
+    /// Converts the Poseidon2 instance into a generic Spartan R1CS instance.
+    pub fn to_r1cs_instance(&self) -> SparseResult<R1CSInstance> {
+        R1CSInstance::new(self.r1cs.clone(), self.witness.witness.clone())
+    }
+}
+
 /// Construct the Poseidon2 R1CS instance together with a satisfying witness.
 ///
 /// The returned instance wires a single Poseidon2 permutation with width 16, modelling the
@@ -60,12 +71,12 @@ pub struct Poseidon2Instance {
 pub fn build_poseidon2_instance(
     rate: &[BabyBear],
     capacity: Option<&[BabyBear; WIDTH - RATE]>,
-    poseidon: &Poseidon2BabyBear<WIDTH>,
+    poseidon: &Poseidon2BabyBear<WIDTH>
 ) -> SparseResult<Poseidon2Instance> {
     if rate.len() > RATE {
-        return Err(SparseError::ValidationError(
-            "rate must contain at most two elements".to_string(),
-        ));
+        return Err(
+            SparseError::ValidationError("rate must contain at most two elements".to_string())
+        );
     }
 
     let mut initial_state = [BabyBear::ZERO; WIDTH];
@@ -83,70 +94,86 @@ pub fn build_poseidon2_instance(
     builder.enforce_constant_one(one_index);
 
     // Initial external linear layer applied before the first external round block.
-    let (next_indices, next_values) =
-        external_linear_layer(&mut builder, &state_indices, &state_values, one_index);
+    let (next_indices, next_values) = external_linear_layer(
+        &mut builder,
+        &state_indices,
+        &state_values,
+        one_index
+    );
     state_indices = next_indices;
     state_values = next_values;
 
     for round in 0..EXTERNAL_ROUNDS {
-        let constants = BABYBEAR_RC16_EXTERNAL_INITIAL
-            .get(round)
-            .expect("missing initial round constant");
+        let constants = BABYBEAR_RC16_EXTERNAL_INITIAL.get(round).expect(
+            "missing initial round constant"
+        );
         let (indices_after_const, values_after_const) = add_round_constants(
             &mut builder,
             &state_indices,
             &state_values,
             constants,
-            one_index,
+            one_index
         );
-        let (indices_after_sbox, values_after_sbox) =
-            full_sbox_layer(&mut builder, &indices_after_const, &values_after_const);
+        let (indices_after_sbox, values_after_sbox) = full_sbox_layer(
+            &mut builder,
+            &indices_after_const,
+            &values_after_const
+        );
         let (indices_after_linear, values_after_linear) = external_linear_layer(
             &mut builder,
             &indices_after_sbox,
             &values_after_sbox,
-            one_index,
+            one_index
         );
         state_indices = indices_after_linear;
         state_values = values_after_linear;
     }
 
     for round in 0..INTERNAL_ROUNDS {
-        let rc = BABYBEAR_RC16_INTERNAL
-            .get(round)
-            .expect("missing internal round constant");
-        let (indices_after_const, values_after_const) =
-            add_internal_constant(&mut builder, &state_indices, &state_values, *rc, one_index);
-        let (indices_after_sbox, values_after_sbox) =
-            single_sbox_layer(&mut builder, &indices_after_const, &values_after_const);
+        let rc = BABYBEAR_RC16_INTERNAL.get(round).expect("missing internal round constant");
+        let (indices_after_const, values_after_const) = add_internal_constant(
+            &mut builder,
+            &state_indices,
+            &state_values,
+            *rc,
+            one_index
+        );
+        let (indices_after_sbox, values_after_sbox) = single_sbox_layer(
+            &mut builder,
+            &indices_after_const,
+            &values_after_const
+        );
         let (indices_after_linear, values_after_linear) = internal_linear_layer(
             &mut builder,
             &indices_after_sbox,
             &values_after_sbox,
-            one_index,
+            one_index
         );
         state_indices = indices_after_linear;
         state_values = values_after_linear;
     }
 
     for round in 0..EXTERNAL_ROUNDS {
-        let constants = BABYBEAR_RC16_EXTERNAL_FINAL
-            .get(round)
-            .expect("missing terminal round constant");
+        let constants = BABYBEAR_RC16_EXTERNAL_FINAL.get(round).expect(
+            "missing terminal round constant"
+        );
         let (indices_after_const, values_after_const) = add_round_constants(
             &mut builder,
             &state_indices,
             &state_values,
             constants,
-            one_index,
+            one_index
         );
-        let (indices_after_sbox, values_after_sbox) =
-            full_sbox_layer(&mut builder, &indices_after_const, &values_after_const);
+        let (indices_after_sbox, values_after_sbox) = full_sbox_layer(
+            &mut builder,
+            &indices_after_const,
+            &values_after_const
+        );
         let (indices_after_linear, values_after_linear) = external_linear_layer(
             &mut builder,
             &indices_after_sbox,
             &values_after_sbox,
-            one_index,
+            one_index
         );
         state_indices = indices_after_linear;
         state_values = values_after_linear;
@@ -156,9 +183,11 @@ pub fn build_poseidon2_instance(
     let mut expected_state = initial_state;
     poseidon.permute_mut(&mut expected_state);
     if expected_state != state_values {
-        return Err(SparseError::ValidationError(
-            "Poseidon2 wiring mismatch compared to reference permutation".to_string(),
-        ));
+        return Err(
+            SparseError::ValidationError(
+                "Poseidon2 wiring mismatch compared to reference permutation".to_string()
+            )
+        );
     }
 
     let final_state_positions = state_indices;
@@ -200,7 +229,7 @@ pub fn build_poseidon2_instance(
 /// Helper for consumers that do not need to pass an explicit Poseidon2 reference implementation.
 pub fn build_default_poseidon2_instance(
     rate: &[BabyBear],
-    capacity: Option<&[BabyBear; WIDTH - RATE]>,
+    capacity: Option<&[BabyBear; WIDTH - RATE]>
 ) -> SparseResult<Poseidon2Instance> {
     let poseidon = default_babybear_poseidon2_16();
     build_poseidon2_instance(rate, capacity, &poseidon)
@@ -251,7 +280,7 @@ impl ConstraintBuilder {
         &mut self,
         terms: &[(usize, BabyBear)],
         constant: BabyBear,
-        one_index: usize,
+        one_index: usize
     ) {
         let row = self.next_row;
         self.next_row += 1;
@@ -270,7 +299,7 @@ impl ConstraintBuilder {
         matrix: &mut HashMap<(usize, usize), BabyBear>,
         row: usize,
         col: usize,
-        coeff: BabyBear,
+        coeff: BabyBear
     ) {
         matrix
             .entry((row, col))
@@ -286,7 +315,7 @@ fn add_round_constants(
     state_indices: &[usize; WIDTH],
     state_values: &[BabyBear; WIDTH],
     constants: &[BabyBear; WIDTH],
-    one_index: usize,
+    one_index: usize
 ) -> ([usize; WIDTH], [BabyBear; WIDTH]) {
     let mut next_indices = *state_indices;
     let mut next_values = *state_values;
@@ -311,14 +340,17 @@ fn add_internal_constant(
     state_indices: &[usize; WIDTH],
     state_values: &[BabyBear; WIDTH],
     constant: BabyBear,
-    one_index: usize,
+    one_index: usize
 ) -> ([usize; WIDTH], [BabyBear; WIDTH]) {
     let mut next_indices = *state_indices;
     let mut next_values = *state_values;
 
     let updated = state_values[0] + constant;
     let idx = builder.alloc(updated);
-    let terms = [(idx, BabyBear::NEG_ONE), (state_indices[0], BabyBear::ONE)];
+    let terms = [
+        (idx, BabyBear::NEG_ONE),
+        (state_indices[0], BabyBear::ONE),
+    ];
     builder.enforce_linear_relation(&terms, constant, one_index);
     next_indices[0] = idx;
     next_values[0] = updated;
@@ -329,7 +361,7 @@ fn add_internal_constant(
 fn full_sbox_layer(
     builder: &mut ConstraintBuilder,
     state_indices: &[usize; WIDTH],
-    state_values: &[BabyBear; WIDTH],
+    state_values: &[BabyBear; WIDTH]
 ) -> ([usize; WIDTH], [BabyBear; WIDTH]) {
     let mut next_indices = *state_indices;
     let mut next_values = *state_values;
@@ -346,7 +378,7 @@ fn full_sbox_layer(
 fn single_sbox_layer(
     builder: &mut ConstraintBuilder,
     state_indices: &[usize; WIDTH],
-    state_values: &[BabyBear; WIDTH],
+    state_values: &[BabyBear; WIDTH]
 ) -> ([usize; WIDTH], [BabyBear; WIDTH]) {
     let mut next_indices = *state_indices;
     let mut next_values = *state_values;
@@ -359,7 +391,7 @@ fn single_sbox_layer(
 fn apply_sbox(
     builder: &mut ConstraintBuilder,
     input_idx: usize,
-    input_value: BabyBear,
+    input_value: BabyBear
 ) -> (usize, BabyBear) {
     let x2 = input_value * input_value;
     let x2_idx = builder.alloc(x2);
@@ -384,7 +416,7 @@ fn external_linear_layer(
     builder: &mut ConstraintBuilder,
     state_indices: &[usize; WIDTH],
     state_values: &[BabyBear; WIDTH],
-    one_index: usize,
+    one_index: usize
 ) -> ([usize; WIDTH], [BabyBear; WIDTH]) {
     let mat = external_mds_matrix();
 
@@ -459,7 +491,7 @@ fn internal_linear_layer(
     builder: &mut ConstraintBuilder,
     state_indices: &[usize; WIDTH],
     state_values: &[BabyBear; WIDTH],
-    one_index: usize,
+    one_index: usize
 ) -> ([usize; WIDTH], [BabyBear; WIDTH]) {
     let diag = internal_diag();
     let mut next_indices = *state_indices;
@@ -523,20 +555,20 @@ fn internal_diag() -> [BabyBear; WIDTH] {
 
     [
         neg_one * two, // -2
-        one,           // 1
-        two,           // 2
-        half,          // 1/2
-        three,         // 3
-        four,          // 4
-        -half,         // -1/2
-        -three,        // -3
-        -four,         // -4
-        inv_2_pow_8,   // 1/2^8
-        quarter,       // 1/4
-        eighth,        // 1/8
-        inv_2_pow_27,  // 1/2^27
-        -inv_2_pow_8,  // -1/2^8
-        -sixteenth,    // -1/16
+        one, // 1
+        two, // 2
+        half, // 1/2
+        three, // 3
+        four, // 4
+        -half, // -1/2
+        -three, // -3
+        -four, // -4
+        inv_2_pow_8, // 1/2^8
+        quarter, // 1/4
+        eighth, // 1/8
+        inv_2_pow_27, // 1/2^27
+        -inv_2_pow_8, // -1/2^8
+        -sixteenth, // -1/16
         -inv_2_pow_27, // -1/2^27
     ]
 }
@@ -552,8 +584,9 @@ mod tests {
         let poseidon = default_babybear_poseidon2_16();
         let rate = [BabyBear::ONE, BabyBear::TWO];
         let capacity = [BabyBear::ZERO; WIDTH - RATE];
-        let instance = build_poseidon2_instance(&rate, Some(&capacity), &poseidon)
-            .expect("poseidon2 instance construction should succeed");
+        let instance = build_poseidon2_instance(&rate, Some(&capacity), &poseidon).expect(
+            "poseidon2 instance construction should succeed"
+        );
 
         let mut expected = [BabyBear::ZERO; WIDTH];
         expected[..RATE].copy_from_slice(&rate);
@@ -564,8 +597,7 @@ mod tests {
         assert_eq!(expected_perm[..], instance.witness.final_state[..]);
         assert_eq!(&expected_perm[..RATE], &instance.witness.digest);
 
-        let verified = instance
-            .r1cs
+        let verified = instance.r1cs
             .verify(&instance.witness.witness.to_mle())
             .expect("verification should succeed");
         assert!(verified);
@@ -573,7 +605,7 @@ mod tests {
 
     #[test]
     fn poseidon2_random_input_is_consistent() {
-        use rand::{Rng, SeedableRng};
+        use rand::{ Rng, SeedableRng };
 
         let poseidon = default_babybear_poseidon2_16();
         let mut rng = rand::rngs::StdRng::seed_from_u64(0xdeadbeef);
@@ -586,10 +618,10 @@ mod tests {
             *lane = BabyBear::from_int(rng.r#gen::<u32>());
         }
 
-        let instance = build_poseidon2_instance(&rate, Some(&capacity), &poseidon)
-            .expect("poseidon2 instance construction should succeed");
-        let verified = instance
-            .r1cs
+        let instance = build_poseidon2_instance(&rate, Some(&capacity), &poseidon).expect(
+            "poseidon2 instance construction should succeed"
+        );
+        let verified = instance.r1cs
             .verify(&instance.witness.witness.to_mle())
             .expect("verification should succeed");
         assert!(verified);

@@ -7,14 +7,11 @@
 //! - Sparse MLE representation: O(nnz) storage vs O(n²) dense
 //! - Metadata preprocessing for sum-check protocols
 //! - Twist & Shout memory checking timestamps
-use crate::pcs::{BaseFoldConfig, Basefold};
-use crate::spartan::{
-    error::{SparseError, SparseResult},
-    spark::commit::{SparkCommitment, SparkProverData},
-};
-use crate::utils::{Fp, Fp4, eq::EqEvals, polynomial::MLE};
+use crate::pcs::{ BaseFoldConfig, Basefold };
+use crate::spartan::{ error::{ SparseError, SparseResult } };
+use crate::utils::{ Fp, Fp4, eq::EqEvals, polynomial::MLE };
 use p3_baby_bear::BabyBear;
-use p3_field::{PrimeCharacteristicRing, PrimeField32};
+use p3_field::{ PrimeCharacteristicRing, PrimeField32 };
 use std::collections::HashMap;
 
 /// Sparse multilinear extension (MLE) polynomial for Spartan.
@@ -71,10 +68,7 @@ impl SparseMLE {
             .max()
             .expect("Should be non-zero");
 
-        (
-            (max_row + 1).next_power_of_two(),
-            (max_col + 1).next_power_of_two(),
-        )
+        ((max_row + 1).next_power_of_two(), (max_col + 1).next_power_of_two())
     }
 
     /// Returns the number of non-zero entries.
@@ -89,10 +83,7 @@ impl SparseMLE {
 
     /// Gets the coefficient at (row, col), returns zero if not present.
     pub fn get(&self, row: usize, col: usize) -> BabyBear {
-        self.coeffs
-            .get(&(row, col))
-            .copied()
-            .unwrap_or(BabyBear::ZERO)
+        self.coeffs.get(&(row, col)).copied().unwrap_or(BabyBear::ZERO)
     }
 
     /// Returns an iterator over non-zero entries as ((row, col), value) tuples.
@@ -179,23 +170,31 @@ impl SparseMLE {
 
         // Validate that eq_evals has the correct number of variables for row binding
         if eq_evals.n_vars() != row_vars {
-            return Err(SparseError::ValidationError(format!(
-                "EqEvals has {} variables but expected {} for {} rows",
-                eq_evals.n_vars(),
-                row_vars,
-                rows
-            )));
+            return Err(
+                SparseError::ValidationError(
+                    format!(
+                        "EqEvals has {} variables but expected {} for {} rows",
+                        eq_evals.n_vars(),
+                        row_vars,
+                        rows
+                    )
+                )
+            );
         }
 
         // The eq_evals should have 2^row_vars coefficients
         let expected_eq_coeffs = 1 << row_vars;
         if eq_evals.coeffs().len() != expected_eq_coeffs {
-            return Err(SparseError::ValidationError(format!(
-                "EqEvals has {} coefficients but expected {} for {} row variables",
-                eq_evals.coeffs().len(),
-                expected_eq_coeffs,
-                row_vars
-            )));
+            return Err(
+                SparseError::ValidationError(
+                    format!(
+                        "EqEvals has {} coefficients but expected {} for {} row variables",
+                        eq_evals.coeffs().len(),
+                        expected_eq_coeffs,
+                        row_vars
+                    )
+                )
+            );
         }
 
         // Initialize result vector with zeros - this will be our column dimension
@@ -245,16 +244,20 @@ impl SparkMetadata {
         row_read_ts: MLE<Fp>,
         row_final_ts: MLE<Fp>,
         col_read_ts: MLE<Fp>,
-        col_final_ts: MLE<Fp>,
+        col_final_ts: MLE<Fp>
     ) -> SparseResult<Self> {
         // Validate that all MLEs have the same length
         if row.len() != col.len() || col.len() != val.len() {
-            return Err(SparseError::ValidationError(format!(
-                "MLE length mismatch: row={}, col={}, val={}",
-                row.len(),
-                col.len(),
-                val.len()
-            )));
+            return Err(
+                SparseError::ValidationError(
+                    format!(
+                        "MLE length mismatch: row={}, col={}, val={}",
+                        row.len(),
+                        col.len(),
+                        val.len()
+                    )
+                )
+            );
         }
 
         Ok(SparkMetadata {
@@ -279,43 +282,35 @@ impl SparkMetadata {
 
         // Validate dimensions are reasonable
         if max_rows == 0 || max_cols == 0 {
-            return Err(SparseError::ValidationError(
-                "Matrix dimensions cannot be zero".to_string(),
-            ));
+            return Err(
+                SparseError::ValidationError("Matrix dimensions cannot be zero".to_string())
+            );
         }
 
         // Convert sparse representation to dense vectors
         let (row_vec, col_vec, val_vec) = Self::extract_dense_vectors(sparse_mle)?;
 
         // Compute timestamp information for memory consistency checking
-        let TimeStamps {
-            read_ts: row_read_ts,
-            final_ts: row_final_ts,
-        } = TimeStamps::compute(&row_vec, max_rows)?;
-        let TimeStamps {
-            read_ts: col_read_ts,
-            final_ts: col_final_ts,
-        } = TimeStamps::compute(&col_vec, max_cols)?;
+        let TimeStamps { read_ts: row_read_ts, final_ts: row_final_ts } = TimeStamps::compute(
+            &row_vec,
+            max_rows
+        )?;
+        let TimeStamps { read_ts: col_read_ts, final_ts: col_final_ts } = TimeStamps::compute(
+            &col_vec,
+            max_cols
+        )?;
 
         // Convert vectors to MLEs
         let row_mle = MLE::new(row_vec);
         let col_mle = MLE::new(col_vec);
         let val_mle = MLE::new(val_vec);
 
-        Self::new(
-            row_mle,
-            col_mle,
-            val_mle,
-            row_read_ts,
-            row_final_ts,
-            col_read_ts,
-            col_final_ts,
-        )
+        Self::new(row_mle, col_mle, val_mle, row_read_ts, row_final_ts, col_read_ts, col_final_ts)
     }
 
     /// Extracts dense vectors from sparse representation in deterministic order.
     fn extract_dense_vectors(
-        sparse_mle: &SparseMLE,
+        sparse_mle: &SparseMLE
     ) -> SparseResult<(Vec<BabyBear>, Vec<BabyBear>, Vec<BabyBear>)> {
         let num_entries = sparse_mle.num_nonzeros();
 
@@ -367,76 +362,8 @@ impl SparkMetadata {
             self.col_read_ts.n_vars(),
             self.col_final_ts.n_vars(),
         ]
-        .into_iter()
-        .max()
-    }
-
-    /// Commits to each component MLE using the BaseFold PCS and aggregates the roots
-    /// along with prover-side artifacts.
-    pub fn commit(
-        &self,
-        roots: &[Vec<Fp>],
-        config: &BaseFoldConfig,
-    ) -> anyhow::Result<(SparkCommitment, SparkProverData)> {
-        // TODO:Constrain this in all constructors.
-        let max_vars = self.max_n_vars().expect("Fields will be non empty.");
-        let Self {
-            row,
-            col,
-            val,
-            row_read_ts,
-            row_final_ts,
-            col_read_ts,
-            col_final_ts,
-        } = &self;
-        let (row_commitment, row_prover) =
-            Basefold::commit(row, &roots[max_vars - row.n_vars()..], config)?;
-        let (col_commitment, col_prover) =
-            Basefold::commit(col, &roots[max_vars - col.n_vars()..], config)?;
-        let (val_commitment, val_prover) =
-            Basefold::commit(val, &roots[max_vars - val.n_vars()..], config)?;
-        let (row_read_ts_commitment, row_read_ts_prover) = Basefold::commit(
-            row_read_ts,
-            &roots[max_vars - row_read_ts.n_vars()..],
-            config,
-        )?;
-        let (row_final_ts_commitment, row_final_ts_prover) = Basefold::commit(
-            row_final_ts,
-            &roots[max_vars - row_final_ts.n_vars()..],
-            config,
-        )?;
-        let (col_read_ts_commitment, col_read_ts_prover) = Basefold::commit(
-            col_read_ts,
-            &roots[max_vars - col_read_ts.n_vars()..],
-            config,
-        )?;
-        let (col_final_ts_commitment, col_final_ts_prover) = Basefold::commit(
-            col_final_ts,
-            &roots[max_vars - col_final_ts.n_vars()..],
-            config,
-        )?;
-
-        let commitment = SparkCommitment::new(
-            row_commitment.commitment,
-            col_commitment.commitment,
-            val_commitment.commitment,
-            row_read_ts_commitment.commitment,
-            row_final_ts_commitment.commitment,
-            col_read_ts_commitment.commitment,
-            col_final_ts_commitment.commitment,
-        );
-
-        let prover_data = SparkProverData::new(
-            row_prover,
-            col_prover,
-            val_prover,
-            row_read_ts_prover,
-            row_final_ts_prover,
-            col_read_ts_prover,
-            col_final_ts_prover,
-        );
-
-        Ok((commitment, prover_data))
+            .into_iter()
+            .max()
     }
 }
 
@@ -468,15 +395,17 @@ impl TimeStamps {
     /// Address space must be power of 2. Time: O(n+m), Space: O(m).
     pub fn compute(indices: &[BabyBear], max_address_space: usize) -> SparseResult<Self> {
         if indices.is_empty() {
-            return Err(SparseError::ValidationError(
-                "Cannot compute timestamps for empty index sequence".to_string(),
-            ));
+            return Err(
+                SparseError::ValidationError(
+                    "Cannot compute timestamps for empty index sequence".to_string()
+                )
+            );
         }
 
         if !max_address_space.is_power_of_two() {
-            return Err(SparseError::ValidationError(
-                "Address space size must be a power of 2".to_string(),
-            ));
+            return Err(
+                SparseError::ValidationError("Address space size must be a power of 2".to_string())
+            );
         }
 
         let padded_size = indices.len().next_power_of_two();
@@ -667,10 +596,7 @@ mod tests {
             expected: (2, 3),
             actual: (4, 5),
         };
-        assert_eq!(
-            dimension_err.to_string(),
-            "Dimension mismatch: expected (2, 3), got (4, 5)"
-        );
+        assert_eq!(dimension_err.to_string(), "Dimension mismatch: expected (2, 3), got (4, 5)");
 
         let index_err = SparseError::IndexOutOfBounds {
             index: (5, 6),
@@ -682,33 +608,25 @@ mod tests {
         assert_eq!(empty_err.to_string(), "Operation on empty matrix");
 
         let constraint_err = SparseError::ConstraintViolation("constraint failed".to_string());
-        assert_eq!(
-            constraint_err.to_string(),
-            "Constraint violation: constraint failed"
-        );
+        assert_eq!(constraint_err.to_string(), "Constraint violation: constraint failed");
     }
 
     #[test]
     fn test_spartan_metadata_new_length_mismatch() {
         let row_mle = MLE::new(vec![BabyBear::ZERO, BabyBear::ZERO]); // Length 2
-        let col_mle = MLE::new(vec![
-            BabyBear::ONE,
-            BabyBear::ZERO,
-            BabyBear::ONE,
-            BabyBear::ZERO,
-        ]); // Length 4 (different)
+        let col_mle = MLE::new(vec![BabyBear::ONE, BabyBear::ZERO, BabyBear::ONE, BabyBear::ZERO]); // Length 4 (different)
         let val_mle = MLE::new(vec![BabyBear::from_u32(5), BabyBear::from_u32(6)]); // Length 2
 
         let read_ts = vec![BabyBear::ZERO];
         let final_ts = vec![BabyBear::ONE];
-        let TimeStamps {
-            read_ts: row_read_ts,
-            final_ts: row_final_ts,
-        } = TimeStamps::new(read_ts.clone(), final_ts.clone()).unwrap();
-        let TimeStamps {
-            read_ts: col_read_ts,
-            final_ts: col_final_ts,
-        } = TimeStamps::new(read_ts, final_ts).unwrap();
+        let TimeStamps { read_ts: row_read_ts, final_ts: row_final_ts } = TimeStamps::new(
+            read_ts.clone(),
+            final_ts.clone()
+        ).unwrap();
+        let TimeStamps { read_ts: col_read_ts, final_ts: col_final_ts } = TimeStamps::new(
+            read_ts,
+            final_ts
+        ).unwrap();
 
         let result = SparkMetadata::new(
             row_mle,
@@ -717,7 +635,7 @@ mod tests {
             row_read_ts,
             row_final_ts,
             col_read_ts,
-            col_final_ts,
+            col_final_ts
         );
         assert!(matches!(result, Err(SparseError::ValidationError(_))));
     }
@@ -748,8 +666,9 @@ mod tests {
         coeffs.insert((0, 1), BabyBear::from_u32(3));
 
         let sparse_mle = SparseMLE::new(coeffs).unwrap();
-        let (row_vec, col_vec, val_vec) =
-            SparkMetadata::extract_dense_vectors(&sparse_mle).unwrap();
+        let (row_vec, col_vec, val_vec) = SparkMetadata::extract_dense_vectors(
+            &sparse_mle
+        ).unwrap();
 
         assert_eq!(row_vec.len(), 2);
         assert_eq!(col_vec.len(), 2);
@@ -795,12 +714,7 @@ mod tests {
 
     #[test]
     fn test_timestamps_compute_valid() {
-        let indices = vec![
-            BabyBear::ZERO,
-            BabyBear::ONE,
-            BabyBear::ZERO,
-            BabyBear::from_u32(2),
-        ];
+        let indices = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::ZERO, BabyBear::from_u32(2)];
         let max_address_space = 4; // Power of 2
 
         let timestamps = TimeStamps::compute(&indices, max_address_space).unwrap();
@@ -879,7 +793,7 @@ mod tests {
             BabyBear::ONE,
             BabyBear::ZERO,
             BabyBear::ONE,
-            BabyBear::from_u32(2),
+            BabyBear::from_u32(2)
         ];
 
         let timestamps = TimeStamps::compute(&indices, 4).unwrap();

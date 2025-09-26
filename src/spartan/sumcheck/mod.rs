@@ -29,20 +29,13 @@
 //! ```
 //!
 //! Where g takes different forms depending on the specific protocol variant.
-
-pub mod cubic;
 pub mod inner;
 pub mod outer;
-pub mod pcs;
-pub mod spark;
 
 // Re-export all sum-check proof types
-pub use cubic::{BatchedCubicSumCheckProof, CubicSumCheckProof};
 pub use inner::InnerSumCheckProof;
 pub use outer::OuterSumCheckProof;
 use p3_field::Field;
-pub use pcs::PCSSumCheckProof;
-pub use spark::SparkSumCheckProof;
 
 fn eval_at_two<F: Field>(eval_0: F, eval_1: F) -> F {
     eval_1.double() - eval_0

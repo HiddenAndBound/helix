@@ -136,7 +136,7 @@ pub struct Basefold;
 // Implementation methods are in the prover and verifier modules
 
 /// A cryptographic commitment to a polynomial using BaseFold.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BasefoldCommitment {
     /// The Merkle root serving as the cryptographic commitment.
     pub commitment: Commitment,
