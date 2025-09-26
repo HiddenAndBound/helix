@@ -40,5 +40,10 @@ pub mod spark;
 pub use cubic::{BatchedCubicSumCheckProof, CubicSumCheckProof};
 pub use inner::InnerSumCheckProof;
 pub use outer::OuterSumCheckProof;
+use p3_field::Field;
 pub use pcs::PCSSumCheckProof;
 pub use spark::SparkSumCheckProof;
+
+fn eval_at_two<F: Field>(eval_0: F, eval_1: F) -> F {
+    eval_1.double() - eval_0
+}

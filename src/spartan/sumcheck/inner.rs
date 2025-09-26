@@ -25,6 +25,16 @@ impl InnerSumCheckProof {
         }
     }
 
+    /// Returns the final evaluations [A(r), B(r), C(r), Z(r)] used to close the proof.
+    pub fn final_evaluations(&self) -> &[Fp4; 4] {
+        &self.final_evals
+    }
+
+    /// Returns the number of rounds in the inner sum-check protocol.
+    pub fn rounds(&self) -> usize {
+        self.round_proofs.len()
+    }
+
     /// Generates a batched sum-check proof for inner product claims.
     /// Proves: (γ₀ A_bound(y) + γ₀² B_bound(y) + γ₀³ C_bound(y)) · Z(y) = batched_claim
     ///
@@ -37,7 +47,7 @@ impl InnerSumCheckProof {
         outer_claims: [Fp4; 3],
         gamma: Fp4,
         challenger: &mut Challenger,
-    ) -> Self {
+    ) -> (Self, Vec<Fp4>) {
         // Use the bound matrices from outer sumcheck
         let rounds = a_bound.n_vars();
 
@@ -102,7 +112,10 @@ impl InnerSumCheckProof {
         // Extract final evaluations A_bound(r), B_bound(r), C_bound(r), Z(r)
         let final_evals = [a_fold[0], b_fold[0], c_fold[0], z_fold[0]];
 
-        InnerSumCheckProof::new(round_proofs, final_evals)
+        (
+            InnerSumCheckProof::new(round_proofs, final_evals),
+            round_challenges,
+        )
     }
 
     /// Verifies the inner sum-check proof. Panics if verification fails.
@@ -236,7 +249,7 @@ mod tests {
 
         let outer_claims = [a_claim, b_claim, c_claim];
         let mut challenger = Challenger::new();
-        let proof = InnerSumCheckProof::prove(
+        let (proof, _) = InnerSumCheckProof::prove(
             &a_bound,
             &b_bound,
             &c_bound,

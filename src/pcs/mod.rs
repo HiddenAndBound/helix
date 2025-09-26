@@ -169,7 +169,7 @@ pub struct ProverData {
 /// - Sum-check rounds ensure polynomial evaluation correctness
 /// - Merkle paths authenticate queried codewords
 /// - Folding consistency checks detect encoding manipulation
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EvalProof {
     /// Univariate polynomials from each sum-check round.
     pub sum_check_rounds: Vec<UnivariatePoly>,

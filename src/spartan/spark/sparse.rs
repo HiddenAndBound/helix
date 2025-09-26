@@ -223,16 +223,16 @@ impl SparseMLE {
 #[derive(Debug, Clone)]
 pub struct SparkMetadata {
     /// Row indices as multilinear extension
-    row: MLE<Fp>,
+    pub row: MLE<Fp>,
     /// Column indices as multilinear extension
-    col: MLE<Fp>,
+    pub col: MLE<Fp>,
     /// Coefficient values as multilinear extension
-    val: MLE<Fp>,
+    pub val: MLE<Fp>,
     /// Timestamp information for row accesses
-    row_read_ts: MLE<Fp>,
-    row_final_ts: MLE<Fp>,
-    col_read_ts: MLE<Fp>,
-    col_final_ts: MLE<Fp>,
+    pub row_read_ts: MLE<Fp>,
+    pub row_final_ts: MLE<Fp>,
+    pub col_read_ts: MLE<Fp>,
+    pub col_final_ts: MLE<Fp>,
 }
 
 impl SparkMetadata {

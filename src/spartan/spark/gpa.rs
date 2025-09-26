@@ -1,4 +1,4 @@
-use crate::{Fp, Fp4, spartan::spark::gkr::GKRProof};
+use crate::{Fp, Fp4, polynomial::MLE, spartan::spark::gkr::GKRProof};
 use p3_field::PrimeCharacteristicRing;
 
 //Offline Memory Check
@@ -158,11 +158,11 @@ impl ProductTree {
 
 impl Fingerprints {
     pub fn generate(
-        indices: &[Fp],
-        values: &[Fp],
+        indices: &MLE<Fp>,
+        values: &MLE<Fp4>,
         table: &[Fp4],
-        read_ts: &[Fp],
-        final_ts: &[Fp],
+        read_ts: &MLE<Fp>,
+        final_ts: &MLE<Fp>,
         gamma: Fp4,
         tau: Fp4,
     ) -> Self {
@@ -226,10 +226,10 @@ mod tests {
             Fp::from_usize(2), // Access address 2 first time
         ];
         let read_values = vec![
-            Fp::from_usize(10), // Value at address 0
-            Fp::from_usize(20), // Value at address 1
-            Fp::from_usize(10), // Value at address 0 (unchanged)
-            Fp::from_usize(30), // Value at address 2
+            Fp4::from_usize(10), // Value at address 0
+            Fp4::from_usize(20), // Value at address 1
+            Fp4::from_usize(10), // Value at address 0 (unchanged)
+            Fp4::from_usize(30), // Value at address 2
         ];
 
         // Step 2: Use TimeStamps::compute to generate correct timestamps
@@ -244,7 +244,6 @@ mod tests {
             .take(read_addresses_fp.len())
             .cloned()
             .collect();
-        let final_timestamps: &[Fp] = timestamps.final_ts().coeffs();
 
         // Step 3: Set up challenges
         let gamma = Fp4::from(Fp::from_usize(7));
@@ -252,11 +251,11 @@ mod tests {
 
         // Step 4: Generate all four fingerprint multisets using correct timestamps
         let fingerprints = Fingerprints::generate(
-            &read_addresses_fp,
-            &read_values,
+            &MLE::new(read_addresses_fp),
+            &MLE::new(read_values),
             &memory_table,
-            &read_timestamps,
-            &final_timestamps,
+            &MLE::new(read_timestamps),
+            timestamps.final_ts(),
             gamma,
             tau,
         );
@@ -325,14 +324,14 @@ mod tests {
             Fp::from_usize(0), // Access address 0 third time
         ];
         let read_values = vec![
-            Fp::from_usize(100), // Value at address 0
-            Fp::from_usize(200), // Value at address 1
-            Fp::from_usize(100), // Value at address 0 (unchanged)
-            Fp::from_usize(300), // Value at address 2
-            Fp::from_usize(400), // Value at address 3
-            Fp::from_usize(200), // Value at address 1 (unchanged)
-            Fp::from_usize(500), // Value at address 4
-            Fp::from_usize(100), // Value at address 0 (unchanged)
+            Fp4::from_usize(100), // Value at address 0
+            Fp4::from_usize(200), // Value at address 1
+            Fp4::from_usize(100), // Value at address 0 (unchanged)
+            Fp4::from_usize(300), // Value at address 2
+            Fp4::from_usize(400), // Value at address 3
+            Fp4::from_usize(200), // Value at address 1 (unchanged)
+            Fp4::from_usize(500), // Value at address 4
+            Fp4::from_usize(100), // Value at address 0 (unchanged)
         ];
 
         // Step 2: Use TimeStamps::compute to generate correct timestamps
@@ -347,7 +346,6 @@ mod tests {
             .take(read_addresses_fp.len())
             .cloned()
             .collect();
-        let final_timestamps: &[Fp] = timestamps.final_ts().coeffs();
 
         // Step 3: Set up challenges
         let gamma = Fp4::from(Fp::from_usize(13));
@@ -355,11 +353,11 @@ mod tests {
 
         // Step 4: Generate all four fingerprint multisets using correct timestamps
         let fingerprints = Fingerprints::generate(
-            &read_addresses_fp,
-            &read_values,
+            &MLE::new(read_addresses_fp),
+            &MLE::new(read_values),
             &memory_table,
-            &read_timestamps,
-            &final_timestamps,
+            &MLE::new(read_timestamps),
+            &timestamps.final_ts(),
             gamma,
             tau,
         );
@@ -414,10 +412,10 @@ mod tests {
             Fp::from_usize(2), // Access address 2 first time
         ];
         let read_values = vec![
-            Fp::from_usize(10), // Value at address 0
-            Fp::from_usize(20), // Value at address 1
-            Fp::from_usize(10), // Value at address 0 (unchanged)
-            Fp::from_usize(30), // Value at address 2
+            Fp4::from_usize(10), // Value at address 0
+            Fp4::from_usize(20), // Value at address 1
+            Fp4::from_usize(10), // Value at address 0 (unchanged)
+            Fp4::from_usize(30), // Value at address 2
         ];
 
         // Use TimeStamps::compute to generate correct timestamps
@@ -432,18 +430,17 @@ mod tests {
             .take(read_addresses_fp.len())
             .cloned()
             .collect();
-        let final_timestamps: &[Fp] = timestamps.final_ts().coeffs();
 
         let gamma = Fp4::from(Fp::from_usize(7));
         let tau = Fp4::from(Fp::from_usize(11));
 
         // Step 2: Generate fingerprints using the same parameters as the working test
         let fingerprints = Fingerprints::generate(
-            &read_addresses_fp,
-            &read_values,
+            &MLE::new(read_addresses_fp),
+            &MLE::new(read_values),
             &memory_table,
-            &read_timestamps,
-            &final_timestamps,
+            &MLE::new(read_timestamps),
+            timestamps.final_ts(),
             gamma,
             tau,
         );

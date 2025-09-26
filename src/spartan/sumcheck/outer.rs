@@ -10,7 +10,7 @@ use crate::{
     challenger::Challenger,
     eq::EqEvals,
     polynomial::MLE,
-    spartan::{spark::sparse::SparseMLE, univariate::UnivariatePoly},
+    spartan::{spark::sparse::SparseMLE, sumcheck::eval_at_two, univariate::UnivariatePoly},
 };
 
 /// Sum-check proof demonstrating that f(x₁, ..., xₙ) = A(x)·B(x) - C(x) sums to zero
@@ -172,16 +172,14 @@ where
     // Use Gruen's optimization: compute evaluations at X = 0, 1, 2
     let mut round_coeffs = vec![Fp4::ZERO; 3];
 
-
-    
     for i in 0..1 << (rounds - round - 1) {
         // g(0): set current variable to 0
         round_coeffs[0] += eq[i] * (a[i << 1] * b[i << 1] - c[i << 1]);
 
         // g(2): use multilinear polynomial identity
         round_coeffs[2] += eq[i]
-            * ((a[(i << 1) | 1].double() - a[i << 1]) * (b[(i << 1) | 1].double() - b[i << 1])
-                - (c[(i << 1) | 1].double() - c[i << 1]));
+            * (eval_at_two(a[i << 1], a[(i << 1) | 1]) * eval_at_two(b[i << 1], b[(i << 1) | 1])
+                - eval_at_two(c[i << 1], c[(i << 1) | 1]));
     }
 
     // g(1): derived from sum-check constraint
