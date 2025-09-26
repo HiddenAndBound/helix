@@ -7,11 +7,10 @@
 //! - Sparse MLE representation: O(nnz) storage vs O(n²) dense
 //! - Metadata preprocessing for sum-check protocols
 //! - Twist & Shout memory checking timestamps
-use crate::pcs::{ BaseFoldConfig, Basefold };
-use crate::spartan::{ error::{ SparseError, SparseResult } };
-use crate::utils::{ Fp, Fp4, eq::EqEvals, polynomial::MLE };
+use crate::spartan::error::{SparseError, SparseResult};
+use crate::utils::{Fp, Fp4, eq::EqEvals, polynomial::MLE};
 use p3_baby_bear::BabyBear;
-use p3_field::{ PrimeCharacteristicRing, PrimeField32 };
+use p3_field::{PrimeCharacteristicRing, PrimeField32};
 use std::collections::HashMap;
 
 /// Sparse multilinear extension (MLE) polynomial for Spartan.
@@ -68,7 +67,10 @@ impl SparseMLE {
             .max()
             .expect("Should be non-zero");
 
-        ((max_row + 1).next_power_of_two(), (max_col + 1).next_power_of_two())
+        (
+            (max_row + 1).next_power_of_two(),
+            (max_col + 1).next_power_of_two(),
+        )
     }
 
     /// Returns the number of non-zero entries.
@@ -83,7 +85,10 @@ impl SparseMLE {
 
     /// Gets the coefficient at (row, col), returns zero if not present.
     pub fn get(&self, row: usize, col: usize) -> BabyBear {
-        self.coeffs.get(&(row, col)).copied().unwrap_or(BabyBear::ZERO)
+        self.coeffs
+            .get(&(row, col))
+            .copied()
+            .unwrap_or(BabyBear::ZERO)
     }
 
     /// Returns an iterator over non-zero entries as ((row, col), value) tuples.
@@ -94,55 +99,63 @@ impl SparseMLE {
     /// Multiplies this sparse matrix by an MLE polynomial.
     /// MLE coefficient length must match matrix column count.
     pub fn multiply_by_mle(&self, mle: &MLE<Fp>) -> SparseResult<MLE<Fp>> {
-        let (rows, cols) = self.dimensions;
-
-        // Validate that MLE length matches matrix column count
-        if mle.len() != cols {
-            return Err(SparseError::DimensionMismatch {
-                expected: (cols, mle.len()),
-                actual: (cols, mle.len()),
-            });
-        }
-
-        // Initialize result vector with zeros
-        let mut result = vec![BabyBear::ZERO; rows];
-
-        // Perform sparse matrix-MLE multiplication with O(nnz) complexity
-        for ((row, col), &value) in self.iter() {
-            // Ensure we don't go out of bounds (defensive programming)
-            if *row < rows && *col < cols {
-                result[*row] += value * mle.coeffs()[*col];
-            }
-        }
-
+        let result = self.multiply_by_vector(mle.coeffs())?;
         Ok(MLE::new(result))
     }
 
     /// Multiplies this sparse matrix by a dense vector (legacy method).
     /// Vector length must match matrix column count.
     pub fn multiply_by_vector(&self, vector: &[BabyBear]) -> SparseResult<Vec<BabyBear>> {
+        let matrix_result = self.multiply_by_matrix(vector)?;
+        Ok(matrix_result.coeffs().to_vec())
+    }
+
+    /// Multiplies this sparse matrix (n × k) by a collection of dense column vectors (k × m).
+    /// Returns the dense result as an MLE whose coefficients are stored column-major,
+    /// mirroring the input ordering. The input `matrix` slice should contain the columns
+    /// concatenated in column-major order.
+    ///
+    /// The number of columns must be a power of two so the flattened output respects
+    /// Spartan's hypercube layout requirements.
+    pub fn multiply_by_matrix(&self, matrix: &[BabyBear]) -> SparseResult<MLE<Fp>> {
         let (rows, cols) = self.dimensions;
 
-        // Validate that vector length matches matrix column count
-        if vector.len() != cols {
+        if rows == 0 || cols == 0 {
+            return Err(SparseError::EmptyMatrix);
+        }
+
+        if matrix.is_empty() {
+            return Ok(MLE::new(vec![BabyBear::ZERO; rows]));
+        }
+
+        if matrix.len() % cols != 0 {
             return Err(SparseError::DimensionMismatch {
-                expected: (cols, vector.len()),
-                actual: (cols, vector.len()),
+                expected: (cols, matrix.len()),
+                actual: (cols, matrix.len()),
             });
         }
 
-        // Initialize result vector with zeros
-        let mut result = vec![BabyBear::ZERO; rows];
+        let num_columns = matrix.len() / cols;
 
-        // Perform sparse matrix-vector multiplication
+        if !num_columns.is_power_of_two() {
+            return Err(SparseError::ValidationError(
+                "Number of column vectors must be a power of two".to_string(),
+            ));
+        }
+
+        let mut flattened = vec![BabyBear::ZERO; rows * num_columns];
+
         for ((row, col), &value) in self.iter() {
-            // Ensure we don't go out of bounds (defensive programming)
             if *row < rows && *col < cols {
-                result[*row] += value * vector[*col];
+                for idx in 0..num_columns {
+                    let input_offset = idx * cols + *col;
+                    let output_offset = idx * rows + *row;
+                    flattened[output_offset] += value * matrix[input_offset];
+                }
             }
         }
 
-        Ok(result)
+        Ok(MLE::new(flattened))
     }
 
     /// Binds the first half of variables using the EqEvals (equality polynomial) to compute
@@ -170,31 +183,23 @@ impl SparseMLE {
 
         // Validate that eq_evals has the correct number of variables for row binding
         if eq_evals.n_vars() != row_vars {
-            return Err(
-                SparseError::ValidationError(
-                    format!(
-                        "EqEvals has {} variables but expected {} for {} rows",
-                        eq_evals.n_vars(),
-                        row_vars,
-                        rows
-                    )
-                )
-            );
+            return Err(SparseError::ValidationError(format!(
+                "EqEvals has {} variables but expected {} for {} rows",
+                eq_evals.n_vars(),
+                row_vars,
+                rows
+            )));
         }
 
         // The eq_evals should have 2^row_vars coefficients
         let expected_eq_coeffs = 1 << row_vars;
         if eq_evals.coeffs().len() != expected_eq_coeffs {
-            return Err(
-                SparseError::ValidationError(
-                    format!(
-                        "EqEvals has {} coefficients but expected {} for {} row variables",
-                        eq_evals.coeffs().len(),
-                        expected_eq_coeffs,
-                        row_vars
-                    )
-                )
-            );
+            return Err(SparseError::ValidationError(format!(
+                "EqEvals has {} coefficients but expected {} for {} row variables",
+                eq_evals.coeffs().len(),
+                expected_eq_coeffs,
+                row_vars
+            )));
         }
 
         // Initialize result vector with zeros - this will be our column dimension
@@ -244,20 +249,16 @@ impl SparkMetadata {
         row_read_ts: MLE<Fp>,
         row_final_ts: MLE<Fp>,
         col_read_ts: MLE<Fp>,
-        col_final_ts: MLE<Fp>
+        col_final_ts: MLE<Fp>,
     ) -> SparseResult<Self> {
         // Validate that all MLEs have the same length
         if row.len() != col.len() || col.len() != val.len() {
-            return Err(
-                SparseError::ValidationError(
-                    format!(
-                        "MLE length mismatch: row={}, col={}, val={}",
-                        row.len(),
-                        col.len(),
-                        val.len()
-                    )
-                )
-            );
+            return Err(SparseError::ValidationError(format!(
+                "MLE length mismatch: row={}, col={}, val={}",
+                row.len(),
+                col.len(),
+                val.len()
+            )));
         }
 
         Ok(SparkMetadata {
@@ -282,35 +283,43 @@ impl SparkMetadata {
 
         // Validate dimensions are reasonable
         if max_rows == 0 || max_cols == 0 {
-            return Err(
-                SparseError::ValidationError("Matrix dimensions cannot be zero".to_string())
-            );
+            return Err(SparseError::ValidationError(
+                "Matrix dimensions cannot be zero".to_string(),
+            ));
         }
 
         // Convert sparse representation to dense vectors
         let (row_vec, col_vec, val_vec) = Self::extract_dense_vectors(sparse_mle)?;
 
         // Compute timestamp information for memory consistency checking
-        let TimeStamps { read_ts: row_read_ts, final_ts: row_final_ts } = TimeStamps::compute(
-            &row_vec,
-            max_rows
-        )?;
-        let TimeStamps { read_ts: col_read_ts, final_ts: col_final_ts } = TimeStamps::compute(
-            &col_vec,
-            max_cols
-        )?;
+        let TimeStamps {
+            read_ts: row_read_ts,
+            final_ts: row_final_ts,
+        } = TimeStamps::compute(&row_vec, max_rows)?;
+        let TimeStamps {
+            read_ts: col_read_ts,
+            final_ts: col_final_ts,
+        } = TimeStamps::compute(&col_vec, max_cols)?;
 
         // Convert vectors to MLEs
         let row_mle = MLE::new(row_vec);
         let col_mle = MLE::new(col_vec);
         let val_mle = MLE::new(val_vec);
 
-        Self::new(row_mle, col_mle, val_mle, row_read_ts, row_final_ts, col_read_ts, col_final_ts)
+        Self::new(
+            row_mle,
+            col_mle,
+            val_mle,
+            row_read_ts,
+            row_final_ts,
+            col_read_ts,
+            col_final_ts,
+        )
     }
 
     /// Extracts dense vectors from sparse representation in deterministic order.
     fn extract_dense_vectors(
-        sparse_mle: &SparseMLE
+        sparse_mle: &SparseMLE,
     ) -> SparseResult<(Vec<BabyBear>, Vec<BabyBear>, Vec<BabyBear>)> {
         let num_entries = sparse_mle.num_nonzeros();
 
@@ -362,8 +371,8 @@ impl SparkMetadata {
             self.col_read_ts.n_vars(),
             self.col_final_ts.n_vars(),
         ]
-            .into_iter()
-            .max()
+        .into_iter()
+        .max()
     }
 }
 
@@ -395,17 +404,15 @@ impl TimeStamps {
     /// Address space must be power of 2. Time: O(n+m), Space: O(m).
     pub fn compute(indices: &[BabyBear], max_address_space: usize) -> SparseResult<Self> {
         if indices.is_empty() {
-            return Err(
-                SparseError::ValidationError(
-                    "Cannot compute timestamps for empty index sequence".to_string()
-                )
-            );
+            return Err(SparseError::ValidationError(
+                "Cannot compute timestamps for empty index sequence".to_string(),
+            ));
         }
 
         if !max_address_space.is_power_of_two() {
-            return Err(
-                SparseError::ValidationError("Address space size must be a power of 2".to_string())
-            );
+            return Err(SparseError::ValidationError(
+                "Address space size must be a power of 2".to_string(),
+            ));
         }
 
         let padded_size = indices.len().next_power_of_two();
@@ -555,6 +562,79 @@ mod tests {
     }
 
     #[test]
+    fn test_sparse_mle_multiply_by_matrix_valid() {
+        let mut coeffs = HashMap::new();
+        coeffs.insert((0, 0), BabyBear::from_u32(2));
+        coeffs.insert((0, 1), BabyBear::from_u32(3));
+        coeffs.insert((1, 0), BabyBear::from_u32(4));
+        coeffs.insert((1, 1), BabyBear::from_u32(5));
+
+        let sparse_mle = SparseMLE::new(coeffs).unwrap();
+        let columns = vec![
+            BabyBear::from_u32(1),
+            BabyBear::from_u32(2),
+            BabyBear::from_u32(3),
+            BabyBear::from_u32(4),
+        ];
+
+        let result = sparse_mle.multiply_by_matrix(&columns).unwrap();
+        assert_eq!(result.len(), 4);
+        let coeffs = result.coeffs();
+        assert_eq!(coeffs[0], BabyBear::from_u32(8));
+        assert_eq!(coeffs[1], BabyBear::from_u32(14));
+        assert_eq!(coeffs[2], BabyBear::from_u32(18));
+        assert_eq!(coeffs[3], BabyBear::from_u32(32));
+    }
+
+    #[test]
+    fn test_sparse_mle_multiply_by_matrix_dimension_mismatch() {
+        let mut coeffs = HashMap::new();
+        coeffs.insert((0, 0), BabyBear::ONE);
+        coeffs.insert((0, 1), BabyBear::ONE);
+
+        let sparse_mle = SparseMLE::new(coeffs).unwrap();
+        let columns = vec![BabyBear::ONE, BabyBear::ONE, BabyBear::ONE];
+
+        let result = sparse_mle.multiply_by_matrix(&columns);
+        assert!(matches!(result, Err(SparseError::DimensionMismatch { .. })));
+    }
+
+    #[test]
+    fn test_sparse_mle_multiply_by_matrix_empty_columns() {
+        let mut coeffs = HashMap::new();
+        coeffs.insert((0, 0), BabyBear::from_u32(2));
+        coeffs.insert((1, 1), BabyBear::from_u32(5));
+
+        let sparse_mle = SparseMLE::new(coeffs).unwrap();
+        let empty_columns: [BabyBear; 0] = [];
+
+        let result = sparse_mle.multiply_by_matrix(&empty_columns).unwrap();
+
+        assert_eq!(result.len(), 2);
+        assert!(result.coeffs().iter().all(|entry| *entry == BabyBear::ZERO));
+    }
+
+    #[test]
+    fn test_sparse_mle_multiply_by_matrix_non_power_of_two_columns() {
+        let mut coeffs = HashMap::new();
+        coeffs.insert((0, 0), BabyBear::from_u32(2));
+        coeffs.insert((1, 1), BabyBear::from_u32(5));
+
+        let sparse_mle = SparseMLE::new(coeffs).unwrap();
+        let columns = vec![
+            BabyBear::ONE,
+            BabyBear::ONE,
+            BabyBear::from_u32(2),
+            BabyBear::from_u32(3),
+            BabyBear::from_u32(4),
+            BabyBear::from_u32(5),
+        ];
+
+        let result = sparse_mle.multiply_by_matrix(&columns);
+        assert!(matches!(result, Err(SparseError::ValidationError(_))));
+    }
+
+    #[test]
     fn test_sparse_mle_multiply_by_mle_valid() {
         let mut coeffs = HashMap::new();
         coeffs.insert((0, 0), BabyBear::from_u32(2));
@@ -596,7 +676,10 @@ mod tests {
             expected: (2, 3),
             actual: (4, 5),
         };
-        assert_eq!(dimension_err.to_string(), "Dimension mismatch: expected (2, 3), got (4, 5)");
+        assert_eq!(
+            dimension_err.to_string(),
+            "Dimension mismatch: expected (2, 3), got (4, 5)"
+        );
 
         let index_err = SparseError::IndexOutOfBounds {
             index: (5, 6),
@@ -608,25 +691,33 @@ mod tests {
         assert_eq!(empty_err.to_string(), "Operation on empty matrix");
 
         let constraint_err = SparseError::ConstraintViolation("constraint failed".to_string());
-        assert_eq!(constraint_err.to_string(), "Constraint violation: constraint failed");
+        assert_eq!(
+            constraint_err.to_string(),
+            "Constraint violation: constraint failed"
+        );
     }
 
     #[test]
     fn test_spartan_metadata_new_length_mismatch() {
         let row_mle = MLE::new(vec![BabyBear::ZERO, BabyBear::ZERO]); // Length 2
-        let col_mle = MLE::new(vec![BabyBear::ONE, BabyBear::ZERO, BabyBear::ONE, BabyBear::ZERO]); // Length 4 (different)
+        let col_mle = MLE::new(vec![
+            BabyBear::ONE,
+            BabyBear::ZERO,
+            BabyBear::ONE,
+            BabyBear::ZERO,
+        ]); // Length 4 (different)
         let val_mle = MLE::new(vec![BabyBear::from_u32(5), BabyBear::from_u32(6)]); // Length 2
 
         let read_ts = vec![BabyBear::ZERO];
         let final_ts = vec![BabyBear::ONE];
-        let TimeStamps { read_ts: row_read_ts, final_ts: row_final_ts } = TimeStamps::new(
-            read_ts.clone(),
-            final_ts.clone()
-        ).unwrap();
-        let TimeStamps { read_ts: col_read_ts, final_ts: col_final_ts } = TimeStamps::new(
-            read_ts,
-            final_ts
-        ).unwrap();
+        let TimeStamps {
+            read_ts: row_read_ts,
+            final_ts: row_final_ts,
+        } = TimeStamps::new(read_ts.clone(), final_ts.clone()).unwrap();
+        let TimeStamps {
+            read_ts: col_read_ts,
+            final_ts: col_final_ts,
+        } = TimeStamps::new(read_ts, final_ts).unwrap();
 
         let result = SparkMetadata::new(
             row_mle,
@@ -635,7 +726,7 @@ mod tests {
             row_read_ts,
             row_final_ts,
             col_read_ts,
-            col_final_ts
+            col_final_ts,
         );
         assert!(matches!(result, Err(SparseError::ValidationError(_))));
     }
@@ -666,9 +757,8 @@ mod tests {
         coeffs.insert((0, 1), BabyBear::from_u32(3));
 
         let sparse_mle = SparseMLE::new(coeffs).unwrap();
-        let (row_vec, col_vec, val_vec) = SparkMetadata::extract_dense_vectors(
-            &sparse_mle
-        ).unwrap();
+        let (row_vec, col_vec, val_vec) =
+            SparkMetadata::extract_dense_vectors(&sparse_mle).unwrap();
 
         assert_eq!(row_vec.len(), 2);
         assert_eq!(col_vec.len(), 2);
@@ -714,7 +804,12 @@ mod tests {
 
     #[test]
     fn test_timestamps_compute_valid() {
-        let indices = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::ZERO, BabyBear::from_u32(2)];
+        let indices = vec![
+            BabyBear::ZERO,
+            BabyBear::ONE,
+            BabyBear::ZERO,
+            BabyBear::from_u32(2),
+        ];
         let max_address_space = 4; // Power of 2
 
         let timestamps = TimeStamps::compute(&indices, max_address_space).unwrap();
@@ -793,7 +888,7 @@ mod tests {
             BabyBear::ONE,
             BabyBear::ZERO,
             BabyBear::ONE,
-            BabyBear::from_u32(2)
+            BabyBear::from_u32(2),
         ];
 
         let timestamps = TimeStamps::compute(&indices, 4).unwrap();
