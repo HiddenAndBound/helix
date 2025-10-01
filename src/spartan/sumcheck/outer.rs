@@ -1,22 +1,27 @@
-use std::{any, collections::HashMap};
+use std::{ any, collections::HashMap };
 
-use anyhow::{anyhow, bail};
+use anyhow::{ anyhow, bail };
 use itertools::multizip;
-use p3_field::{ExtensionField, Field, PackedValue, PrimeCharacteristicRing};
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use p3_field::{ ExtensionField, Field, PackedValue, PrimeCharacteristicRing };
+use rand::{ Rng, SeedableRng, rngs::StdRng };
 use rayon::{
     iter::{
-        IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
+        IndexedParallelIterator,
+        IntoParallelIterator,
+        IntoParallelRefIterator,
+        ParallelIterator,
     },
     slice::ParallelSlice,
 };
 
 use crate::{
-    Fp, Fp4,
     challenger::Challenger,
     eq::EqEvals,
     polynomial::MLE,
-    spartan::{spark::sparse::SparseMLE, sumcheck::eval_at_two, univariate::UnivariatePoly},
+    sparse::SparseMLE,
+    spartan::{ sumcheck::eval_at_two, univariate::UnivariatePoly },
+    Fp,
+    Fp4,
 };
 
 /// Sum-check proof demonstrating that f(x₁, ..., xₙ) = A(x)·B(x) - C(x) sums to zero
@@ -47,13 +52,13 @@ impl OuterSumCheckProof {
         B: &SparseMLE,
         C: &SparseMLE,
         z: &MLE<Fp>,
-        challenger: &mut Challenger,
+        challenger: &mut Challenger
     ) -> (Self, Vec<Fp4>) {
         // Compute A·z, B·z, C·z (sparse matrix-MLE multiplications)
         let (a, b, c) = (
-            A.multiply_by_mle(z).unwrap(),
-            B.multiply_by_mle(z).unwrap(),
-            C.multiply_by_mle(z).unwrap(),
+            A.multiply_by_matrix(z.coeffs()).unwrap(),
+            B.multiply_by_matrix(z.coeffs()).unwrap(),
+            C.multiply_by_matrix(z.coeffs()).unwrap(),
         );
         let rounds = a.n_vars();
 
@@ -77,16 +82,17 @@ impl OuterSumCheckProof {
         for round in 0..rounds {
             let round_proof = match round {
                 0 => compute_round(&a, &b, &c, &eq, &eq_point, current_claim, round, rounds),
-                _ => compute_round(
-                    &a_fold,
-                    &b_fold,
-                    &c_fold,
-                    &eq,
-                    &eq_point,
-                    current_claim,
-                    round,
-                    rounds,
-                ),
+                _ =>
+                    compute_round(
+                        &a_fold,
+                        &b_fold,
+                        &c_fold,
+                        &eq,
+                        &eq_point,
+                        current_claim,
+                        round,
+                        rounds
+                    ),
             };
 
             challenger.observe_fp4_elems(&round_proof.coefficients());
@@ -97,16 +103,18 @@ impl OuterSumCheckProof {
 
             // Fold polynomials for next round
             (a_fold, b_fold, c_fold) = match round {
-                0 => (
-                    a.fold_in_place(round_challenge),
-                    b.fold_in_place(round_challenge),
-                    c.fold_in_place(round_challenge),
-                ),
-                _ => (
-                    a_fold.fold_in_place(round_challenge),
-                    b_fold.fold_in_place(round_challenge),
-                    c_fold.fold_in_place(round_challenge),
-                ),
+                0 =>
+                    (
+                        a.fold_in_place(round_challenge),
+                        b.fold_in_place(round_challenge),
+                        c.fold_in_place(round_challenge),
+                    ),
+                _ =>
+                    (
+                        a_fold.fold_in_place(round_challenge),
+                        b_fold.fold_in_place(round_challenge),
+                        c_fold.fold_in_place(round_challenge),
+                    ),
             };
 
             eq.fold_in_place();
@@ -116,10 +124,7 @@ impl OuterSumCheckProof {
         // Extract final evaluations A(r), B(r), C(r)
         let final_evals = [a_fold[0], b_fold[0], c_fold[0]];
 
-        (
-            OuterSumCheckProof::new(round_proofs, final_evals),
-            round_challenges,
-        )
+        (OuterSumCheckProof::new(round_proofs, final_evals), round_challenges)
     }
 
     /// Verifies the sum-check proof. Panics if verification fails.
@@ -135,13 +140,16 @@ impl OuterSumCheckProof {
         for round in 0..rounds {
             let round_poly = &self.round_proofs[round];
 
-            let round_eval = (Fp4::ONE - eq_point[round]) * round_poly.evaluate(Fp4::ZERO)
-                + eq_point[round] * round_poly.evaluate(Fp4::ONE);
+            let round_eval =
+                (Fp4::ONE - eq_point[round]) * round_poly.evaluate(Fp4::ZERO) +
+                eq_point[round] * round_poly.evaluate(Fp4::ONE);
             // Check sum-check relation: current_claim = (1-r_i) * g_i(0) + r_i * g_i(1)
             if current_claim != round_eval {
-                return Err(anyhow!(
-                    "OuterSumcheck round verification failed in round {round}, expected {current_claim} got {round_eval}"
-                ));
+                return Err(
+                    anyhow!(
+                        "OuterSumcheck round verification failed in round {round}, expected {current_claim} got {round_eval}"
+                    )
+                );
             }
 
             challenger.observe_fp4_elems(&round_poly.coefficients());
@@ -169,11 +177,10 @@ pub fn compute_round<F>(
     eq_point: &Vec<Fp4>,
     current_claim: Fp4,
     round: usize,
-    rounds: usize,
-) -> UnivariatePoly
-where
-    F: Field,
-    Fp4: ExtensionField<F>,
+    rounds: usize
+)
+    -> UnivariatePoly
+    where F: Field, Fp4: ExtensionField<F>
 {
     let eq_slice = &eq.coeffs()[..];
     let a_slice = &a.coeffs()[..];
@@ -198,7 +205,7 @@ where
         })
         .reduce(
             || (Fp4::ZERO, Fp4::ZERO),
-            |(acc_0, acc_2), (g_0, g_2)| (acc_0 + g_0, acc_2 + g_2),
+            |(acc_0, acc_2), (g_0, g_2)| (acc_0 + g_0, acc_2 + g_2)
         );
 
     let mut round_coeffs = vec![coeff_0, Fp4::ZERO, coeff_2];
@@ -254,6 +261,64 @@ fn outer_sum_check_test() -> anyhow::Result<()> {
         }
     }
 
+    let mut challenger = Challenger::new();
+    let (proof, _) = OuterSumCheckProof::prove(&A, &B, &C, &z, &mut challenger);
+
+    let mut challenger = Challenger::new();
+    proof.verify(&mut challenger)?;
+    Ok(())
+}
+
+#[test]
+fn outer_sum_check_multi_column_witness_test() -> anyhow::Result<()> {
+    // Number of nonlinear constraints (rows) and variables (cols)
+    const ROWS: usize = 1 << 4; // 16 constraints (power of two)
+    const COLS: usize = 4; // 4 variables per witness column (power of two)
+    const NUM_COLS: usize = 4; // witness has 4 columns (power of two)
+
+    // Build a simple R1CS per row selecting:
+    // (A·Z)[j] = Z_x, (B·Z)[j] = Z_y, (C·Z)[j] = Z_z with Z_z = Z_x * Z_y
+    // We reuse the same column selectors for every row to keep the structure simple.
+    let mut A = HashMap::<(usize, usize), Fp>::new();
+    let mut B = HashMap::<(usize, usize), Fp>::new();
+    let mut C = HashMap::<(usize, usize), Fp>::new();
+    for j in 0..ROWS {
+        A.insert((j, 0), Fp::ONE); // pick x from variable column 0
+        B.insert((j, 1), Fp::ONE); // pick y from variable column 1
+        C.insert((j, 2), Fp::ONE); // pick z from variable column 2
+    }
+
+    let A = SparseMLE::new(A)?;
+    let B = SparseMLE::new(B)?;
+    let C = SparseMLE::new(C)?;
+
+    // Construct witness matrix Z with NUM_COLS columns, flattened in column-major order.
+    // For each column k: [x_k, y_k, z_k = x_k*y_k, padding]
+    let mut z_flat = Vec::with_capacity(COLS * NUM_COLS);
+    for k in 0..NUM_COLS {
+        let x = Fp::from_u32(2 + (k as u32));
+        let y = Fp::from_u32(3 + (k as u32));
+        let z = x * y;
+        z_flat.push(x);
+        z_flat.push(y);
+        z_flat.push(z);
+        z_flat.push(Fp::ZERO); // padding variable
+    }
+    let z = MLE::new(z_flat);
+
+    // Compute A·Z, B·Z, C·Z; each returns an MLE over ROWS*NUM_COLS coefficients
+    let a = A.multiply_by_mle(&z)?;
+    let b = B.multiply_by_mle(&z)?;
+    let c = C.multiply_by_mle(&z)?;
+
+    // Check element-wise that (A·Z) ∘ (B·Z) = (C·Z) across all rows and witness columns
+    for (&a_i, &b_i, &c_i) in multizip((a.coeffs(), b.coeffs(), c.coeffs())) {
+        if c_i != a_i * b_i {
+            bail!("R1CS instance not satisfied for multi-column witness");
+        }
+    }
+
+    // Prove and verify Outer sumcheck with multi-column witness
     let mut challenger = Challenger::new();
     let (proof, _) = OuterSumCheckProof::prove(&A, &B, &C, &z, &mut challenger);
 

@@ -7,10 +7,10 @@
 //! - Sparse MLE representation: O(nnz) storage vs O(n²) dense
 //! - Metadata preprocessing for sum-check protocols
 //! - Twist & Shout memory checking timestamps
-use crate::spartan::error::{SparseError, SparseResult};
-use crate::utils::{Fp, Fp4, eq::EqEvals, polynomial::MLE};
+use crate::spartan::error::{ SparseError, SparseResult };
+use crate::utils::{ Fp, Fp4, eq::EqEvals, polynomial::MLE };
 use p3_baby_bear::BabyBear;
-use p3_field::{PrimeCharacteristicRing, PrimeField32};
+use p3_field::{ PrimeCharacteristicRing };
 use std::collections::HashMap;
 
 /// Sparse multilinear extension (MLE) polynomial for Spartan.
@@ -67,10 +67,7 @@ impl SparseMLE {
             .max()
             .expect("Should be non-zero");
 
-        (
-            (max_row + 1).next_power_of_two(),
-            (max_col + 1).next_power_of_two(),
-        )
+        ((max_row + 1).next_power_of_two(), (max_col + 1).next_power_of_two())
     }
 
     /// Returns the number of non-zero entries.
@@ -85,10 +82,7 @@ impl SparseMLE {
 
     /// Gets the coefficient at (row, col), returns zero if not present.
     pub fn get(&self, row: usize, col: usize) -> BabyBear {
-        self.coeffs
-            .get(&(row, col))
-            .copied()
-            .unwrap_or(BabyBear::ZERO)
+        self.coeffs.get(&(row, col)).copied().unwrap_or(BabyBear::ZERO)
     }
 
     /// Returns an iterator over non-zero entries as ((row, col), value) tuples.
@@ -138,9 +132,11 @@ impl SparseMLE {
         let num_columns = matrix.len() / cols;
 
         if !num_columns.is_power_of_two() {
-            return Err(SparseError::ValidationError(
-                "Number of column vectors must be a power of two".to_string(),
-            ));
+            return Err(
+                SparseError::ValidationError(
+                    "Number of column vectors must be a power of two".to_string()
+                )
+            );
         }
 
         let mut flattened = vec![BabyBear::ZERO; rows * num_columns];
@@ -183,23 +179,31 @@ impl SparseMLE {
 
         // Validate that eq_evals has the correct number of variables for row binding
         if eq_evals.n_vars() != row_vars {
-            return Err(SparseError::ValidationError(format!(
-                "EqEvals has {} variables but expected {} for {} rows",
-                eq_evals.n_vars(),
-                row_vars,
-                rows
-            )));
+            return Err(
+                SparseError::ValidationError(
+                    format!(
+                        "EqEvals has {} variables but expected {} for {} rows",
+                        eq_evals.n_vars(),
+                        row_vars,
+                        rows
+                    )
+                )
+            );
         }
 
         // The eq_evals should have 2^row_vars coefficients
         let expected_eq_coeffs = 1 << row_vars;
         if eq_evals.coeffs().len() != expected_eq_coeffs {
-            return Err(SparseError::ValidationError(format!(
-                "EqEvals has {} coefficients but expected {} for {} row variables",
-                eq_evals.coeffs().len(),
-                expected_eq_coeffs,
-                row_vars
-            )));
+            return Err(
+                SparseError::ValidationError(
+                    format!(
+                        "EqEvals has {} coefficients but expected {} for {} row variables",
+                        eq_evals.coeffs().len(),
+                        expected_eq_coeffs,
+                        row_vars
+                    )
+                )
+            );
         }
 
         // Initialize result vector with zeros - this will be our column dimension
@@ -217,246 +221,6 @@ impl SparseMLE {
         }
 
         Ok(MLE::new(result_coeffs))
-    }
-}
-
-/// Metadata for Spartan sum-check protocols.
-///
-/// Converts sparse MLE into dense MLEs (row, col, val) with timestamps
-/// for efficient evaluation and memory consistency checking.
-#[derive(Debug, Clone)]
-pub struct SparkMetadata {
-    /// Row indices as multilinear extension
-    pub row: MLE<Fp>,
-    /// Column indices as multilinear extension
-    pub col: MLE<Fp>,
-    /// Coefficient values as multilinear extension
-    pub val: MLE<Fp>,
-    /// Timestamp information for row accesses
-    pub row_read_ts: MLE<Fp>,
-    pub row_final_ts: MLE<Fp>,
-    pub col_read_ts: MLE<Fp>,
-    pub col_final_ts: MLE<Fp>,
-}
-
-impl SparkMetadata {
-    /// Creates metadata from preprocessed components.
-    /// All MLEs must have the same length.
-    pub fn new(
-        row: MLE<Fp>,
-        col: MLE<Fp>,
-        val: MLE<Fp>,
-        row_read_ts: MLE<Fp>,
-        row_final_ts: MLE<Fp>,
-        col_read_ts: MLE<Fp>,
-        col_final_ts: MLE<Fp>,
-    ) -> SparseResult<Self> {
-        // Validate that all MLEs have the same length
-        if row.len() != col.len() || col.len() != val.len() {
-            return Err(SparseError::ValidationError(format!(
-                "MLE length mismatch: row={}, col={}, val={}",
-                row.len(),
-                col.len(),
-                val.len()
-            )));
-        }
-
-        Ok(SparkMetadata {
-            row,
-            val,
-            col,
-            row_read_ts,
-            row_final_ts,
-            col_read_ts,
-            col_final_ts,
-        })
-    }
-
-    /// Preprocesses sparse MLE into metadata format for sum-check protocols.
-    /// Time: O(nnz + log(max_dim)), Space: O(nnz + max_dim).
-    pub fn preprocess(sparse_mle: &SparseMLE) -> SparseResult<Self> {
-        if sparse_mle.num_nonzeros() == 0 {
-            return Err(SparseError::EmptyMatrix);
-        }
-
-        let (max_rows, max_cols) = sparse_mle.dimensions;
-
-        // Validate dimensions are reasonable
-        if max_rows == 0 || max_cols == 0 {
-            return Err(SparseError::ValidationError(
-                "Matrix dimensions cannot be zero".to_string(),
-            ));
-        }
-
-        // Convert sparse representation to dense vectors
-        let (row_vec, col_vec, val_vec) = Self::extract_dense_vectors(sparse_mle)?;
-
-        // Compute timestamp information for memory consistency checking
-        let TimeStamps {
-            read_ts: row_read_ts,
-            final_ts: row_final_ts,
-        } = TimeStamps::compute(&row_vec, max_rows)?;
-        let TimeStamps {
-            read_ts: col_read_ts,
-            final_ts: col_final_ts,
-        } = TimeStamps::compute(&col_vec, max_cols)?;
-
-        // Convert vectors to MLEs
-        let row_mle = MLE::new(row_vec);
-        let col_mle = MLE::new(col_vec);
-        let val_mle = MLE::new(val_vec);
-
-        Self::new(
-            row_mle,
-            col_mle,
-            val_mle,
-            row_read_ts,
-            row_final_ts,
-            col_read_ts,
-            col_final_ts,
-        )
-    }
-
-    /// Extracts dense vectors from sparse representation in deterministic order.
-    fn extract_dense_vectors(
-        sparse_mle: &SparseMLE,
-    ) -> SparseResult<(Vec<BabyBear>, Vec<BabyBear>, Vec<BabyBear>)> {
-        let num_entries = sparse_mle.num_nonzeros();
-
-        let mut row_vec = Vec::with_capacity(num_entries);
-        let mut col_vec = Vec::with_capacity(num_entries);
-        let mut val_vec = Vec::with_capacity(num_entries);
-
-        // Process entries in a deterministic order for reproducibility
-        let mut entries: Vec<_> = sparse_mle.iter().collect();
-        entries.sort_by_key(|(coord, _)| *coord);
-
-        for ((row_idx, col_idx), entry_val) in entries {
-            row_vec.push(BabyBear::from_usize(*row_idx));
-            col_vec.push(BabyBear::from_usize(*col_idx));
-            val_vec.push(*entry_val);
-        }
-
-        Ok((row_vec, col_vec, val_vec))
-    }
-
-    /// Returns the number of non-zero entries.
-    pub fn len(&self) -> usize {
-        self.row.len()
-    }
-
-    /// Provides read-only access to the row MLE.
-    pub fn row(&self) -> &MLE<Fp> {
-        &self.row
-    }
-
-    /// Provides read-only access to the column MLE.
-    pub fn col(&self) -> &MLE<Fp> {
-        &self.col
-    }
-
-    /// Provides read-only access to the value MLE.
-    pub fn val(&self) -> &MLE<Fp> {
-        &self.val
-    }
-
-    /// Returns the maximum number of variables across all stored MLEs.
-    pub fn max_n_vars(&self) -> Option<usize> {
-        [
-            self.row.n_vars(),
-            self.col.n_vars(),
-            self.val.n_vars(),
-            self.row_read_ts.n_vars(),
-            self.row_final_ts.n_vars(),
-            self.col_read_ts.n_vars(),
-            self.col_final_ts.n_vars(),
-        ]
-        .into_iter()
-        .max()
-    }
-}
-
-/// Timestamp tracking for Twist & Shout memory consistency protocols.
-///
-/// Maintains read_ts[i] ≤ final_ts[i] invariant for all addresses.
-#[derive(Debug, Clone, PartialEq)]
-pub struct TimeStamps {
-    /// Read timestamps for each address
-    read_ts: MLE<Fp>,
-    /// Final write timestamps for each address
-    final_ts: MLE<Fp>,
-}
-
-impl TimeStamps {
-    /// Creates timestamp structure, validating read_ts ≤ final_ts invariant.
-    pub fn new(read_ts: Vec<BabyBear>, final_ts: Vec<BabyBear>) -> SparseResult<Self> {
-        // read_ts and final_ts serve different purposes and can have different sizes:
-        // - read_ts[i] = timestamp before i-th memory access (size = padded accesses)
-        // - final_ts[j] = final write count for address j (size = address space)
-
-        Ok(TimeStamps {
-            read_ts: MLE::new(read_ts),
-            final_ts: MLE::new(final_ts),
-        })
-    }
-
-    /// Computes timestamps from memory access sequence.
-    /// Address space must be power of 2. Time: O(n+m), Space: O(m).
-    pub fn compute(indices: &[BabyBear], max_address_space: usize) -> SparseResult<Self> {
-        if indices.is_empty() {
-            return Err(SparseError::ValidationError(
-                "Cannot compute timestamps for empty index sequence".to_string(),
-            ));
-        }
-
-        if !max_address_space.is_power_of_two() {
-            return Err(SparseError::ValidationError(
-                "Address space size must be a power of 2".to_string(),
-            ));
-        }
-
-        let padded_size = indices.len().next_power_of_two();
-        let timestamp_size = max_address_space.next_power_of_two();
-
-        // Initialize timestamp vectors with their appropriate sizes
-        let mut read_ts = vec![BabyBear::ZERO; padded_size];
-        let mut final_ts = vec![BabyBear::ZERO; timestamp_size];
-
-        // Process each memory access in sequence
-        for (logical_time, &addr_field) in indices.iter().enumerate() {
-            let address = addr_field.as_canonical_u32() as usize;
-
-            // Record read timestamp (current state before this access)
-            read_ts[logical_time] = final_ts[address];
-
-            // Update write timestamp (increment for this address)
-            final_ts[address] = final_ts[address] + BabyBear::ONE;
-        }
-
-        // For the padded entries (from indices.len() to padded_size), we access
-        // dummy addresses that don't affect the computation but maintain the
-        // power-of-2 memory access pattern
-        if padded_size > indices.len() {
-            // Use address 0 as dummy (or any valid address < max_address_space)
-            let dummy_address = 0;
-            for logical_time in indices.len()..padded_size {
-                // These dummy accesses maintain the memory pattern without affecting computation
-                read_ts[logical_time] = final_ts[dummy_address];
-                final_ts[dummy_address] = final_ts[dummy_address] + BabyBear::ONE;
-            }
-        }
-
-        TimeStamps::new(read_ts, final_ts)
-    }
-
-    /// Returns a reference to the read timestamps
-    pub fn read_ts(&self) -> &MLE<Fp> {
-        &self.read_ts
-    }
-
-    /// Returns a reference to the final timestamps
-    pub fn final_ts(&self) -> &MLE<Fp> {
-        &self.final_ts
     }
 }
 
@@ -574,7 +338,7 @@ mod tests {
             BabyBear::from_u32(1),
             BabyBear::from_u32(2),
             BabyBear::from_u32(3),
-            BabyBear::from_u32(4),
+            BabyBear::from_u32(4)
         ];
 
         let result = sparse_mle.multiply_by_matrix(&columns).unwrap();
@@ -611,7 +375,12 @@ mod tests {
         let result = sparse_mle.multiply_by_matrix(&empty_columns).unwrap();
 
         assert_eq!(result.len(), 2);
-        assert!(result.coeffs().iter().all(|entry| *entry == BabyBear::ZERO));
+        assert!(
+            result
+                .coeffs()
+                .iter()
+                .all(|entry| *entry == BabyBear::ZERO)
+        );
     }
 
     #[test]
@@ -627,7 +396,7 @@ mod tests {
             BabyBear::from_u32(2),
             BabyBear::from_u32(3),
             BabyBear::from_u32(4),
-            BabyBear::from_u32(5),
+            BabyBear::from_u32(5)
         ];
 
         let result = sparse_mle.multiply_by_matrix(&columns);
@@ -676,10 +445,7 @@ mod tests {
             expected: (2, 3),
             actual: (4, 5),
         };
-        assert_eq!(
-            dimension_err.to_string(),
-            "Dimension mismatch: expected (2, 3), got (4, 5)"
-        );
+        assert_eq!(dimension_err.to_string(), "Dimension mismatch: expected (2, 3), got (4, 5)");
 
         let index_err = SparseError::IndexOutOfBounds {
             index: (5, 6),
@@ -691,229 +457,7 @@ mod tests {
         assert_eq!(empty_err.to_string(), "Operation on empty matrix");
 
         let constraint_err = SparseError::ConstraintViolation("constraint failed".to_string());
-        assert_eq!(
-            constraint_err.to_string(),
-            "Constraint violation: constraint failed"
-        );
-    }
-
-    #[test]
-    fn test_spartan_metadata_new_length_mismatch() {
-        let row_mle = MLE::new(vec![BabyBear::ZERO, BabyBear::ZERO]); // Length 2
-        let col_mle = MLE::new(vec![
-            BabyBear::ONE,
-            BabyBear::ZERO,
-            BabyBear::ONE,
-            BabyBear::ZERO,
-        ]); // Length 4 (different)
-        let val_mle = MLE::new(vec![BabyBear::from_u32(5), BabyBear::from_u32(6)]); // Length 2
-
-        let read_ts = vec![BabyBear::ZERO];
-        let final_ts = vec![BabyBear::ONE];
-        let TimeStamps {
-            read_ts: row_read_ts,
-            final_ts: row_final_ts,
-        } = TimeStamps::new(read_ts.clone(), final_ts.clone()).unwrap();
-        let TimeStamps {
-            read_ts: col_read_ts,
-            final_ts: col_final_ts,
-        } = TimeStamps::new(read_ts, final_ts).unwrap();
-
-        let result = SparkMetadata::new(
-            row_mle,
-            col_mle,
-            val_mle,
-            row_read_ts,
-            row_final_ts,
-            col_read_ts,
-            col_final_ts,
-        );
-        assert!(matches!(result, Err(SparseError::ValidationError(_))));
-    }
-
-    #[test]
-    fn test_spartan_metadata_preprocess_valid() {
-        let mut coeffs = HashMap::new();
-        coeffs.insert((0, 1), BabyBear::from_u32(5));
-        coeffs.insert((1, 0), BabyBear::from_u32(10));
-
-        let sparse_mle = SparseMLE::new(coeffs).unwrap();
-        let metadata = SparkMetadata::preprocess(&sparse_mle).unwrap();
-
-        assert_eq!(metadata.len(), 2);
-    }
-
-    #[test]
-    fn test_spartan_metadata_preprocess_empty_matrix() {
-        let sparse_mle = SparseMLE::empty();
-        let result = SparkMetadata::preprocess(&sparse_mle);
-        assert!(matches!(result, Err(SparseError::EmptyMatrix)));
-    }
-
-    #[test]
-    fn test_spartan_metadata_extract_dense_vectors() {
-        let mut coeffs = HashMap::new();
-        coeffs.insert((1, 2), BabyBear::from_u32(7));
-        coeffs.insert((0, 1), BabyBear::from_u32(3));
-
-        let sparse_mle = SparseMLE::new(coeffs).unwrap();
-        let (row_vec, col_vec, val_vec) =
-            SparkMetadata::extract_dense_vectors(&sparse_mle).unwrap();
-
-        assert_eq!(row_vec.len(), 2);
-        assert_eq!(col_vec.len(), 2);
-        assert_eq!(val_vec.len(), 2);
-
-        // Should be sorted by coordinates: (0,1) then (1,2)
-        assert_eq!(row_vec[0], BabyBear::ZERO);
-        assert_eq!(col_vec[0], BabyBear::ONE);
-        assert_eq!(val_vec[0], BabyBear::from_u32(3));
-
-        assert_eq!(row_vec[1], BabyBear::ONE);
-        assert_eq!(col_vec[1], BabyBear::from_u32(2));
-        assert_eq!(val_vec[1], BabyBear::from_u32(7));
-    }
-
-    #[test]
-    fn test_timestamps_new_valid() {
-        let read_ts = vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::from_u32(2)];
-        let final_ts = vec![BabyBear::ONE, BabyBear::from_u32(2), BabyBear::from_u32(3)];
-
-        let timestamps = TimeStamps::new(read_ts, final_ts).unwrap();
-        assert_eq!(timestamps.read_ts.len(), 3);
-        assert_eq!(timestamps.final_ts.len(), 3);
-    }
-
-    #[test]
-    fn test_timestamps_new_different_lengths() {
-        let read_ts = vec![BabyBear::ZERO];
-        let final_ts = vec![BabyBear::ONE, BabyBear::from_u32(2)]; // Different length is now OK
-
-        let result = TimeStamps::new(read_ts, final_ts);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_timestamps_new_with_equal_vectors() {
-        let read_ts = vec![BabyBear::from_u32(1), BabyBear::from_u32(2)];
-        let final_ts = vec![BabyBear::from_u32(3), BabyBear::from_u32(4)];
-
-        let result = TimeStamps::new(read_ts, final_ts);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_timestamps_compute_valid() {
-        let indices = vec![
-            BabyBear::ZERO,
-            BabyBear::ONE,
-            BabyBear::ZERO,
-            BabyBear::from_u32(2),
-        ];
-        let max_address_space = 4; // Power of 2
-
-        let timestamps = TimeStamps::compute(&indices, max_address_space).unwrap();
-
-        // Check that read timestamps are correct
-        assert_eq!(timestamps.read_ts[0], BabyBear::ZERO); // Address 0, first access
-        assert_eq!(timestamps.read_ts[1], BabyBear::ZERO); // Address 1, first access
-        assert_eq!(timestamps.read_ts[2], BabyBear::ONE); // Address 0, second access
-        assert_eq!(timestamps.read_ts[3], BabyBear::ZERO); // Address 2, first access
-    }
-
-    #[test]
-    fn test_timestamps_compute_empty_indices() {
-        let indices = vec![];
-        let max_address_space = 4;
-
-        let result = TimeStamps::compute(&indices, max_address_space);
-        assert!(matches!(result, Err(SparseError::ValidationError(_))));
-    }
-
-    #[test]
-    fn test_timestamps_compute_non_power_of_two() {
-        let indices = vec![BabyBear::ZERO];
-        let max_address_space = 3; // Not a power of 2
-
-        let result = TimeStamps::compute(&indices, max_address_space);
-        assert!(matches!(result, Err(SparseError::ValidationError(_))));
-    }
-
-    #[test]
-    fn test_edge_case_single_element_matrix() {
-        let mut coeffs = HashMap::new();
-        coeffs.insert((0, 0), BabyBear::from_u32(42));
-
-        let sparse_mle = SparseMLE::new(coeffs).unwrap();
-        assert_eq!(sparse_mle.dimensions(), (1, 1));
-
-        let vector = vec![BabyBear::from_u32(2)];
-        let result = sparse_mle.multiply_by_vector(&vector).unwrap();
-        assert_eq!(result[0], BabyBear::from_u32(84));
-    }
-
-    #[test]
-    fn test_large_coordinates() {
-        let mut coeffs = HashMap::new();
-        coeffs.insert((100, 200), BabyBear::ONE);
-
-        let sparse_mle = SparseMLE::new(coeffs).unwrap();
-        // Next power of 2 for 100 is 128, for 200 is 256
-        assert_eq!(sparse_mle.dimensions(), (128, 256));
-    }
-
-    #[test]
-    fn test_metadata_preprocessing_deterministic_order() {
-        let mut coeffs = HashMap::new();
-        coeffs.insert((2, 1), BabyBear::from_u32(20));
-        coeffs.insert((0, 3), BabyBear::from_u32(5));
-        coeffs.insert((1, 0), BabyBear::from_u32(10));
-        coeffs.insert((3, 2), BabyBear::from_u32(15)); // Add 4th entry to make it power of 2
-
-        let sparse_mle = SparseMLE::new(coeffs).unwrap();
-        let metadata1 = SparkMetadata::preprocess(&sparse_mle).unwrap();
-        let metadata2 = SparkMetadata::preprocess(&sparse_mle).unwrap();
-
-        // Should be deterministic
-        assert_eq!(metadata1.row.coeffs(), metadata2.row.coeffs());
-        assert_eq!(metadata1.col.coeffs(), metadata2.col.coeffs());
-        assert_eq!(metadata1.val.coeffs(), metadata2.val.coeffs());
-    }
-
-    #[test]
-    fn test_timestamps_memory_access_pattern() {
-        // Test a specific memory access pattern: [0, 1, 0, 1, 2]
-        let indices = vec![
-            BabyBear::ZERO,
-            BabyBear::ONE,
-            BabyBear::ZERO,
-            BabyBear::ONE,
-            BabyBear::from_u32(2),
-        ];
-
-        let timestamps = TimeStamps::compute(&indices, 4).unwrap();
-
-        // Verify read timestamps capture the state before each access
-        assert_eq!(timestamps.read_ts[0], BabyBear::ZERO); // First access to 0
-        assert_eq!(timestamps.read_ts[1], BabyBear::ZERO); // First access to 1
-        assert_eq!(timestamps.read_ts[2], BabyBear::ONE); // Second access to 0
-        assert_eq!(timestamps.read_ts[3], BabyBear::ONE); // Second access to 1
-        assert_eq!(timestamps.read_ts[4], BabyBear::ZERO); // First access to 2
-
-        // Verify read timestamps for padding entries (dummy accesses to address 0)
-        assert_eq!(timestamps.read_ts[5], BabyBear::from_u32(2)); // After 2 real accesses to addr 0
-        assert_eq!(timestamps.read_ts[6], BabyBear::from_u32(3)); // After 3 accesses to addr 0
-        assert_eq!(timestamps.read_ts[7], BabyBear::from_u32(4)); // After 4 accesses to addr 0
-
-        // Verify final timestamps show total accesses per address
-        assert_eq!(timestamps.final_ts[0], BabyBear::from_u32(5)); // Address 0: 2 real + 3 dummy = 5 total
-        assert_eq!(timestamps.final_ts[1], BabyBear::from_u32(2)); // Address 1 accessed twice
-        assert_eq!(timestamps.final_ts[2], BabyBear::ONE); // Address 2 accessed once
-        assert_eq!(timestamps.final_ts[3], BabyBear::ZERO); // Address 3 never accessed
-
-        // Verify arrays have appropriate lengths (both power of 2)
-        assert_eq!(timestamps.read_ts.len(), 8); // Padded memory accesses
-        assert_eq!(timestamps.final_ts.len(), 4); // Address space size
+        assert_eq!(constraint_err.to_string(), "Constraint violation: constraint failed");
     }
 
     #[test]

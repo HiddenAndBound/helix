@@ -59,6 +59,64 @@ let instance = R1CSInstance::new(r1cs, witness)?;
 assert!(instance.verify()?);
 ```
 
+### Poseidon2 Witness Generation (`src/spartan/r1cs/poseidon2.rs`)
+
+Produce R1CS-compatible witnesses for the 16-lane Poseidon2 permutation. The module offers two
+paths depending on whether you start from absorbed rate/capacity seeds or from fully materialised
+public states:
+
+```rust
+use helix::spartan::{
+    Poseidon2ColumnSeed, R1CSInstance, build_default_poseidon2_witness_matrix_from_states,
+    build_poseidon2_instance, build_poseidon2_witness_matrix,
+};
+use p3_baby_bear::BabyBear;
+
+// 1) Seed-based builder (rate + optional capacity lanes)
+let poseidon = p3_baby_bear::default_babybear_poseidon2_16();
+let seeds = vec![
+    Poseidon2ColumnSeed {
+        rate: vec![BabyBear::ONE, BabyBear::TWO],
+        capacity: None,
+    },
+    Poseidon2ColumnSeed {
+        rate: vec![BabyBear::from_int(5)],
+        capacity: Some([BabyBear::ZERO; 14]),
+    },
+];
+let seed_matrix = build_poseidon2_witness_matrix(&seeds, &poseidon)?;
+
+// 2) Multi-state builder (each state is the 16-lane public input for one permutation column)
+let mut s0 = [BabyBear::ZERO; 16];
+s0[0] = BabyBear::ONE;
+let mut s1 = [BabyBear::ZERO; 16];
+s1[0] = BabyBear::from_int(5);
+let states = vec![s0, s1];
+let matrix = build_default_poseidon2_witness_matrix_from_states(&states)?;
+
+assert_eq!(matrix.num_columns, 2);
+assert_eq!(matrix.num_public_inputs, 16);
+assert_eq!(matrix.assignments.len(), matrix.column_len * matrix.num_columns);
+
+// Turn a specific column back into an R1CS instance for proving/verifying
+let column0 = matrix.column_witness(0).expect("column 0 should exist");
+let mut capacity0 = [BabyBear::ZERO; 14];
+capacity0.copy_from_slice(&states[0][2..]);
+let template = build_poseidon2_instance(&states[0][..2], Some(&capacity0), &poseidon)?;
+let instance = R1CSInstance::new(template.r1cs.clone(), column0)?;
+assert!(instance.verify()?);
+```
+
+Key facts about the multi-state API:
+
+- Each column shares the exact same layout (public inputs at the first 16 lanes, identical wiring).
+- Columns are padded to a power-of-two `column_len` and stored in column-major order inside
+  `assignments`.
+- `final_states[i]` and `digests[i]` cache the post-permutation result and rate digest for each
+  column so that callers can reconstitute a full `Poseidon2Witness` when needed.
+- The builders enforce consistent layout/length invariants and return
+  `SparseError::ValidationError` if they are violated (including empty input sets).
+
 ### Spartan Proof Generation (`src/spartan/prover.rs`)
 
 Generate proofs for R1CS satisfaction using sum-check protocols:

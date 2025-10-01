@@ -74,7 +74,7 @@ fn bench_iteration_methods(c: &mut Criterion) {
 // Additional benchmark for the specific sumcheck scenario
 fn bench_sumcheck_realistic(c: &mut Criterion) {
     // Typical parameters for sumcheck rounds
-    let rounds = 20;
+    let rounds = 25;
     let round = 10; // Mid-round scenario
     let iterations = 1 << (rounds - round - 1); // 2^9 = 512 iterations
     let poly_size = 1 << rounds; // 2^20 = ~1M elements
