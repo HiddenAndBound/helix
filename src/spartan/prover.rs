@@ -161,7 +161,9 @@ mod tests {
     use anyhow::bail;
     use itertools::multizip;
     use p3_field::{ Field, PrimeCharacteristicRing };
+    use p3_monty_31::dft;
     use rand::{ Rng, SeedableRng, rngs::StdRng };
+    use p3_dft::*;
     #[test]
     fn spartan_test() -> anyhow::Result<()> {
         // This is also the number of nonlinear constraints.

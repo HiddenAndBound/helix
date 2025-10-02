@@ -1,19 +1,22 @@
-use criterion::{Criterion, criterion_group, criterion_main};
-use helix::Fp;
+use criterion::{ criterion_group, criterion_main, BenchmarkId, Criterion };
+use helix::{ pcs::utils::bit_reverse_sort, Fp };
+use p3_dft::{ Radix2Bowers, Radix2Dit, Radix2DitParallel, TwoAdicSubgroupDft };
 use p3_field::PrimeCharacteristicRing;
-use rayon::{iter::ParallelIterator, slice::ParallelSliceMut};
+use p3_matrix::{ bitrev, dense::{ DenseMatrix, RowMajorMatrix }, Matrix };
+use p3_monty_31::dft::RecursiveDft;
+use rayon::{ iter::ParallelIterator, slice::ParallelSliceMut, vec };
 
 fn benchmark_fft_forward(c: &mut Criterion) {
-    c.bench_function("fft_forward", |b| {
-        let mut vector = vec![Fp::from_u32(50); 1 << 27];
-        let roots = Fp::roots_of_unity_table(1 << 20);
-
-        b.iter(|| {
-            vector
-                .par_chunks_mut(1 << 20)
-                .for_each(|chunk| Fp::forward_fft(chunk, &roots))
+    let mut group = c.benchmark_group("FFT");
+    for i in 20..26 {
+        group.bench_with_input(format!("FFT 2^{i}"), &i, |b, i| {
+            let mut vector = vec![Fp::from_u32(50); 1 << i];
+            let roots = Fp::roots_of_unity_table(1 << i);
+            b.iter(|| {
+                Fp::forward_fft(&mut vector, &roots);
+            });
         });
-    });
+    }
 }
 
 criterion_group!(benches, benchmark_fft_forward);

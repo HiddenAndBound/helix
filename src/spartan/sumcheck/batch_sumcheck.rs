@@ -8,13 +8,14 @@ use crate::{
     pcs::{
         prover::{ commit_oracle, fold_encoding_and_polynomial, update_queries },
         utils::{ fold, get_codewords, get_merkle_paths },
+        verifier::{ check_query_consistency, fold_codewords, verify_paths },
         BaseFoldConfig,
         BasefoldCommitment,
         ProverData,
     },
     polynomial::MLE,
     sparse::SparseMLE,
-    spartan::{ sumcheck::eval_at_two, univariate::UnivariatePoly },
+    spartan::{ sumcheck::{ eval_at_infinity, eval_at_two }, univariate::UnivariatePoly },
     Fp,
     Fp4,
 };
@@ -23,6 +24,7 @@ pub struct BatchSumCheckProof {
     round_proofs: Vec<UnivariatePoly>,
     final_evals: [Fp4; 4],
     oracle_commitments: Vec<[u8; 32]>,
+    z_eval: Fp4,
     codewords: Vec<Vec<(Fp4, Fp4)>>,
     paths: Vec<Vec<MerklePath>>,
 }
@@ -32,6 +34,7 @@ impl BatchSumCheckProof {
         round_proofs: Vec<UnivariatePoly>,
         final_evals: [Fp4; 4],
         oracle_commitments: Vec<[u8; 32]>,
+        z_eval: Fp4,
         codewords: Vec<Vec<(Fp4, Fp4)>>,
         paths: Vec<Vec<MerklePath>>
     ) -> Self {
@@ -39,6 +42,7 @@ impl BatchSumCheckProof {
             round_proofs,
             final_evals,
             oracle_commitments,
+            z_eval,
             codewords,
             paths,
         }
@@ -80,7 +84,7 @@ impl BatchSumCheckProof {
         let gamma = challenger.get_challenge();
 
         // gamma.c_0 + c_1
-        let mut current_claim = z_eval;
+        let mut current_claim = gamma * z_eval;
         let mut round_proofs = Vec::new();
         let mut round_challenges = Vec::new();
 
@@ -203,6 +207,7 @@ impl BatchSumCheckProof {
                 round_proofs,
                 final_evals,
                 state.oracle_commitments,
+                z_eval,
                 codewords,
                 paths
             ),
@@ -211,12 +216,19 @@ impl BatchSumCheckProof {
     }
 
     /// Verifies the sum-check proof. Panics if verification fails.
-    pub fn verify(&self, challenger: &mut Challenger) -> anyhow::Result<(Vec<Fp4>, [Fp4; 4])> {
+    pub fn verify(
+        &self,
+        commitment: BasefoldCommitment,
+        roots: &[Vec<Fp>],
+        challenger: &mut Challenger,
+        config: &BaseFoldConfig
+    ) -> anyhow::Result<(Vec<Fp4>, [Fp4; 4])> {
         let rounds = self.round_proofs.len();
 
         let eq_point = challenger.get_challenges(rounds);
 
-        let mut current_claim = Fp4::ZERO;
+        let gamma = challenger.get_challenge();
+        let mut current_claim = gamma * self.z_eval;
         let mut round_challenges = Vec::new();
 
         // Verify each round of the sum-check protocol
@@ -239,10 +251,59 @@ impl BatchSumCheckProof {
             let challenge = challenger.get_challenge();
             current_claim = round_poly.evaluate(challenge);
             round_challenges.push(challenge);
+            challenger.observe_commitment(&self.oracle_commitments[round]);
         }
 
-        // Final check: A(r)·B(r) - C(r) = final_claim
-        if current_claim != self.final_evals[0] * self.final_evals[1] - self.final_evals[2] {
+        //Query Phase
+
+        // The queries are always in the range 0..encoding.len()/2
+        let log_query_range = (rounds as u32) + config.rate.trailing_zeros() - 1;
+        let mut query_range = 1 << log_query_range;
+        let mut queries = challenger.get_indices(log_query_range, config.queries);
+        let mut folded_codewords = vec![Fp4::ZERO; config.queries];
+
+        for round in 0..rounds {
+            let halfsize = query_range >> 1;
+            let oracle_commitment = match round {
+                0 => commitment.commitment,
+                _ => self.oracle_commitments[round - 1],
+            };
+
+            let (codewords, paths) = (&self.codewords[round], &self.paths[round]);
+
+            check_query_consistency(
+                &mut queries,
+                &folded_codewords,
+                &codewords,
+                query_range,
+                round
+            )?;
+
+            verify_paths(codewords, paths, &queries, oracle_commitment)?;
+
+            fold_codewords(
+                &mut folded_codewords,
+                codewords,
+                &queries,
+                round_challenges[round],
+                &roots[round]
+            );
+
+            query_range = halfsize;
+        }
+
+        let [a, b, c, z] = self.final_evals;
+
+        if folded_codewords[0] != z {
+            anyhow::bail!(
+                "Final claim verification failed: {:?} != {:?}",
+                folded_codewords[0],
+                current_claim
+            );
+        }
+
+        // Final check: A(r)·B(r) - C(r) + \gamma.z(r) = final_claim
+        if current_claim != a * b - c + gamma * z {
             return Err(anyhow!("Final Check Failed in SumCheck"));
         }
 
@@ -308,11 +369,9 @@ pub fn compute_round<F>(
     )
         .into_par_iter()
         .map(|(a, b, c, z, &eq)| {
-            // g(0): set current variable to 0
-            let val_0 = eq * (gamma * z[0] - c[0]);
+            let val_0 = eq * (gamma * z[0] + a[0] * b[0] - c[0]);
 
-            // g(2): use multilinear polynomial identity
-            let val_2 = eq * (eval_at_two(a[0], a[1]) * eval_at_two(b[0], b[1]));
+            let val_2 = eq * (eval_at_infinity(a[0], a[1]) * eval_at_infinity(b[0], b[1]));
             (val_0, val_2)
         })
         .reduce(
@@ -330,4 +389,85 @@ pub fn compute_round<F>(
     round_proof.interpolate().unwrap();
 
     round_proof
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ challenger::Challenger, pcs::Basefold, polynomial::MLE, Fp };
+    use itertools::multizip;
+    use rand::{ rngs::StdRng, Rng, SeedableRng };
+    use std::collections::HashMap;
+
+    #[test]
+    fn batch_sum_check_proof_end_to_end() -> anyhow::Result<()> {
+        const ROWS: usize = 1 << 6;
+        const COLS: usize = ROWS;
+        const WITNESS_COLS: usize = 1 << 3;
+        let mut rng = StdRng::seed_from_u64(0);
+
+        let mut A = HashMap::<(usize, usize), Fp>::new();
+        let mut B = HashMap::<(usize, usize), Fp>::new();
+        let mut C = HashMap::<(usize, usize), Fp>::new();
+
+        let witness_entry = Fp::new(rng.r#gen::<u32>());
+        let z = MLE::new(vec![witness_entry; COLS * WITNESS_COLS]);
+
+        let z_const = witness_entry;
+
+        for row in 0..ROWS {
+            let a_val = Fp::new(rng.r#gen::<u32>());
+            let b_val = Fp::new(rng.r#gen::<u32>());
+
+            let col_a = rng.gen_range(0..COLS);
+            let col_b = rng.gen_range(0..COLS);
+
+            A.insert((row, col_a), a_val);
+            B.insert((row, col_b), b_val);
+
+            C.insert((row, row), a_val * b_val * z_const);
+        }
+
+        let A = SparseMLE::new(A)?;
+        let B = SparseMLE::new(B)?;
+        let C = SparseMLE::new(C)?;
+
+        let a_eval = A.multiply_by_mle(&z)?;
+        let b_eval = B.multiply_by_mle(&z)?;
+        let c_eval = C.multiply_by_mle(&z)?;
+
+        for (&a_i, &b_i, &c_i) in multizip((a_eval.coeffs(), b_eval.coeffs(), c_eval.coeffs())) {
+            assert_eq!(c_i, a_i * b_i, "R1CS instance not satisfied");
+        }
+
+        let config = BaseFoldConfig::new().with_queries(4);
+        let roots = Fp::roots_of_unity_table(1 << (z.n_vars() + 1));
+        let (commitment, prover_data) = Basefold::commit(&z, &roots, &config)?;
+
+        let mut prover_challenger = Challenger::new();
+        let (proof, round_challenges) = BatchSumCheckProof::prove(
+            &A,
+            &B,
+            &C,
+            &z,
+            &commitment,
+            &prover_data,
+            &roots,
+            &config,
+            &mut prover_challenger
+        )?;
+
+        assert_eq!(round_challenges.len(), z.n_vars());
+
+        let mut verifier_challenger = Challenger::new();
+        let (verified_challenges, final_evals) = proof.verify(
+            commitment,
+            &roots,
+            &mut verifier_challenger,
+            &config
+        )?;
+
+        assert_eq!(verified_challenges, round_challenges);
+        Ok(())
+    }
 }

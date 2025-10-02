@@ -6,13 +6,9 @@ use std::ops::Mul;
 
 use itertools::Itertools;
 use p3_baby_bear::BabyBear;
-use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, RawDataSerializable};
+use p3_field::{ ExtensionField, Field, PrimeCharacteristicRing, RawDataSerializable };
 
-use crate::{
-    Fp, Fp4,
-    merkle_tree::{MerklePath, MerkleTree},
-    polynomial::MLE,
-};
+use crate::{ Fp, Fp4, merkle_tree::{ MerklePath, MerkleTree }, polynomial::MLE };
 
 /// Cryptographic commitment as 32-byte Blake3 hash.
 pub type Commitment = [u8; 32];
@@ -48,10 +44,8 @@ pub fn encode_mle(poly: &MLE<Fp>, roots: &[Vec<Fp>], rate: usize) -> Encoding {
 
 /// Folds a pair of codewords using challenge and twiddle factor.
 /// Computes g₀ = (a₀ + a₁)/2, g₁ = (a₀ - a₁)/2 * ω⁻¹, returns g₀ + r*(g₁ - g₀).
-pub fn fold_pair<F>(codewords: (F, F), r: Fp4, twiddle: Fp) -> Fp4
-where
-    F: Field + Mul<Fp, Output = F>,
-    Fp4: ExtensionField<F>,
+pub fn fold_pair_dit<F>(codewords: (F, F), r: Fp4, twiddle: Fp) -> Fp4
+    where F: Field + Mul<Fp, Output = F>, Fp4: ExtensionField<F>
 {
     let (a0, a1) = codewords;
     // todo:Inverse˚ should not be called
@@ -59,24 +53,30 @@ where
     r * (g1 - g0) + g0
 }
 
+/// Folds a pair of codewords using challenge and twiddle factor.
+/// Computes g₀ = (a₀ + a₁)/2, g₁ = (a₀ - a₁)/2 * ω⁻¹, returns g₀ + r*(g₁ - g₀).
+pub fn fold_pair_dif<F>(codewords: (F, F), r: Fp4, twiddle: Fp) -> Fp4
+    where F: Field + Mul<Fp, Output = F>, Fp4: ExtensionField<F>
+{
+    let (a0, a1) = codewords;
+    let a1_inv = a1 * twiddle.inverse();
+    // todo:Inverse˚ should not be called
+    let (g0, g1) = ((a0 + a1_inv) * HALF, (a0 - a1_inv) * HALF);
+    r * (g1 - g0) + g0
+}
 /// Folds an encoding by applying fold_pair to adjacent pairs, reducing size by half.
 /// Uses slice splitting to eliminate manual offset calculation and prevent out-of-bounds access.
 /// Applies fold_pair to pairs from left and right halves of the input slice.
 pub fn fold<F>(code: &[F], random_challenge: Fp4, roots: &[Fp]) -> Vec<Fp4>
-where
-    F: Field + Mul<Fp, Output = F>,
-    Fp4: ExtensionField<F>,
+    where F: Field + Mul<Fp, Output = F>, Fp4: ExtensionField<F>
 {
     let half_size = code.len() >> 1;
-    assert_eq!(
-        roots.len(),
-        half_size,
-        "roots length must equal half of code length"
-    );
+    assert_eq!(roots.len(), half_size, "roots length must equal half of code length");
 
     let (left, right) = code.split_at(half_size);
-    itertools::multizip((left, right, roots))
-        .map(|(&l, &r, &root)| fold_pair((l, r), random_challenge, root))
+    itertools
+        ::multizip((left, right, roots))
+        .map(|(&l, &r, &root)| fold_pair_dit((l, r), random_challenge, root))
         .collect()
 }
 
@@ -105,10 +105,7 @@ pub fn get_merkle_paths(queries: &[usize], merkle_tree: &MerkleTree) -> Vec<Merk
 
 /// Computes Blake3 hash of a field element pair.
 /// Converts elements to Fp4, serializes to bytes, and hashes with Blake3.
-pub fn hash_field_pair<T>(left: T, right: T) -> [u8; 32]
-where
-    Fp4: RawDataSerializable + From<T>,
-{
+pub fn hash_field_pair<T>(left: T, right: T) -> [u8; 32] where Fp4: RawDataSerializable + From<T> {
     let buffer = Fp4::from(left)
         .into_bytes()
         .into_iter()
@@ -120,9 +117,7 @@ where
 
 /// Creates hash leaves from field element pairs.
 pub fn create_hash_leaves_from_pairs<T>(left: &[T], right: &[T]) -> Vec<[u8; 32]>
-where
-    T: Copy,
-    Fp4: RawDataSerializable + From<T>,
+    where T: Copy, Fp4: RawDataSerializable + From<T>
 {
     zip(left, right)
         .map(|(&l, &r)| hash_field_pair(l, r))
@@ -131,9 +126,7 @@ where
 
 /// Creates hash leaves from field element pairs (by reference).
 pub fn create_hash_leaves_from_pairs_ref<T>(left: &[T], right: &[T]) -> Vec<[u8; 32]>
-where
-    T: Clone,
-    Fp4: RawDataSerializable + From<T>,
+    where T: Clone, Fp4: RawDataSerializable + From<T>
 {
     zip(left, right)
         .map(|(l, r)| hash_field_pair(l.clone(), r.clone()))
@@ -145,11 +138,7 @@ where
 /// Vector length must be a power of 2.
 pub fn bit_reverse_sort<T>(vec: &mut Vec<T>) {
     let len = vec.len();
-    assert!(
-        len == 0 || len.is_power_of_two(),
-        "Vector length must be a power of 2, got {}",
-        len
-    );
+    assert!(len == 0 || len.is_power_of_two(), "Vector length must be a power of 2, got {}", len);
 
     if len <= 1 {
         return;
@@ -173,11 +162,7 @@ pub fn bit_reverse_sort<T>(vec: &mut Vec<T>) {
 /// Vector length must be a power of 2.
 pub fn bit_reverse_sorted<T: Clone>(vec: &Vec<T>) -> Vec<T> {
     let len = vec.len();
-    assert!(
-        len == 0 || len.is_power_of_two(),
-        "Vector length must be a power of 2, got {}",
-        len
-    );
+    assert!(len == 0 || len.is_power_of_two(), "Vector length must be a power of 2, got {}", len);
 
     if len <= 1 {
         return vec.clone();
@@ -197,6 +182,12 @@ pub fn bit_reverse_sorted<T: Clone>(vec: &Vec<T>) -> Vec<T> {
 
 #[cfg(test)]
 mod tests {
+    use std::default;
+
+    use p3_matrix::{ dense::RowMajorMatrix, Matrix };
+    use p3_monty_31::dft::RecursiveDft;
+    use rand::{ rngs::StdRng, RngCore, SeedableRng };
+
     use super::*;
 
     #[test]
@@ -283,32 +274,14 @@ mod tests {
 
     #[test]
     fn test_bit_reverse_sorted_strings() {
-        let vec = vec![
-            "a".to_string(),
-            "b".to_string(),
-            "c".to_string(),
-            "d".to_string(),
-        ];
+        let vec = vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()];
         let result = bit_reverse_sorted(&vec);
 
         assert_eq!(
             result,
-            vec![
-                "a".to_string(),
-                "c".to_string(),
-                "b".to_string(),
-                "d".to_string()
-            ]
+            vec!["a".to_string(), "c".to_string(), "b".to_string(), "d".to_string()]
         );
-        assert_eq!(
-            vec,
-            vec![
-                "a".to_string(),
-                "b".to_string(),
-                "c".to_string(),
-                "d".to_string()
-            ]
-        );
+        assert_eq!(vec, vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()]);
     }
 
     #[test]
@@ -381,7 +354,7 @@ mod tests {
             ComplexData {
                 id: 3,
                 name: "three".to_string(),
-            },
+            }
         ];
 
         let result = bit_reverse_sorted(&vec);

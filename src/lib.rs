@@ -1,5 +1,3 @@
-#![feature(core_intrinsics)]
-
 pub mod spartan;
 pub mod utils;
 // pub mod whir;

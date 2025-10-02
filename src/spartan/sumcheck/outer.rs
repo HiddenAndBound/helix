@@ -1,6 +1,6 @@
 use std::{ any, collections::HashMap };
 
-use anyhow::{ anyhow, bail };
+use anyhow::{ anyhow, bail, Ok };
 use itertools::multizip;
 use p3_field::{ ExtensionField, Field, PackedValue, PrimeCharacteristicRing };
 use rand::{ Rng, SeedableRng, rngs::StdRng };
@@ -19,7 +19,7 @@ use crate::{
     eq::EqEvals,
     polynomial::MLE,
     sparse::SparseMLE,
-    spartan::{ sumcheck::eval_at_two, univariate::UnivariatePoly },
+    spartan::{ sumcheck::{ eval_at_infinity, eval_at_two }, univariate::UnivariatePoly },
     Fp,
     Fp4,
 };
@@ -199,8 +199,7 @@ pub fn compute_round<F>(
             let val_0 = eq * (a[0] * b[0] - c[0]);
 
             // g(2): use multilinear polynomial identity
-            let val_2 =
-                eq * (eval_at_two(a[0], a[1]) * eval_at_two(b[0], b[1]) - eval_at_two(c[0], c[1]));
+            let val_2 = eq * (eval_at_infinity(a[0], a[1]) * eval_at_infinity(b[0], b[1]));
             (val_0, val_2)
         })
         .reduce(
@@ -270,55 +269,47 @@ fn outer_sum_check_test() -> anyhow::Result<()> {
 }
 
 #[test]
-fn outer_sum_check_multi_column_witness_test() -> anyhow::Result<()> {
-    // Number of nonlinear constraints (rows) and variables (cols)
-    const ROWS: usize = 1 << 4; // 16 constraints (power of two)
-    const COLS: usize = 4; // 4 variables per witness column (power of two)
-    const NUM_COLS: usize = 4; // witness has 4 columns (power of two)
-
-    // Build a simple R1CS per row selecting:
-    // (A·Z)[j] = Z_x, (B·Z)[j] = Z_y, (C·Z)[j] = Z_z with Z_z = Z_x * Z_y
-    // We reuse the same column selectors for every row to keep the structure simple.
+fn outer_sum_check_test_matrix() -> anyhow::Result<()> {
+    // This is also the number of nonlinear constraints.
+    const ROWS: usize = 1 << 10;
+    const COLS: usize = ROWS;
+    const WITNESS_COLS:usize = 1<<5;
+    let mut rng = StdRng::seed_from_u64(0);
     let mut A = HashMap::<(usize, usize), Fp>::new();
     let mut B = HashMap::<(usize, usize), Fp>::new();
     let mut C = HashMap::<(usize, usize), Fp>::new();
+    let mut z = MLE::new(Fp::new_array([rng.r#gen::<u32>(); COLS * WITNESS_COLS as usize]).to_vec());
+
+    let z_const = z[0];
+    // (a*b - c = 0 => c = a*b)
     for j in 0..ROWS {
-        A.insert((j, 0), Fp::ONE); // pick x from variable column 0
-        B.insert((j, 1), Fp::ONE); // pick y from variable column 1
-        C.insert((j, 2), Fp::ONE); // pick z from variable column 2
+        let a = Fp::new(rng.r#gen());
+        let b = Fp::new(rng.r#gen());
+
+        let i_0 = rng.gen_range(0..COLS);
+        let i_1 = rng.gen_range(0..COLS);
+
+        A.insert((j, i_0), a);
+        B.insert((j, i_1), b);
+
+        // Trivial equation a.b/z_inv_const
+        C.insert((j, j), a * b * z_const);
     }
 
     let A = SparseMLE::new(A)?;
     let B = SparseMLE::new(B)?;
     let C = SparseMLE::new(C)?;
 
-    // Construct witness matrix Z with NUM_COLS columns, flattened in column-major order.
-    // For each column k: [x_k, y_k, z_k = x_k*y_k, padding]
-    let mut z_flat = Vec::with_capacity(COLS * NUM_COLS);
-    for k in 0..NUM_COLS {
-        let x = Fp::from_u32(2 + (k as u32));
-        let y = Fp::from_u32(3 + (k as u32));
-        let z = x * y;
-        z_flat.push(x);
-        z_flat.push(y);
-        z_flat.push(z);
-        z_flat.push(Fp::ZERO); // padding variable
-    }
-    let z = MLE::new(z_flat);
-
-    // Compute A·Z, B·Z, C·Z; each returns an MLE over ROWS*NUM_COLS coefficients
     let a = A.multiply_by_mle(&z)?;
     let b = B.multiply_by_mle(&z)?;
     let c = C.multiply_by_mle(&z)?;
 
-    // Check element-wise that (A·Z) ∘ (B·Z) = (C·Z) across all rows and witness columns
     for (&a_i, &b_i, &c_i) in multizip((a.coeffs(), b.coeffs(), c.coeffs())) {
         if c_i != a_i * b_i {
-            bail!("R1CS instance not satisfied for multi-column witness");
+            bail!("R1CS instance not satisfied");
         }
     }
 
-    // Prove and verify Outer sumcheck with multi-column witness
     let mut challenger = Challenger::new();
     let (proof, _) = OuterSumCheckProof::prove(&A, &B, &C, &z, &mut challenger);
 
