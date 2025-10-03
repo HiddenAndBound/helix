@@ -55,7 +55,7 @@ impl SpartanProof {
 
         let config = BaseFoldConfig::fast();
         let roots = BabyBear::roots_of_unity_table(z.len() * 2);
-        let (z_commitment, prover_data) = Basefold::commit(z, &roots, &config)?;
+        let (z_commitment, prover_data) = Basefold::commit_dit(z, &roots, &config)?;
         let (A, B, C) = (&instance.r1cs.a, &instance.r1cs.b, &instance.r1cs.c);
         // Phase 1: OuterSumCheck - proves R1CS constraint satisfaction
         // Generates evaluation claims A(r_x), B(r_x), C(r_x) at random point r_x
@@ -80,7 +80,7 @@ impl SpartanProof {
         );
 
         let z_evaluation = inner_sum_check.final_evaluations()[3];
-        let z_eval_proof = Basefold::evaluate(
+        let z_eval_proof = Basefold::evaluate_dit(
             z,
             &evaluation_point,
             challenger,

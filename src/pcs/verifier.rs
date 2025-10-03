@@ -6,7 +6,7 @@
 use itertools::multizip;
 use p3_field::PrimeCharacteristicRing;
 
-use crate::pcs::utils::{ fold_pair_dit, hash_field_pair };
+use crate::pcs::utils::{ fold_pair_dif, fold_pair_dit, hash_field_pair };
 use crate::{
     Fp,
     Fp4,
@@ -78,6 +78,81 @@ impl Basefold {
     ///     Err(e) => println!("Verification failed: {}", e),
     /// }
     /// ```
+    pub fn verify_dif(
+        proof: EvalProof,
+        evaluation: Fp4,
+        eval_point: &[Fp4],
+        commitment: BasefoldCommitment,
+        roots: &[Vec<Fp>],
+        challenger: &mut Challenger,
+        config: &BaseFoldConfig
+    ) -> anyhow::Result<()> {
+        // TODO: Observe statement (eval, eval_point, commitment)
+        let mut current_claim = evaluation;
+
+        let rounds = eval_point.len();
+
+        let mut random_point = Vec::new();
+        //Commit phase
+        for round in 0..rounds {
+            let round_poly = &proof.sum_check_rounds[round];
+            verify_sum_check_round(round_poly, &mut current_claim, &eval_point, round)?;
+
+            challenger.observe_fp4_elems(&round_poly.coefficients());
+            let r = challenger.get_challenge();
+            current_claim = round_poly.evaluate(r);
+            random_point.push(r);
+            challenger.observe_commitment(&proof.commitments[round]);
+        }
+
+        //Query Phase
+
+        // The queries are always in the range 0..encoding.len()/2
+        let log_query_range = (rounds as u32) + config.rate.trailing_zeros() - 1;
+        let mut query_range = 1 << log_query_range;
+        let mut queries = challenger.get_indices(log_query_range, config.queries);
+        let mut folded_codewords = vec![Fp4::ZERO; config.queries];
+
+        for round in 0..rounds {
+            let halfsize = query_range >> 1;
+            let oracle_commitment = match round {
+                0 => commitment.commitment,
+                _ => proof.commitments[round - 1],
+            };
+
+            let (codewords, paths) = (&proof.codewords[round], &proof.paths[round]);
+
+            check_query_consistency(
+                &mut queries,
+                &folded_codewords,
+                &codewords,
+                query_range,
+                round
+            )?;
+
+            verify_paths(codewords, paths, &queries, oracle_commitment)?;
+
+            fold_codewords(
+                &mut folded_codewords,
+                codewords,
+                &queries,
+                random_point[round],
+                &roots[round]
+            );
+
+            query_range = halfsize;
+        }
+
+        if folded_codewords[0] != current_claim {
+            anyhow::bail!(
+                "Final claim verification failed: {:?} != {:?}",
+                folded_codewords[0],
+                current_claim
+            );
+        }
+        Ok(())
+    }
+
     pub fn verify(
         proof: EvalProof,
         evaluation: Fp4,
@@ -170,6 +245,21 @@ pub fn fold_codewords(
     }
 }
 
+/// Folds queried codeword pairs using the current round's challenge.
+///
+/// This operation mimics the encoding folding performed by the prover,
+/// allowing the verifier to check consistency across folding rounds.
+pub fn fold_codewords_dif(
+    folded_codewords: &mut [Fp4],
+    codewords: &[(Fp4, Fp4)],
+    queries: &[usize],
+    r: Fp4,
+    roots: &[Fp]
+) {
+    for (query, fold, &codeword_pair) in multizip((queries, folded_codewords, codewords)) {
+        *fold = fold_pair_dif(codeword_pair, r, roots[*query]);
+    }
+}
 /// Verifies Merkle authentication paths for all queried codeword pairs.
 ///
 /// Ensures that the prover provided authentic codewords from the committed
@@ -209,6 +299,32 @@ pub fn check_query_consistency(
             let (left, right) = codeword_pair;
             check_fold(folded_codeword, *query, query_range, left, right)?;
             update_query(query, query_range);
+        }
+    }
+    Ok(())
+}
+
+/// Verifies consistency between folded codewords across rounds.
+///
+/// Checks that the current round's codeword pairs correctly fold to match
+/// the previous round's folded results, preventing encoding manipulation.
+pub fn check_query_consistency_dif(
+    queries: &mut [usize],
+    folded_codewords: &[Fp4],
+    codewords: &[(Fp4, Fp4)],
+    query_range: usize,
+    round: usize
+) -> anyhow::Result<()> {
+    // Skip consistency check for first round (no previous folded codewords exist)
+    if round > 0 {
+        for (query, &folded_codeword, &codeword_pair) in multizip((
+            queries,
+            folded_codewords,
+            codewords,
+        )) {
+            let (left, right) = codeword_pair;
+            check_fold_dif(folded_codeword, *query, query_range, left, right)?;
+            update_query_dif(query, query_range);
         }
     }
     Ok(())
@@ -270,6 +386,16 @@ pub fn update_query(query: &mut usize, halfsize: usize) {
     *query &= halfsize - 1;
 }
 
+/// Updates a single query using bitwise masking optimization.
+/// For power-of-2 halfsize: query &= (halfsize - 1) is equivalent to
+/// the conditional subtraction but faster as it's a single bitwise operation.
+pub fn update_query_dif(query: &mut usize, halfsize: usize) {
+    debug_assert!(halfsize.is_power_of_two(), "halfsize must be a power of 2");
+    // Bitwise optimization: query &= (halfsize-1) equivalent to query %= halfsize
+    // but faster for power-of-2 values
+    *query >>= 1;
+}
+
 /// Verifies the consistency of folding operations during query verification.
 ///
 /// This function ensures that the current round's codewords correctly fold to match
@@ -313,6 +439,36 @@ pub fn check_fold(
     // Bitwise optimization: For power-of-2 halfsize, (query & halfsize) != 0
     // is equivalent to query >= halfsize but uses single bitwise operation
     if (query & halfsize) != 0 {
+        if folded_codeword != right {
+            anyhow::bail!(
+                "Folded codeword verification failed: expected {:?}, got {:?}",
+                (left, right),
+                folded_codeword
+            );
+        }
+    } else if folded_codeword != left {
+        anyhow::bail!(
+            "Folded codeword verification failed: expected {:?}, got {:?}",
+            (left, right),
+            folded_codeword
+        );
+    }
+
+    Ok(())
+}
+
+pub fn check_fold_dif(
+    folded_codeword: Fp4,
+    query: usize,
+    halfsize: usize,
+    left: Fp4,
+    right: Fp4
+) -> anyhow::Result<()> {
+    debug_assert!(halfsize.is_power_of_two(), "halfsize must be a power of 2");
+
+    // Bitwise optimization: For power-of-2 halfsize, (query & halfsize) != 0
+    // is equivalent to query >= halfsize but uses single bitwise operation
+    if (query & 1) != 0 {
         if folded_codeword != right {
             anyhow::bail!(
                 "Folded codeword verification failed: expected {:?}, got {:?}",

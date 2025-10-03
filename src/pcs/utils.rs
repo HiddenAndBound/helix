@@ -67,7 +67,7 @@ pub fn fold_pair_dif<F>(codewords: (F, F), r: Fp4, twiddle: Fp) -> Fp4
 /// Folds an encoding by applying fold_pair to adjacent pairs, reducing size by half.
 /// Uses slice splitting to eliminate manual offset calculation and prevent out-of-bounds access.
 /// Applies fold_pair to pairs from left and right halves of the input slice.
-pub fn fold<F>(code: &[F], random_challenge: Fp4, roots: &[Fp]) -> Vec<Fp4>
+pub fn fold_dit<F>(code: &[F], random_challenge: Fp4, roots: &[Fp]) -> Vec<Fp4>
     where F: Field + Mul<Fp, Output = F>, Fp4: ExtensionField<F>
 {
     let half_size = code.len() >> 1;
@@ -80,9 +80,26 @@ pub fn fold<F>(code: &[F], random_challenge: Fp4, roots: &[Fp]) -> Vec<Fp4>
         .collect()
 }
 
+/// Folds an encoding by applying fold_pair to adjacent pairs, reducing size by half.
+/// Uses slice splitting to eliminate manual offset calculation and prevent out-of-bounds access.
+/// Applies fold_pair to pairs from left and right halves of the input slice.
+pub fn fold_dif<F>(code: &[F], random_challenge: Fp4, roots: &[Fp]) -> Vec<Fp4>
+    where F: Field + Mul<Fp, Output = F>, Fp4: ExtensionField<F>
+{
+    let half_size = code.len() >> 1;
+    assert_eq!(roots.len(), half_size, "roots length must equal half of code length");
+    code.chunks(2)
+        .zip(roots.iter())
+        .map(|(pair, &root)| fold_pair_dif((pair[0], pair[1]), random_challenge, root))
+        .collect()
+}
+
 /// Retrieves codeword pairs from an encoding at query positions.
 /// Uses slice splitting to eliminate manual offset calculation.
-pub fn get_codewords<F: Into<Fp4> + Copy>(queries: &[usize], encoding: &[F]) -> Vec<(Fp4, Fp4)> {
+pub fn get_codewords_dit<F: Into<Fp4> + Copy>(
+    queries: &[usize],
+    encoding: &[F]
+) -> Vec<(Fp4, Fp4)> {
     let halfsize = encoding.len() >> 1;
     let (left, right) = encoding.split_at(halfsize);
 
@@ -90,6 +107,19 @@ pub fn get_codewords<F: Into<Fp4> + Copy>(queries: &[usize], encoding: &[F]) -> 
         .iter()
         .copied()
         .map(|i| (left[i].into(), right[i].into()))
+        .collect()
+}
+
+/// Retrieves codeword pairs from an encoding at query positions.
+/// Uses slice splitting to eliminate manual offset calculation.
+pub fn get_codewords_dif<F: Into<Fp4> + Copy>(
+    queries: &[usize],
+    encoding: &[F]
+) -> Vec<(Fp4, Fp4)> {
+    queries
+        .iter()
+        .copied()
+        .map(|i| (encoding[2 * i].into(), encoding[2 * i + 1].into()))
         .collect()
 }
 
@@ -116,27 +146,28 @@ pub fn hash_field_pair<T>(left: T, right: T) -> [u8; 32] where Fp4: RawDataSeria
 }
 
 /// Creates hash leaves from field element pairs.
-pub fn create_hash_leaves_from_pairs<T>(left: &[T], right: &[T]) -> Vec<[u8; 32]>
+pub fn create_hash_leaves_dit<T>(data: &[T]) -> Vec<[u8; 32]>
     where T: Copy, Fp4: RawDataSerializable + From<T>
 {
+    let (left, right) = data.split_at(data.len() / 2);
     zip(left, right)
         .map(|(&l, &r)| hash_field_pair(l, r))
         .collect()
 }
 
-/// Creates hash leaves from field element pairs (by reference).
-pub fn create_hash_leaves_from_pairs_ref<T>(left: &[T], right: &[T]) -> Vec<[u8; 32]>
-    where T: Clone, Fp4: RawDataSerializable + From<T>
+/// Creates hash leaves from field element pairs.
+pub fn create_hash_leaves_dif<T>(data: &[T]) -> Vec<[u8; 32]>
+    where T: Copy, Fp4: RawDataSerializable + From<T>
 {
-    zip(left, right)
-        .map(|(l, r)| hash_field_pair(l.clone(), r.clone()))
+    data.chunks_exact(2)
+        .map(|pair| hash_field_pair(pair[0], pair[1]))
         .collect()
 }
 
 /// Performs in-place bit-reverse sort on a vector.
 /// Swaps element at position i with element at bit_reverse(i).
 /// Vector length must be a power of 2.
-pub fn bit_reverse_sort<T>(vec: &mut Vec<T>) {
+pub fn bit_reverse_sort<T>(vec: &mut [T]) {
     let len = vec.len();
     assert!(len == 0 || len.is_power_of_two(), "Vector length must be a power of 2, got {}", len);
 
@@ -365,4 +396,7 @@ mod tests {
         assert_eq!(result[2].id, 1);
         assert_eq!(result[3].id, 3);
     }
+
+    #[test]
+    fn fft_test() {}
 }

@@ -187,8 +187,8 @@ mod tests {
     use rand::{ Rng, SeedableRng, rngs::StdRng };
 
     use super::*;
-    use crate::pcs::prover::update_query;
-    use crate::pcs::utils::{ encode_mle, fold, fold_pair_dit, get_codewords };
+    use crate::pcs::prover::update_query_dit;
+    use crate::pcs::utils::{ encode_mle, fold_dit, fold_pair_dit, get_codewords_dit };
     use crate::{ Fp, challenger::Challenger, polynomial::MLE };
 
     #[test]
@@ -206,8 +206,8 @@ mod tests {
         let mut config = BaseFoldConfig::new();
 
         config = config.with_queries(5);
-        let (commitment, prover_data) = Basefold::commit(&mle, &roots, &config).unwrap();
-        let eval_proof = Basefold::evaluate(
+        let (commitment, prover_data) = Basefold::commit_dit(&mle, &roots, &config).unwrap();
+        let eval_proof = Basefold::evaluate_dit(
             &mle,
             &eval_point,
             &mut challenger,
@@ -245,7 +245,7 @@ mod tests {
             .collect();
         for i in 0..4 {
             let r = eval_point[i];
-            encoding = fold(&encoding, r, &roots[i]);
+            encoding = fold_dit(&encoding, r, &roots[i]);
         }
         println!("{:?}", eval);
         println!("{:?}", encoding);
@@ -292,13 +292,13 @@ mod tests {
 
         let correct_codeword = (encoding[5].into(), encoding[21].into());
 
-        let received_codeword = get_codewords(&queries, &encoding);
+        let received_codeword = get_codewords_dit(&queries, &encoding);
 
         assert_eq!(correct_codeword, received_codeword[0]);
 
         let folded_codeword = fold_pair_dit(received_codeword[0], eval_point[0], roots[0][5]);
 
-        let folded_oracle = fold(&encoding, eval_point[0], &roots[0]);
+        let folded_oracle = fold_dit(&encoding, eval_point[0], &roots[0]);
 
         assert_eq!(folded_codeword, folded_oracle[5]);
     }
@@ -318,7 +318,7 @@ mod tests {
             let mut arithmetic_query = query;
 
             // Bitwise operation (new implementation)
-            update_query(&mut bitwise_query, halfsize);
+            update_query_dit(&mut bitwise_query, halfsize);
 
             // Arithmetic operation (old implementation)
             if arithmetic_query >= halfsize {

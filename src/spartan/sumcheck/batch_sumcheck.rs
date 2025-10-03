@@ -6,8 +6,8 @@ use crate::{
     eq::EqEvals,
     merkle_tree::{ MerklePath, MerkleTree },
     pcs::{
-        prover::{ commit_oracle, fold_encoding_and_polynomial, update_queries },
-        utils::{ fold, get_codewords, get_merkle_paths },
+        prover::{ commit_oracle_dit, fold_encoding_and_polynomial_dit, update_queries_dit },
+        utils::{ fold_dit, get_codewords_dit, get_merkle_paths },
         verifier::{ check_query_consistency, fold_codewords, verify_paths },
         BaseFoldConfig,
         BasefoldCommitment,
@@ -118,7 +118,7 @@ impl BatchSumCheckProof {
             round_challenges.push(round_challenge);
             current_claim = round_proof.evaluate(round_challenge);
 
-            let (current_encoding, current_poly_folded) = fold_encoding_and_polynomial(
+            let (current_encoding, current_poly_folded) = fold_encoding_and_polynomial_dit(
                 round,
                 &prover_data.encoding,
                 &state.encodings,
@@ -182,13 +182,13 @@ impl BatchSumCheckProof {
             let (round_codewords, round_paths): (Vec<(Fp4, Fp4)>, Vec<_>) = match round {
                 0 =>
                     (
-                        get_codewords(&queries, &prover_data.encoding),
+                        get_codewords_dit(&queries, &prover_data.encoding),
                         get_merkle_paths(&queries, &prover_data.merkle_tree),
                     ),
 
                 _ =>
                     (
-                        get_codewords(&queries, &encodings[round - 1]),
+                        get_codewords_dit(&queries, &encodings[round - 1]),
                         get_merkle_paths(&queries, &merkle_trees[round - 1]),
                     ),
             };
@@ -197,7 +197,7 @@ impl BatchSumCheckProof {
             paths.push(round_paths);
 
             // Update query indices for next round using bitwise masking
-            update_queries(&mut queries, halfsize);
+            update_queries_dit(&mut queries, halfsize);
 
             // Domain size halves each folding round
             domain_size = halfsize;
@@ -319,7 +319,7 @@ pub struct BasefoldState {
 
 impl BasefoldState {
     pub fn update(&mut self, current_encoding: Vec<Fp4>) -> anyhow::Result<()> {
-        let (oracle_commitment, merkle_tree) = commit_oracle(&current_encoding)?;
+        let (oracle_commitment, merkle_tree) = commit_oracle_dit(&current_encoding)?;
         self.oracle_commitments.push(oracle_commitment);
         self.merkle_trees.push(merkle_tree);
         self.encodings.push(current_encoding);
@@ -442,7 +442,7 @@ mod tests {
 
         let config = BaseFoldConfig::new().with_queries(4);
         let roots = Fp::roots_of_unity_table(1 << (z.n_vars() + 1));
-        let (commitment, prover_data) = Basefold::commit(&z, &roots, &config)?;
+        let (commitment, prover_data) = Basefold::commit_dit(&z, &roots, &config)?;
 
         let mut prover_challenger = Challenger::new();
         let (proof, round_challenges) = BatchSumCheckProof::prove(
