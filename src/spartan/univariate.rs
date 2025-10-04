@@ -1,4 +1,4 @@
-use super::error::{ SumCheckError, SumCheckResult };
+use super::error::{SumCheckError, SumCheckResult};
 use crate::Fp4;
 use p3_field::PrimeCharacteristicRing;
 use std::fmt;
@@ -15,14 +15,10 @@ impl UnivariatePoly {
     /// Creates polynomial from coefficients in degree order [a, b] or [a, b, c].
     pub fn new(coeffs: Vec<Fp4>) -> SumCheckResult<Self> {
         if coeffs.len() < 2 || coeffs.len() > 3 {
-            return Err(
-                SumCheckError::ValidationError(
-                    format!(
-                        "Polynomial requires 2-3 coefficients for degree 1-2, got {}",
-                        coeffs.len()
-                    )
-                )
-            );
+            return Err(SumCheckError::ValidationError(format!(
+                "Polynomial requires 2-3 coefficients for degree 1-2, got {}",
+                coeffs.len()
+            )));
         }
 
         Ok(UnivariatePoly { coeffs })
@@ -65,12 +61,9 @@ impl UnivariatePoly {
                 self.coeffs[2] = f_2;
                 Ok(())
             }
-            _ =>
-                Err(
-                    SumCheckError::ValidationError(
-                        "Interpolation requires 2-3 evaluation points".to_string()
-                    )
-                ),
+            _ => Err(SumCheckError::ValidationError(
+                "Interpolation requires 2-3 evaluation points".to_string(),
+            )),
         }
     }
 
@@ -111,7 +104,11 @@ impl UnivariatePoly {
 
     /// Returns the quadratic coefficient (c) if degree 2.
     pub fn quadratic_coeff(&self) -> Option<Fp4> {
-        if self.coeffs.len() > 2 { Some(self.coeffs[2]) } else { None }
+        if self.coeffs.len() > 2 {
+            Some(self.coeffs[2])
+        } else {
+            None
+        }
     }
 }
 
@@ -157,9 +154,17 @@ mod univariate_tests {
         let result = UnivariatePoly::new(coeffs);
 
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), SumCheckError::ValidationError(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            SumCheckError::ValidationError(_)
+        ));
 
-        let coeffs = vec![Fp4::from_u32(1), Fp4::from_u32(2), Fp4::from_u32(3), Fp4::from_u32(4)]; // Too many
+        let coeffs = vec![
+            Fp4::from_u32(1),
+            Fp4::from_u32(2),
+            Fp4::from_u32(3),
+            Fp4::from_u32(4),
+        ]; // Too many
         let result = UnivariatePoly::new(coeffs);
         assert!(result.is_err());
     }
@@ -238,11 +243,8 @@ mod univariate_tests {
 
     #[test]
     fn test_from_coeffs_deg2() {
-        let poly = UnivariatePoly::from_coeffs_deg2(
-            Fp4::from_u32(1),
-            Fp4::from_u32(2),
-            Fp4::from_u32(3)
-        );
+        let poly =
+            UnivariatePoly::from_coeffs_deg2(Fp4::from_u32(1), Fp4::from_u32(2), Fp4::from_u32(3));
 
         assert_eq!(poly.degree(), 2);
         assert_eq!(poly.constant_coeff(), Fp4::from_u32(1));
@@ -252,11 +254,8 @@ mod univariate_tests {
 
     #[test]
     fn test_evaluate_degree2() {
-        let poly = UnivariatePoly::from_coeffs_deg2(
-            Fp4::from_u32(1),
-            Fp4::from_u32(2),
-            Fp4::from_u32(3)
-        ); // 1 + 2x + 3x^2
+        let poly =
+            UnivariatePoly::from_coeffs_deg2(Fp4::from_u32(1), Fp4::from_u32(2), Fp4::from_u32(3)); // 1 + 2x + 3x^2
 
         assert_eq!(poly.evaluate(Fp4::ZERO), Fp4::from_u32(1)); // f(0) = 1
         assert_eq!(poly.evaluate(Fp4::ONE), Fp4::from_u32(6)); // f(1) = 1 + 2 + 3 = 6
@@ -265,11 +264,8 @@ mod univariate_tests {
 
     #[test]
     fn test_interpolation_roundtrip_degree2() {
-        let original_poly = UnivariatePoly::from_coeffs_deg2(
-            Fp4::from_u32(5),
-            Fp4::from_u32(7),
-            Fp4::from_u32(2)
-        );
+        let original_poly =
+            UnivariatePoly::from_coeffs_deg2(Fp4::from_u32(5), Fp4::from_u32(7), Fp4::from_u32(2));
 
         let f_0 = original_poly.evaluate(Fp4::ZERO);
         let f_1 = original_poly.evaluate(Fp4::ONE);

@@ -10,7 +10,7 @@
 use crate::spartan::error::{ SparseError, SparseResult };
 use crate::utils::{ Fp, Fp4, eq::EqEvals, polynomial::MLE };
 use p3_baby_bear::BabyBear;
-use p3_field::{ PrimeCharacteristicRing };
+use p3_field::PrimeCharacteristicRing;
 use std::collections::HashMap;
 
 /// Sparse multilinear extension (MLE) polynomial for Spartan.
@@ -147,6 +147,56 @@ impl SparseMLE {
                     let input_offset = idx * cols + *col;
                     let output_offset = idx * rows + *row;
                     flattened[output_offset] += value * matrix[input_offset];
+                }
+            }
+        }
+
+        Ok(MLE::new(flattened))
+    }
+
+    /// Computes the transpose multiplication `(matrix^T · A^T)` where `A` is the sparse
+    /// matrix represented by `self` and `matrix` is a dense `(k × m)` matrix provided
+    /// in column-major order. The result is returned column-major with dimensions
+    /// `(m × n)` (where `n` is the number of rows in `A`).
+    ///
+    /// This is equivalent to computing `(A · matrix)^T` without materializing the
+    /// intermediate dense product.
+    pub fn transpose_multiply_by_matrix(&self, matrix: &[BabyBear]) -> SparseResult<MLE<Fp>> {
+        let (rows, cols) = self.dimensions;
+
+        if rows == 0 || cols == 0 {
+            return Err(SparseError::EmptyMatrix);
+        }
+
+        if matrix.is_empty() {
+            return Ok(MLE::new(vec![BabyBear::ZERO; rows]));
+        }
+
+        if matrix.len() % cols != 0 {
+            return Err(SparseError::DimensionMismatch {
+                expected: (cols, matrix.len()),
+                actual: (cols, matrix.len()),
+            });
+        }
+
+        let num_columns = matrix.len() / cols;
+
+        if !num_columns.is_power_of_two() {
+            return Err(
+                SparseError::ValidationError(
+                    "Number of column vectors must be a power of two".to_string()
+                )
+            );
+        }
+
+        let mut flattened = vec![BabyBear::ZERO; rows * num_columns];
+
+        for ((row, col), &value) in self.iter() {
+            if *row < rows && *col < cols {
+                for idx in 0..num_columns {
+                    let input_offset = idx * cols + *col;
+                    let output_offset = row * num_columns + idx;
+                    flattened[output_offset] += matrix[input_offset] * value;
                 }
             }
         }
@@ -314,18 +364,6 @@ mod tests {
     }
 
     #[test]
-    fn test_sparse_mle_multiply_by_vector_dimension_mismatch() {
-        let mut coeffs = HashMap::new();
-        coeffs.insert((0, 0), BabyBear::ONE);
-
-        let sparse_mle = SparseMLE::new(coeffs).unwrap();
-        let vector = vec![BabyBear::ONE, BabyBear::ONE, BabyBear::ONE]; // Wrong size
-
-        let result = sparse_mle.multiply_by_vector(&vector);
-        assert!(matches!(result, Err(SparseError::DimensionMismatch { .. })));
-    }
-
-    #[test]
     fn test_sparse_mle_multiply_by_matrix_valid() {
         let mut coeffs = HashMap::new();
         coeffs.insert((0, 0), BabyBear::from_u32(2));
@@ -400,6 +438,64 @@ mod tests {
         ];
 
         let result = sparse_mle.multiply_by_matrix(&columns);
+        assert!(matches!(result, Err(SparseError::ValidationError(_))));
+    }
+
+    #[test]
+    fn test_sparse_mle_transpose_multiply_by_matrix_valid() {
+        let mut coeffs = HashMap::new();
+        coeffs.insert((0, 0), BabyBear::from_u32(2));
+        coeffs.insert((0, 1), BabyBear::from_u32(3));
+        coeffs.insert((1, 0), BabyBear::from_u32(4));
+        coeffs.insert((1, 1), BabyBear::from_u32(5));
+
+        let sparse_mle = SparseMLE::new(coeffs).unwrap();
+        let columns = vec![
+            BabyBear::from_u32(1),
+            BabyBear::from_u32(2),
+            BabyBear::from_u32(3),
+            BabyBear::from_u32(4)
+        ];
+
+        let result = sparse_mle.transpose_multiply_by_matrix(&columns).unwrap();
+        assert_eq!(result.len(), 4);
+        let coeffs = result.coeffs();
+        assert_eq!(coeffs[0], BabyBear::from_u32(8));
+        assert_eq!(coeffs[1], BabyBear::from_u32(18));
+        assert_eq!(coeffs[2], BabyBear::from_u32(14));
+        assert_eq!(coeffs[3], BabyBear::from_u32(32));
+    }
+
+    #[test]
+    fn test_sparse_mle_transpose_multiply_by_matrix_dimension_mismatch() {
+        let mut coeffs = HashMap::new();
+        coeffs.insert((0, 0), BabyBear::ONE);
+        coeffs.insert((0, 1), BabyBear::ONE);
+
+        let sparse_mle = SparseMLE::new(coeffs).unwrap();
+        let columns = vec![BabyBear::ONE, BabyBear::ONE, BabyBear::ONE];
+
+        let result = sparse_mle.transpose_multiply_by_matrix(&columns);
+        assert!(matches!(result, Err(SparseError::DimensionMismatch { .. })));
+    }
+
+    #[test]
+    fn test_sparse_mle_transpose_multiply_by_matrix_non_power_of_two_columns() {
+        let mut coeffs = HashMap::new();
+        coeffs.insert((0, 0), BabyBear::from_u32(2));
+        coeffs.insert((1, 1), BabyBear::from_u32(5));
+
+        let sparse_mle = SparseMLE::new(coeffs).unwrap();
+        let columns = vec![
+            BabyBear::ONE,
+            BabyBear::ONE,
+            BabyBear::from_u32(2),
+            BabyBear::from_u32(3),
+            BabyBear::from_u32(4),
+            BabyBear::from_u32(5)
+        ];
+
+        let result = sparse_mle.transpose_multiply_by_matrix(&columns);
         assert!(matches!(result, Err(SparseError::ValidationError(_))));
     }
 

@@ -92,7 +92,7 @@ impl<F: PrimeCharacteristicRing + Clone + Field> MLE<F> {
 
         lo.par_iter()
             .zip(hi.par_iter())
-            .map(|(&lo, &hi)| { r * (hi - lo) + lo })
+            .map(|(&lo, &hi)| r * (hi - lo) + lo)
             .collect_into_vec(&mut folded_coeffs);
 
         MLE::new(folded_coeffs)

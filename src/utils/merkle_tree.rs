@@ -1,4 +1,4 @@
-use anyhow::{ Error, Result };
+use anyhow::{Error, Result};
 use p3_field::RawDataSerializable;
 
 /// A Merkle tree structure for cryptographic proofs.
@@ -31,7 +31,10 @@ impl MerkleTree {
     /// Panics if the number of leaves is not a power of two.
     pub fn from_field<D: RawDataSerializable + Copy>(leaves: &[D]) -> Result<Self> {
         // Ensure the number of leaves is a power of two for a complete binary tree
-        assert!(leaves.len().is_power_of_two(), "Expected leaves to be a power of 2");
+        assert!(
+            leaves.len().is_power_of_two(),
+            "Expected leaves to be a power of 2"
+        );
         let length = leaves.len();
         let depth = length.trailing_zeros();
         // Allocate space for all nodes (leaves + internal nodes)
@@ -72,7 +75,10 @@ impl MerkleTree {
 
     pub fn from_hash(leaves: &[[u8; 32]]) -> Result<Self> {
         // Ensure the number of leaves is a power of two for a complete binary tree
-        assert!(leaves.len().is_power_of_two(), "Expected leaves to be a power of 2");
+        assert!(
+            leaves.len().is_power_of_two(),
+            "Expected leaves to be a power of 2"
+        );
         let length = leaves.len();
         let depth = length.trailing_zeros();
         // Allocate space for all nodes (leaves + internal nodes)
@@ -128,7 +134,7 @@ impl MerkleTree {
         leaf: [u8; 32],
         index: usize,
         path: &[[u8; 32]],
-        root: [u8; 32]
+        root: [u8; 32],
     ) -> Result<()> {
         let mut current_hash = leaf;
         let mut current_index = index;
@@ -152,7 +158,9 @@ impl MerkleTree {
         if current_hash == root {
             Ok(())
         } else {
-            Err(Error::msg(format!("Merkle path verification failed for index {index}")))
+            Err(Error::msg(format!(
+                "Merkle path verification failed for index {index}"
+            )))
         }
     }
 }

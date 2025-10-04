@@ -48,7 +48,7 @@ impl<'a> EqEvals<'a> {
 
         for var in 0..n_vars {
             for i in 0..1 << var {
-                coeffs[i | (1 << var)] = coeffs[i] * point[n_vars - var];
+                coeffs[i | (1 << var)] = coeffs[i] * point[n_vars - var - 1];
                 coeffs[i] = coeffs[i] - coeffs[i | (1 << var)];
             }
         }
@@ -87,28 +87,6 @@ impl<'a> EqEvals<'a> {
 
         self.point = &self.point[1..];
         self.coeffs = folded_coeffs;
-        self.n_vars = self.n_vars.saturating_sub(1);
-    }
-
-    pub fn fold_in_place_hi_lo<'b>(&mut self) {
-        if self.coeffs.len() == 1 {
-            // Base case: 0-variable polynomial, return constant
-            return;
-        }
-
-        let half_len = self.coeffs.len() / 2;
-        // let mut folded_coeffs = Vec::with_capacity(half_len);
-
-        let (lo, hi) = self.coeffs.split_at_mut(half_len);
-        // For each coefficient pair (low, high) where low corresponds to x₀=0 and high to x₀=1
-        lo.par_iter_mut()
-            .zip(hi.par_iter_mut())
-            .for_each(|(l, h)| {
-                *l += *h;
-            });
-        self.point = &self.point[1..];
-        self.coeffs.truncate(half_len);
-        self.coeffs.shrink_to_fit();
         self.n_vars = self.n_vars.saturating_sub(1);
     }
 

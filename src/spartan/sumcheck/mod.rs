@@ -29,9 +29,9 @@
 //! ```
 //!
 //! Where g takes different forms depending on the specific protocol variant.
+pub mod batch_sumcheck;
 pub mod inner;
 pub mod outer;
-pub mod batch_sumcheck;
 // Re-export all sum-check proof types
 pub use inner::InnerSumCheckProof;
 pub use outer::OuterSumCheckProof;

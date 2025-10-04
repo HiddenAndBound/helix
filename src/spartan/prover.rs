@@ -7,11 +7,10 @@ use p3_baby_bear::BabyBear;
 
 use crate::{
     challenger::Challenger,
-    pcs::{ BaseFoldConfig, Basefold, BasefoldCommitment, EvalProof },
+    pcs::{BaseFoldConfig, Basefold, BasefoldCommitment, EvalProof},
     spartan::{
-        Poseidon2Instance,
-        R1CSInstance,
-        sumcheck::{ InnerSumCheckProof, OuterSumCheckProof },
+        Poseidon2Instance, R1CSInstance,
+        sumcheck::{InnerSumCheckProof, OuterSumCheckProof},
     },
 };
 
@@ -29,7 +28,7 @@ impl SpartanProof {
     pub fn new(
         outer_sumcheck_proof: OuterSumCheckProof,
         inner_sumcheck_proof: InnerSumCheckProof,
-        z_eval_proof: EvalProof
+        z_eval_proof: EvalProof,
     ) -> Self {
         Self {
             outer_sumcheck_proof,
@@ -49,13 +48,13 @@ impl SpartanProof {
 
     pub fn prove(
         instance: R1CSInstance,
-        challenger: &mut Challenger
+        challenger: &mut Challenger,
     ) -> anyhow::Result<(Self, BasefoldCommitment)> {
         let z = &instance.witness_mle();
 
         let config = BaseFoldConfig::fast();
         let roots = BabyBear::roots_of_unity_table(z.len() * 2);
-        let (z_commitment, prover_data) = Basefold::commit_dit(z, &roots, &config)?;
+        let (z_commitment, prover_data) = Basefold::commit(z, &roots, &config)?;
         let (A, B, C) = (&instance.r1cs.a, &instance.r1cs.b, &instance.r1cs.c);
         // Phase 1: OuterSumCheck - proves R1CS constraint satisfaction
         // Generates evaluation claims A(r_x), B(r_x), C(r_x) at random point r_x
@@ -76,27 +75,30 @@ impl SpartanProof {
             z,
             outer_sum_check.final_evals,
             gamma,
-            challenger
+            challenger,
         );
 
         let z_evaluation = inner_sum_check.final_evaluations()[3];
-        let z_eval_proof = Basefold::evaluate_dit(
+        let z_eval_proof = Basefold::evaluate(
             z,
             &evaluation_point,
             challenger,
             z_evaluation,
             prover_data,
             &roots,
-            &config
+            &config,
         )?;
 
-        Ok((SpartanProof::new(outer_sum_check, inner_sum_check, z_eval_proof), z_commitment))
+        Ok((
+            SpartanProof::new(outer_sum_check, inner_sum_check, z_eval_proof),
+            z_commitment,
+        ))
     }
 
     /// Convenience wrapper for proving the dedicated Poseidon2 R1CS instance.
     pub fn prove_poseidon2(
         instance: &Poseidon2Instance,
-        challenger: &mut Challenger
+        challenger: &mut Challenger,
     ) -> anyhow::Result<(Self, BasefoldCommitment)> {
         let r1cs_instance = instance.to_r1cs_instance()?;
         SpartanProof::prove(r1cs_instance, challenger)
@@ -105,7 +107,7 @@ impl SpartanProof {
     pub fn verify(
         &self,
         z_commitment: BasefoldCommitment,
-        challenger: &mut crate::challenger::Challenger
+        challenger: &mut crate::challenger::Challenger,
     ) -> anyhow::Result<()> {
         // Phase 1: Verify the outer sum-check proof
         // This ensures R1CS constraints are satisfied
@@ -115,11 +117,9 @@ impl SpartanProof {
         // This ensures evaluation claims from outer sumcheck are correct
         challenger.observe_fp4_elems(&self.outer_sumcheck_proof.final_evals);
         let gamma = challenger.get_challenge();
-        let (evaluation_point, final_evals) = self.inner_sumcheck_proof.verify(
-            outer_claims,
-            gamma,
-            challenger
-        );
+        let (evaluation_point, final_evals) =
+            self.inner_sumcheck_proof
+                .verify(outer_claims, gamma, challenger);
 
         let z_evaluation = final_evals[3];
         let rounds = self.inner_sumcheck_proof.rounds();
@@ -133,7 +133,7 @@ impl SpartanProof {
             z_commitment,
             &roots,
             challenger,
-            &config
+            &config,
         )?;
 
         // Note: In a complete Spartan implementation, additional steps would include:
@@ -154,16 +154,16 @@ mod tests {
         spartan::{
             build_default_poseidon2_instance,
             prover::SpartanProof,
-            r1cs::{ R1CSInstance, Witness, R1CS },
+            r1cs::{R1CS, R1CSInstance, Witness},
         },
         *,
     };
     use anyhow::bail;
     use itertools::multizip;
-    use p3_field::{ Field, PrimeCharacteristicRing };
-    use p3_monty_31::dft;
-    use rand::{ Rng, SeedableRng, rngs::StdRng };
     use p3_dft::*;
+    use p3_field::{Field, PrimeCharacteristicRing};
+    use p3_monty_31::dft;
+    use rand::{Rng, SeedableRng, rngs::StdRng};
     #[test]
     fn spartan_test() -> anyhow::Result<()> {
         // This is also the number of nonlinear constraints.
@@ -242,12 +242,13 @@ mod tests {
 
         let rate = [BabyBear::ONE, BabyBear::TWO];
         let poseidon_instance = build_default_poseidon2_instance(&rate, None)?;
-        println!("length of witness {:?}", poseidon_instance.witness.witness.len());
+        println!(
+            "length of witness {:?}",
+            poseidon_instance.witness.witness.len()
+        );
         let mut prover_challenger = Challenger::new();
-        let (proof, commitment) = SpartanProof::prove_poseidon2(
-            &poseidon_instance,
-            &mut prover_challenger
-        )?;
+        let (proof, commitment) =
+            SpartanProof::prove_poseidon2(&poseidon_instance, &mut prover_challenger)?;
 
         let mut verifier_challenger = Challenger::new();
         proof.verify(commitment, &mut verifier_challenger)?;
