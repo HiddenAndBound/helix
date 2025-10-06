@@ -19,8 +19,10 @@ use crate::{
         univariate::UnivariatePoly,
     },
 };
-use anyhow::anyhow;
+use anyhow::{ anyhow, bail };
 use p3_field::{ ExtensionField, Field, PrimeCharacteristicRing };
+use p3_monty_31::dft::RecursiveDft;
+use p3_dft::TwoAdicSubgroupDft;
 use rayon::{ iter::{ IntoParallelIterator, ParallelIterator }, slice::ParallelSlice };
 
 pub struct BatchSumCheckProof {
@@ -94,6 +96,9 @@ impl BatchSumCheckProof {
         let mut round_proofs = Vec::new();
         let mut round_challenges = Vec::new();
 
+        // TODO: Handle the case where early stopping threshold is greater than the number of rounds
+        let early_stopping_threshold = config.early_stopping_threshold;
+        let fri_rounds = rounds.saturating_sub(early_stopping_threshold);
         let mut a_fold = MLE::default();
         let mut b_fold = MLE::default();
         let mut c_fold = MLE::default();
@@ -101,7 +106,6 @@ impl BatchSumCheckProof {
 
         let mut state = BasefoldState::default();
 
-        // Process remaining rounds (1 to n-1)
         for round in 0..rounds {
             let round_proof = match round {
                 0 =>
@@ -135,20 +139,25 @@ impl BatchSumCheckProof {
             round_challenges.push(round_challenge);
             current_claim = round_proof.evaluate(round_challenge);
 
-            let (current_encoding, current_poly_folded) = fold_encoding_and_polynomial(
-                round,
-                &prover_data.encoding,
-                &state.encodings,
-                round_challenge,
-                roots,
-                z_transpose,
-                &z_fold
-            );
+            // If remaining rounds are more than the early stopping threshold continue FRI folding else stop.
+            if round < fri_rounds {
+                let current_encoding = match round {
+                    0 => fold(&prover_data.encoding, round_challenge, &roots[round]),
+                    _ =>
+                        fold(
+                            state.encodings.last().expect("Will be non-empty"),
+                            round_challenge,
+                            &roots[round]
+                        ),
+                };
 
-            state.update(current_encoding)?;
-            challenger.observe_commitment(
-                state.oracle_commitments.last().expect("Will be non-empty after at least 1 fold")
-            );
+                state.update(current_encoding)?;
+                challenger.observe_commitment(
+                    state.oracle_commitments
+                        .last()
+                        .expect("Will be non-empty after at least 1 fold")
+                );
+            }
 
             (
                 // Fold polynomials for next round
@@ -162,14 +171,14 @@ impl BatchSumCheckProof {
                         a.fold_in_place(round_challenge),
                         b.fold_in_place(round_challenge),
                         c.fold_in_place(round_challenge),
-                        current_poly_folded,
+                        z_transpose.fold_in_place(round_challenge),
                     ),
                 _ =>
                     (
                         a_fold.fold_in_place(round_challenge),
                         b_fold.fold_in_place(round_challenge),
                         c_fold.fold_in_place(round_challenge),
-                        current_poly_folded,
+                        z_fold.fold_in_place(round_challenge),
                     ),
             };
 
@@ -191,10 +200,14 @@ impl BatchSumCheckProof {
         let mut domain_size = 1 << log_domain_size;
         let mut queries = challenger.get_indices(log_domain_size, config.queries);
 
+        let early_codeword = match early_stopping_threshold {
+            0 => None,
+            _ => Some(state.encodings.last().expect("Will be more than 1 round").clone()),
+        };
         let mut codewords = Vec::with_capacity(rounds);
         let mut paths = Vec::with_capacity(rounds);
         let BasefoldState { encodings, merkle_trees, .. } = state;
-        for round in 0..rounds {
+        for round in 0..fri_rounds {
             let halfsize = domain_size >> 1;
             let (round_codewords, round_paths): (Vec<(Fp4, Fp4)>, Vec<_>) = match round {
                 0 =>
@@ -225,7 +238,7 @@ impl BatchSumCheckProof {
                 final_evals,
                 state.oracle_commitments,
                 z_eval,
-                None,
+                early_codeword,
                 codewords,
                 paths
             ),
@@ -236,6 +249,9 @@ impl BatchSumCheckProof {
     /// Verifies the sum-check proof. Panics if verification fails.
     pub fn verify(
         &self,
+        A: &SparseMLE,
+        B: &SparseMLE,
+        C: &SparseMLE,
         commitment: BasefoldCommitment,
         roots: &[Vec<Fp>],
         challenger: &mut Challenger,
@@ -249,6 +265,7 @@ impl BatchSumCheckProof {
         let mut current_claim = gamma * self.z_eval;
         let mut round_challenges = Vec::new();
 
+        let fri_rounds = rounds.saturating_sub(config.early_stopping_threshold);
         // Verify each round of the sum-check protocol
         for round in 0..rounds {
             let round_poly = &self.round_proofs[round];
@@ -269,7 +286,10 @@ impl BatchSumCheckProof {
             let challenge = challenger.get_challenge();
             current_claim = round_poly.evaluate(challenge);
             round_challenges.push(challenge);
-            challenger.observe_commitment(&self.oracle_commitments[round]);
+
+            if round < fri_rounds {
+                challenger.observe_commitment(&self.oracle_commitments[round]);
+            }
         }
 
         //Query Phase
@@ -280,7 +300,7 @@ impl BatchSumCheckProof {
         let mut queries = challenger.get_indices(log_query_range, config.queries);
         let mut folded_codewords = vec![Fp4::ZERO; config.queries];
 
-        for round in 0..rounds {
+        for round in 0..fri_rounds {
             let halfsize = query_range >> 1;
             let oracle_commitment = match round {
                 0 => commitment.commitment,
@@ -310,9 +330,51 @@ impl BatchSumCheckProof {
             query_range = halfsize;
         }
 
+        let final_fold;
+
+        let mut a_claim = Fp4::ZERO;
+        let mut b_claim = Fp4::ZERO;
+        let mut c_claim = Fp4::ZERO;
+        if let Some(mut early_code) = self.early_codeword.clone() {
+            // TODO: Better error messaging.
+            for (&query, &folded_codeword) in queries.iter().zip(&folded_codewords) {
+                if early_code[query] != folded_codeword {
+                    bail!(
+                        "Folded codewords accross queries not consistent with codeword provided."
+                    );
+                }
+            }
+
+            let mut az_fold = A.transpose_multiply_by_matrix(&early_code)?.coeffs().to_vec();
+
+            let mut bz_fold = B.transpose_multiply_by_matrix(&early_code)?.coeffs().to_vec();
+            let mut cz_fold = C.transpose_multiply_by_matrix(&early_code)?.coeffs().to_vec();
+
+            for round in fri_rounds..rounds {
+                early_code = fold(&early_code, round_challenges[round], &roots[round]);
+                az_fold = fold(&az_fold, round_challenges[round], &roots[round]);
+                bz_fold = fold(&bz_fold, round_challenges[round], &roots[round]);
+                cz_fold = fold(&cz_fold, round_challenges[round], &roots[round]);
+            }
+
+            final_fold = early_code[0];
+            a_claim = az_fold[0];
+            b_claim = bz_fold[0];
+            c_claim = cz_fold[0];
+        } else {
+            final_fold = folded_codewords[0];
+            for &final_val in &folded_codewords[1..] {
+                if final_val != final_fold {
+                    bail!("Final folds not consistent accross queries.");
+                }
+            }
+        }
+
         let [a, b, c, z] = self.final_evals;
 
-        if folded_codewords[0] != z {
+        print!("{:?}", a);
+        print!("{:?}", a_claim);
+        if final_fold != z {
             anyhow::bail!(
                 "Final claim verification failed: {:?} != {:?}",
                 folded_codewords[0],
@@ -414,7 +476,8 @@ mod tests {
     use super::*;
     use crate::{ Fp, challenger::Challenger, pcs::Basefold, polynomial::MLE };
     use itertools::multizip;
-    use rand::{ Rng, SeedableRng, rngs::StdRng };
+    use p3_field::BasedVectorSpace;
+    use rand::{ rngs::StdRng, Rng, RngCore, SeedableRng };
     use std::collections::HashMap;
 
     #[test]
@@ -486,6 +549,9 @@ mod tests {
 
         let mut verifier_challenger = Challenger::new();
         let (verified_challenges, final_evals) = proof.verify(
+            &A,
+            &B,
+            &C,
             commitment,
             &roots,
             &mut verifier_challenger,
@@ -494,5 +560,104 @@ mod tests {
 
         assert_eq!(verified_challenges, round_challenges);
         Ok(())
+    }
+
+    #[test]
+    fn batch_sum_check_proof_early_stopping() -> anyhow::Result<()> {
+        const ROWS: usize = 1 << 6;
+        const COLS: usize = ROWS;
+        const WITNESS_COLS: usize = 1 << 3;
+        let mut rng = StdRng::seed_from_u64(0);
+
+        let mut A = HashMap::<(usize, usize), Fp>::new();
+        let mut B = HashMap::<(usize, usize), Fp>::new();
+        let mut C = HashMap::<(usize, usize), Fp>::new();
+
+        let witness_entry = Fp::new(rng.r#gen::<u32>());
+        let z = MLE::new(vec![witness_entry; COLS * WITNESS_COLS]);
+
+        let z_const = witness_entry;
+
+        for row in 0..ROWS {
+            let a_val = Fp::new(rng.r#gen::<u32>());
+            let b_val = Fp::new(rng.r#gen::<u32>());
+
+            let col_a = rng.gen_range(0..COLS);
+            let col_b = rng.gen_range(0..COLS);
+
+            A.insert((row, col_a), a_val);
+            B.insert((row, col_b), b_val);
+
+            C.insert((row, row), a_val * b_val * z_const);
+        }
+
+        let A = SparseMLE::new(A)?;
+        let B = SparseMLE::new(B)?;
+        let C = SparseMLE::new(C)?;
+
+        let a_eval = A.multiply_by_mle(&z)?;
+        let b_eval = B.multiply_by_mle(&z)?;
+        let c_eval = C.multiply_by_mle(&z)?;
+
+        for (&a_i, &b_i, &c_i) in multizip((a_eval.coeffs(), b_eval.coeffs(), c_eval.coeffs())) {
+            assert_eq!(c_i, a_i * b_i, "R1CS instance not satisfied");
+        }
+
+        let config = BaseFoldConfig::new().with_queries(4).with_early_stopping(6);
+        let roots = Fp::roots_of_unity_table(1 << (z.n_vars() + 1));
+        let (_, cols) = A.dimensions();
+        assert_eq!(cols, B.dimensions().1);
+        assert_eq!(cols, C.dimensions().1);
+
+        assert!(z.coeffs().len() % cols == 0, "z must align with column dimension");
+        let matrix_rows = z.coeffs().len() / cols;
+        let z_transposed = MLE::new(transpose_column_major(z.coeffs(), cols, matrix_rows));
+        let (commitment, prover_data) = Basefold::commit(&z_transposed, &roots, &config)?;
+
+        let mut prover_challenger = Challenger::new();
+        let (proof, round_challenges) = BatchSumCheckProof::prove(
+            &A,
+            &B,
+            &C,
+            &z_transposed,
+            &commitment,
+            &prover_data,
+            &roots,
+            &config,
+            &mut prover_challenger
+        )?;
+
+        assert_eq!(round_challenges.len(), z.n_vars());
+
+        let mut verifier_challenger = Challenger::new();
+        let (verified_challenges, final_evals) = proof.verify(
+            &A,
+            &B,
+            &C,
+            commitment,
+            &roots,
+            &mut verifier_challenger,
+            &config
+        )?;
+
+        assert_eq!(verified_challenges, round_challenges);
+        Ok(())
+    }
+
+    #[test]
+    fn test_fft() {
+        let mut rng = StdRng::seed_from_u64(0);
+        let list = (0..1 << 4).map(|_| Fp::new(rng.next_u32())).collect::<Vec<_>>();
+        let ext_list = list
+            .iter()
+            .map(|&elem| Fp4::from(elem))
+            .collect::<Vec<_>>();
+
+        let fft = RecursiveDft::new(1 << 4);
+
+        let list_transform = fft.dft(list);
+        let ext_transform = fft.dft_algebra(ext_list);
+        println!("{:?}", list_transform);
+        println!("{:?}", ext_transform);
     }
 }

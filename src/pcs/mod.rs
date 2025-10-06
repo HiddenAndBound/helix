@@ -45,7 +45,7 @@ pub struct BaseFoldConfig {
     /// Enable parallel processing for folding operations.
     pub enable_parallel: bool,
     /// Enable optimizations like hash pruning and early stopping.
-    pub enable_optimizations: bool,
+    pub early_stopping_threshold: usize,
 }
 
 impl Default for BaseFoldConfig {
@@ -54,7 +54,7 @@ impl Default for BaseFoldConfig {
             queries: 144,
             rate: 2,
             enable_parallel: false,
-            enable_optimizations: false,
+            early_stopping_threshold: 0,
         }
     }
 }
@@ -84,8 +84,8 @@ impl BaseFoldConfig {
     }
 
     /// Enables or disables performance optimizations.
-    pub fn with_optimizations(mut self, enable: bool) -> Self {
-        self.enable_optimizations = enable;
+    pub fn with_early_stopping(mut self, early_stopping_threshold: usize) -> Self {
+        self.early_stopping_threshold = early_stopping_threshold;
         self
     }
 
@@ -95,7 +95,7 @@ impl BaseFoldConfig {
             queries: 256,
             rate: 2,
             enable_parallel: true,
-            enable_optimizations: true,
+            early_stopping_threshold: 0,
         }
     }
 
@@ -105,7 +105,7 @@ impl BaseFoldConfig {
             queries: 80,
             rate: 2,
             enable_parallel: true,
-            enable_optimizations: true,
+            early_stopping_threshold: 0,
         }
     }
 
