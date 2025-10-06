@@ -92,6 +92,29 @@ impl Poseidon2WitnessMatrix {
             self.num_public_inputs,
         ))
     }
+
+    /// Returns a flattened column-major representation of the transpose of the
+    /// witness matrix. If the matrix is empty, an empty vector is returned.
+    pub fn flattened_transpose(&self) -> Vec<BabyBear> {
+        if self.assignments.is_empty() {
+            return Vec::new();
+        }
+
+        let rows = self.column_len;
+        let cols = self.num_columns;
+        let mut transposed = vec![BabyBear::ZERO; self.assignments.len()];
+
+        for col in 0..cols {
+            let start = col * rows;
+            for row in 0..rows {
+                let value = self.assignments[start + row];
+                let index = row * cols + col;
+                transposed[index] = value;
+            }
+        }
+
+        transposed
+    }
 }
 
 /// A ready-to-use R1CS instance enforcing the Poseidon2 permutation over BabyBear.
@@ -890,6 +913,31 @@ mod tests {
         assert_eq!(matrix.assignments[matrix.column_len + row], column1[row]);
 
         assert!(matrix.column_slice(2).is_none());
+    }
+
+    #[test]
+    fn poseidon2_witness_matrix_flattened_transpose_matches_manual() {
+        let poseidon = default_babybear_poseidon2_16();
+        let seeds = vec![Poseidon2ColumnSeed {
+            rate: vec![BabyBear::ONE, BabyBear::from_u32(2)],
+            capacity: None,
+        }];
+
+        let matrix = build_poseidon2_witness_matrix(&seeds, &poseidon)
+            .expect("matrix generation should succeed");
+
+        let rows = matrix.column_len;
+        let cols = matrix.num_columns;
+
+        let mut expected = vec![BabyBear::ZERO; matrix.assignments.len()];
+        for col in 0..cols {
+            for row in 0..rows {
+                let value = matrix.assignments[col * rows + row];
+                expected[row * cols + col] = value;
+            }
+        }
+
+        assert_eq!(matrix.flattened_transpose(), expected);
     }
 
     #[test]

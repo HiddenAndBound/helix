@@ -1,6 +1,6 @@
 use p3_field::PrimeCharacteristicRing;
-use rayon::iter::{ IndexedParallelIterator, IntoParallelRefMutIterator, ParallelIterator };
-use std::ops::{ Index, Range };
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefMutIterator, ParallelIterator};
+use std::ops::{Index, Range};
 
 use crate::utils::Fp4;
 
@@ -123,13 +123,15 @@ impl<'a> Index<Range<usize>> for EqEvals<'a> {
 mod tests {
     use super::*;
     use p3_field::PrimeCharacteristicRing;
-    use rand::{ Rng, SeedableRng, rngs::StdRng };
+    use rand::{Rng, SeedableRng, rngs::StdRng};
 
     //Tests whether given eq = eq(r_0,..., r_{n-1}; x_0,..., x_{n-1}), fold_in_place returns eq(r_1,...,r_{n-1}; x_1, ..., x_{n-1})
     #[test]
     fn test_fold_in_place() {
         let mut rng = StdRng::seed_from_u64(0);
-        let point = (0..4).map(|_| Fp4::from_u128(rng.r#gen())).collect::<Vec<Fp4>>();
+        let point = (0..4)
+            .map(|_| Fp4::from_u128(rng.r#gen()))
+            .collect::<Vec<Fp4>>();
         let mut eq = EqEvals::gen_from_point(&point);
         eq.fold_in_place();
 
@@ -209,7 +211,10 @@ mod tests {
 
         // For eq(x0, x1, x2; r0, r1, r2) = eq(x0; r0) * eq(x1; r1) * eq(x2; r2)
         // Test a few key evaluations
-        assert_eq!(eq.coeffs[0], (Fp4::ONE - r0) * (Fp4::ONE - r1) * (Fp4::ONE - r2)); // eq(0,0,0)
+        assert_eq!(
+            eq.coeffs[0],
+            (Fp4::ONE - r0) * (Fp4::ONE - r1) * (Fp4::ONE - r2)
+        ); // eq(0,0,0)
         assert_eq!(eq.coeffs[7], r0 * r1 * r2); // eq(1,1,1)
         assert_eq!(eq.coeffs[1], r0 * (Fp4::ONE - r1) * (Fp4::ONE - r2)); // eq(1,0,0)
         assert_eq!(eq.coeffs[4], (Fp4::ONE - r0) * (Fp4::ONE - r1) * r2); // eq(0,0,1)
@@ -221,7 +226,7 @@ mod tests {
             Fp4::from_u32(11),
             Fp4::from_u32(13),
             Fp4::from_u32(17),
-            Fp4::from_u32(19)
+            Fp4::from_u32(19),
         ];
         let eq = EqEvals::gen_from_point(&point);
 
@@ -229,10 +234,7 @@ mod tests {
         assert_eq!(eq.coeffs.len(), 16);
 
         // Test that all coefficients are non-zero (except potentially some specific cases)
-        let non_zero_count = eq.coeffs
-            .iter()
-            .filter(|&&x| x != Fp4::ZERO)
-            .count();
+        let non_zero_count = eq.coeffs.iter().filter(|&&x| x != Fp4::ZERO).count();
         assert!(non_zero_count > 0);
 
         // Test corner evaluations
@@ -297,7 +299,7 @@ mod tests {
             Fp4::from_u32(5),
             Fp4::from_u32(7),
             Fp4::from_u32(11),
-            Fp4::from_u32(13)
+            Fp4::from_u32(13),
         ];
         let eq = EqEvals::gen_from_point(&point);
 
@@ -310,11 +312,7 @@ mod tests {
         let all_zeros_index = 0; // Binary: 000000
 
         // eq(1,1,1,1,1,1) should be the product of all r_i
-        let expected_all_ones = point
-            .iter()
-            .copied()
-            .reduce(|acc, x| acc * x)
-            .unwrap();
+        let expected_all_ones = point.iter().copied().reduce(|acc, x| acc * x).unwrap();
         assert_eq!(eq.coeffs[all_ones_index], expected_all_ones);
 
         // eq(0,0,0,0,0,0) should be the product of all (1-r_i)
@@ -342,11 +340,9 @@ mod tests {
                 let tensor_idx = i + 2 * j;
                 let expected = eq_x0.coeffs[i] * eq_x1.coeffs[j];
                 assert_eq!(
-                    eq.coeffs[tensor_idx],
-                    expected,
+                    eq.coeffs[tensor_idx], expected,
                     "Tensor product mismatch at ({}, {})",
-                    i,
-                    j
+                    i, j
                 );
             }
         }
@@ -391,12 +387,9 @@ mod tests {
                     // Compare with coefficient-based evaluation
                     let index = x0 + 2 * x1 + 4 * x2;
                     assert_eq!(
-                        eq.coeffs[index as usize],
-                        expected,
+                        eq.coeffs[index as usize], expected,
                         "Mismatch at evaluation point ({}, {}, {})",
-                        x0,
-                        x1,
-                        x2
+                        x0, x1, x2
                     );
                 }
             }
@@ -496,7 +489,10 @@ mod tests {
         let eq = EqEvals::gen_from_point(&point);
 
         // Test individual indexing
-        assert_eq!(eq[0], (Fp4::ONE - Fp4::from_u32(3)) * (Fp4::ONE - Fp4::from_u32(5)));
+        assert_eq!(
+            eq[0],
+            (Fp4::ONE - Fp4::from_u32(3)) * (Fp4::ONE - Fp4::from_u32(5))
+        );
         assert_eq!(eq[1], Fp4::from_u32(3) * (Fp4::ONE - Fp4::from_u32(5)));
         assert_eq!(eq[2], (Fp4::ONE - Fp4::from_u32(3)) * Fp4::from_u32(5));
         assert_eq!(eq[3], Fp4::from_u32(3) * Fp4::from_u32(5));

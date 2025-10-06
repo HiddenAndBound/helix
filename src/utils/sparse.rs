@@ -7,8 +7,8 @@
 //! - Sparse MLE representation: O(nnz) storage vs O(n²) dense
 //! - Metadata preprocessing for sum-check protocols
 //! - Twist & Shout memory checking timestamps
-use crate::spartan::error::{ SparseError, SparseResult };
-use crate::utils::{ Fp, Fp4, eq::EqEvals, polynomial::MLE };
+use crate::spartan::error::{SparseError, SparseResult};
+use crate::utils::{Fp, Fp4, eq::EqEvals, polynomial::MLE};
 use p3_baby_bear::BabyBear;
 use p3_field::PrimeCharacteristicRing;
 use std::collections::HashMap;
@@ -67,7 +67,10 @@ impl SparseMLE {
             .max()
             .expect("Should be non-zero");
 
-        ((max_row + 1).next_power_of_two(), (max_col + 1).next_power_of_two())
+        (
+            (max_row + 1).next_power_of_two(),
+            (max_col + 1).next_power_of_two(),
+        )
     }
 
     /// Returns the number of non-zero entries.
@@ -82,7 +85,10 @@ impl SparseMLE {
 
     /// Gets the coefficient at (row, col), returns zero if not present.
     pub fn get(&self, row: usize, col: usize) -> BabyBear {
-        self.coeffs.get(&(row, col)).copied().unwrap_or(BabyBear::ZERO)
+        self.coeffs
+            .get(&(row, col))
+            .copied()
+            .unwrap_or(BabyBear::ZERO)
     }
 
     /// Returns an iterator over non-zero entries as ((row, col), value) tuples.
@@ -132,11 +138,9 @@ impl SparseMLE {
         let num_columns = matrix.len() / cols;
 
         if !num_columns.is_power_of_two() {
-            return Err(
-                SparseError::ValidationError(
-                    "Number of column vectors must be a power of two".to_string()
-                )
-            );
+            return Err(SparseError::ValidationError(
+                "Number of column vectors must be a power of two".to_string(),
+            ));
         }
 
         let mut flattened = vec![BabyBear::ZERO; rows * num_columns];
@@ -154,13 +158,13 @@ impl SparseMLE {
         Ok(MLE::new(flattened))
     }
 
-    /// Computes the transpose multiplication `(matrix^T · A^T)` where `A` is the sparse
-    /// matrix represented by `self` and `matrix` is a dense `(k × m)` matrix provided
-    /// in column-major order. The result is returned column-major with dimensions
-    /// `(m × n)` (where `n` is the number of rows in `A`).
+    /// Computes the product `matrix · A^T` where `A` is the sparse matrix represented by
+    /// `self` and `matrix` is a dense `(m × k)` matrix provided in column-major order.
+    /// The result is returned column-major with dimensions `(m × n)` (where `n` is the
+    /// number of rows in `A`).
     ///
-    /// This is equivalent to computing `(A · matrix)^T` without materializing the
-    /// intermediate dense product.
+    /// The input slice is assumed to already store the dense matrix transpose (so each
+    /// column corresponds to a column of `A`).
     pub fn transpose_multiply_by_matrix(&self, matrix: &[BabyBear]) -> SparseResult<MLE<Fp>> {
         let (rows, cols) = self.dimensions;
 
@@ -179,24 +183,23 @@ impl SparseMLE {
             });
         }
 
-        let num_columns = matrix.len() / cols;
+        let matrix_rows = matrix.len() / cols;
 
-        if !num_columns.is_power_of_two() {
-            return Err(
-                SparseError::ValidationError(
-                    "Number of column vectors must be a power of two".to_string()
-                )
-            );
+        if !matrix_rows.is_power_of_two() {
+            return Err(SparseError::ValidationError(
+                "Number of row vectors must be a power of two".to_string(),
+            ));
         }
 
-        let mut flattened = vec![BabyBear::ZERO; rows * num_columns];
+        let mut flattened = vec![BabyBear::ZERO; matrix_rows * rows];
 
         for ((row, col), &value) in self.iter() {
             if *row < rows && *col < cols {
-                for idx in 0..num_columns {
-                    let input_offset = idx * cols + *col;
-                    let output_offset = row * num_columns + idx;
-                    flattened[output_offset] += matrix[input_offset] * value;
+                let column_start = *col * matrix_rows;
+                for idx in 0..matrix_rows {
+                    let matrix_entry = matrix[column_start + idx];
+                    let output_offset = row * matrix_rows + idx;
+                    flattened[output_offset] += matrix_entry * value;
                 }
             }
         }
@@ -229,31 +232,23 @@ impl SparseMLE {
 
         // Validate that eq_evals has the correct number of variables for row binding
         if eq_evals.n_vars() != row_vars {
-            return Err(
-                SparseError::ValidationError(
-                    format!(
-                        "EqEvals has {} variables but expected {} for {} rows",
-                        eq_evals.n_vars(),
-                        row_vars,
-                        rows
-                    )
-                )
-            );
+            return Err(SparseError::ValidationError(format!(
+                "EqEvals has {} variables but expected {} for {} rows",
+                eq_evals.n_vars(),
+                row_vars,
+                rows
+            )));
         }
 
         // The eq_evals should have 2^row_vars coefficients
         let expected_eq_coeffs = 1 << row_vars;
         if eq_evals.coeffs().len() != expected_eq_coeffs {
-            return Err(
-                SparseError::ValidationError(
-                    format!(
-                        "EqEvals has {} coefficients but expected {} for {} row variables",
-                        eq_evals.coeffs().len(),
-                        expected_eq_coeffs,
-                        row_vars
-                    )
-                )
-            );
+            return Err(SparseError::ValidationError(format!(
+                "EqEvals has {} coefficients but expected {} for {} row variables",
+                eq_evals.coeffs().len(),
+                expected_eq_coeffs,
+                row_vars
+            )));
         }
 
         // Initialize result vector with zeros - this will be our column dimension
@@ -376,7 +371,7 @@ mod tests {
             BabyBear::from_u32(1),
             BabyBear::from_u32(2),
             BabyBear::from_u32(3),
-            BabyBear::from_u32(4)
+            BabyBear::from_u32(4),
         ];
 
         let result = sparse_mle.multiply_by_matrix(&columns).unwrap();
@@ -413,12 +408,7 @@ mod tests {
         let result = sparse_mle.multiply_by_matrix(&empty_columns).unwrap();
 
         assert_eq!(result.len(), 2);
-        assert!(
-            result
-                .coeffs()
-                .iter()
-                .all(|entry| *entry == BabyBear::ZERO)
-        );
+        assert!(result.coeffs().iter().all(|entry| *entry == BabyBear::ZERO));
     }
 
     #[test]
@@ -434,7 +424,7 @@ mod tests {
             BabyBear::from_u32(2),
             BabyBear::from_u32(3),
             BabyBear::from_u32(4),
-            BabyBear::from_u32(5)
+            BabyBear::from_u32(5),
         ];
 
         let result = sparse_mle.multiply_by_matrix(&columns);
@@ -454,16 +444,16 @@ mod tests {
             BabyBear::from_u32(1),
             BabyBear::from_u32(2),
             BabyBear::from_u32(3),
-            BabyBear::from_u32(4)
+            BabyBear::from_u32(4),
         ];
 
         let result = sparse_mle.transpose_multiply_by_matrix(&columns).unwrap();
         assert_eq!(result.len(), 4);
         let coeffs = result.coeffs();
-        assert_eq!(coeffs[0], BabyBear::from_u32(8));
-        assert_eq!(coeffs[1], BabyBear::from_u32(18));
-        assert_eq!(coeffs[2], BabyBear::from_u32(14));
-        assert_eq!(coeffs[3], BabyBear::from_u32(32));
+        assert_eq!(coeffs[0], BabyBear::from_u32(11));
+        assert_eq!(coeffs[1], BabyBear::from_u32(16));
+        assert_eq!(coeffs[2], BabyBear::from_u32(19));
+        assert_eq!(coeffs[3], BabyBear::from_u32(28));
     }
 
     #[test]
@@ -492,7 +482,7 @@ mod tests {
             BabyBear::from_u32(2),
             BabyBear::from_u32(3),
             BabyBear::from_u32(4),
-            BabyBear::from_u32(5)
+            BabyBear::from_u32(5),
         ];
 
         let result = sparse_mle.transpose_multiply_by_matrix(&columns);
@@ -541,7 +531,10 @@ mod tests {
             expected: (2, 3),
             actual: (4, 5),
         };
-        assert_eq!(dimension_err.to_string(), "Dimension mismatch: expected (2, 3), got (4, 5)");
+        assert_eq!(
+            dimension_err.to_string(),
+            "Dimension mismatch: expected (2, 3), got (4, 5)"
+        );
 
         let index_err = SparseError::IndexOutOfBounds {
             index: (5, 6),
@@ -553,7 +546,10 @@ mod tests {
         assert_eq!(empty_err.to_string(), "Operation on empty matrix");
 
         let constraint_err = SparseError::ConstraintViolation("constraint failed".to_string());
-        assert_eq!(constraint_err.to_string(), "Constraint violation: constraint failed");
+        assert_eq!(
+            constraint_err.to_string(),
+            "Constraint violation: constraint failed"
+        );
     }
 
     #[test]

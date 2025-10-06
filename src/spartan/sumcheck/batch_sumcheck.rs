@@ -1,33 +1,34 @@
 use crate::{
-    Fp, Fp4,
+    Fp,
+    Fp4,
     challenger::Challenger,
     eq::EqEvals,
-    merkle_tree::{MerklePath, MerkleTree},
+    merkle_tree::{ MerklePath, MerkleTree },
     pcs::{
-        BaseFoldConfig, BasefoldCommitment, ProverData,
-        prover::{commit_oracle, fold_encoding_and_polynomial, update_queries},
-        utils::{fold, get_codewords_dit, get_merkle_paths},
-        verifier::{check_query_consistency, fold_codewords, verify_paths},
+        BaseFoldConfig,
+        BasefoldCommitment,
+        ProverData,
+        prover::{ commit_oracle, fold_encoding_and_polynomial, update_queries },
+        utils::{ fold, get_codewords, get_merkle_paths },
+        verifier::{ check_query_consistency, fold_codewords, verify_paths },
     },
     polynomial::MLE,
     sparse::SparseMLE,
     spartan::{
-        sumcheck::{eval_at_infinity, eval_at_two},
+        sumcheck::{ eval_at_infinity, eval_at_two, outer::transpose_column_major },
         univariate::UnivariatePoly,
     },
 };
 use anyhow::anyhow;
-use p3_field::{ExtensionField, Field, PrimeCharacteristicRing};
-use rayon::{
-    iter::{IntoParallelIterator, ParallelIterator},
-    slice::ParallelSlice,
-};
+use p3_field::{ ExtensionField, Field, PrimeCharacteristicRing };
+use rayon::{ iter::{ IntoParallelIterator, ParallelIterator }, slice::ParallelSlice };
 
 pub struct BatchSumCheckProof {
     round_proofs: Vec<UnivariatePoly>,
     final_evals: [Fp4; 4],
     oracle_commitments: Vec<[u8; 32]>,
     z_eval: Fp4,
+    early_codeword: Option<Vec<Fp4>>,
     codewords: Vec<Vec<(Fp4, Fp4)>>,
     paths: Vec<Vec<MerklePath>>,
 }
@@ -38,14 +39,16 @@ impl BatchSumCheckProof {
         final_evals: [Fp4; 4],
         oracle_commitments: Vec<[u8; 32]>,
         z_eval: Fp4,
+        early_codeword: Option<Vec<Fp4>>,
         codewords: Vec<Vec<(Fp4, Fp4)>>,
-        paths: Vec<Vec<MerklePath>>,
+        paths: Vec<Vec<MerklePath>>
     ) -> Self {
         Self {
             round_proofs,
             final_evals,
             oracle_commitments,
             z_eval,
+            early_codeword,
             codewords,
             paths,
         }
@@ -59,18 +62,18 @@ impl BatchSumCheckProof {
         A: &SparseMLE,
         B: &SparseMLE,
         C: &SparseMLE,
-        z: &MLE<Fp>,
-        z_commitment: &BasefoldCommitment,
+        z_transpose: &MLE<Fp>,
+        z_transpose_commitment: &BasefoldCommitment,
         prover_data: &ProverData,
         roots: &[Vec<Fp>],
         config: &BaseFoldConfig,
-        challenger: &mut Challenger,
+        challenger: &mut Challenger
     ) -> anyhow::Result<(Self, Vec<Fp4>)> {
         // Compute A·z, B·z, C·z (sparse matrix-MLE multiplications)
         let (a, b, c) = (
-            A.multiply_by_matrix(z.coeffs()).unwrap(),
-            B.multiply_by_matrix(z.coeffs()).unwrap(),
-            C.multiply_by_matrix(z.coeffs()).unwrap(),
+            A.transpose_multiply_by_matrix(z_transpose.coeffs()).unwrap(),
+            B.transpose_multiply_by_matrix(z_transpose.coeffs()).unwrap(),
+            C.transpose_multiply_by_matrix(z_transpose.coeffs()).unwrap(),
         );
         let rounds = a.n_vars();
 
@@ -82,7 +85,7 @@ impl BatchSumCheckProof {
         // Initialize equality polynomial eq(x, r) for rounds 1..n
         let mut eq = EqEvals::gen_from_point(&eq_point[1..]);
 
-        let z_eval = z.evaluate(&eq_point);
+        let z_eval = z_transpose.evaluate(&eq_point);
 
         let gamma = challenger.get_challenge();
 
@@ -101,18 +104,30 @@ impl BatchSumCheckProof {
         // Process remaining rounds (1 to n-1)
         for round in 0..rounds {
             let round_proof = match round {
-                0 => compute_round(&a, &b, &c, &z, &eq, &eq_point, current_claim, gamma, round),
-                _ => compute_round(
-                    &a_fold,
-                    &b_fold,
-                    &c_fold,
-                    &z_fold,
-                    &eq,
-                    &eq_point,
-                    current_claim,
-                    gamma,
-                    round,
-                ),
+                0 =>
+                    compute_round(
+                        &a,
+                        &b,
+                        &c,
+                        &z_transpose,
+                        &eq,
+                        &eq_point,
+                        current_claim,
+                        gamma,
+                        round
+                    ),
+                _ =>
+                    compute_round(
+                        &a_fold,
+                        &b_fold,
+                        &c_fold,
+                        &z_fold,
+                        &eq,
+                        &eq_point,
+                        current_claim,
+                        gamma,
+                        round
+                    ),
             };
 
             challenger.observe_fp4_elems(&round_proof.coefficients());
@@ -126,34 +141,36 @@ impl BatchSumCheckProof {
                 &state.encodings,
                 round_challenge,
                 roots,
-                z,
-                &z_fold,
+                z_transpose,
+                &z_fold
             );
 
             state.update(current_encoding)?;
             challenger.observe_commitment(
-                state
-                    .oracle_commitments
-                    .last()
-                    .expect("Will be non-empty after at least 1 fold"),
+                state.oracle_commitments.last().expect("Will be non-empty after at least 1 fold")
             );
 
             (
                 // Fold polynomials for next round
-                a_fold, b_fold, c_fold, z_fold,
+                a_fold,
+                b_fold,
+                c_fold,
+                z_fold,
             ) = match round {
-                0 => (
-                    a.fold_in_place(round_challenge),
-                    b.fold_in_place(round_challenge),
-                    c.fold_in_place(round_challenge),
-                    current_poly_folded,
-                ),
-                _ => (
-                    a_fold.fold_in_place(round_challenge),
-                    b_fold.fold_in_place(round_challenge),
-                    c_fold.fold_in_place(round_challenge),
-                    current_poly_folded,
-                ),
+                0 =>
+                    (
+                        a.fold_in_place(round_challenge),
+                        b.fold_in_place(round_challenge),
+                        c.fold_in_place(round_challenge),
+                        current_poly_folded,
+                    ),
+                _ =>
+                    (
+                        a_fold.fold_in_place(round_challenge),
+                        b_fold.fold_in_place(round_challenge),
+                        c_fold.fold_in_place(round_challenge),
+                        current_poly_folded,
+                    ),
             };
 
             eq.fold_in_place();
@@ -176,23 +193,21 @@ impl BatchSumCheckProof {
 
         let mut codewords = Vec::with_capacity(rounds);
         let mut paths = Vec::with_capacity(rounds);
-        let BasefoldState {
-            encodings,
-            merkle_trees,
-            ..
-        } = state;
+        let BasefoldState { encodings, merkle_trees, .. } = state;
         for round in 0..rounds {
             let halfsize = domain_size >> 1;
             let (round_codewords, round_paths): (Vec<(Fp4, Fp4)>, Vec<_>) = match round {
-                0 => (
-                    get_codewords_dit(&queries, &prover_data.encoding),
-                    get_merkle_paths(&queries, &prover_data.merkle_tree),
-                ),
+                0 =>
+                    (
+                        get_codewords(&queries, &prover_data.encoding),
+                        get_merkle_paths(&queries, &prover_data.merkle_tree),
+                    ),
 
-                _ => (
-                    get_codewords_dit(&queries, &encodings[round - 1]),
-                    get_merkle_paths(&queries, &merkle_trees[round - 1]),
-                ),
+                _ =>
+                    (
+                        get_codewords(&queries, &encodings[round - 1]),
+                        get_merkle_paths(&queries, &merkle_trees[round - 1]),
+                    ),
             };
 
             codewords.push(round_codewords);
@@ -210,8 +225,9 @@ impl BatchSumCheckProof {
                 final_evals,
                 state.oracle_commitments,
                 z_eval,
+                None,
                 codewords,
-                paths,
+                paths
             ),
             round_challenges,
         ))
@@ -223,7 +239,7 @@ impl BatchSumCheckProof {
         commitment: BasefoldCommitment,
         roots: &[Vec<Fp>],
         challenger: &mut Challenger,
-        config: &BaseFoldConfig,
+        config: &BaseFoldConfig
     ) -> anyhow::Result<(Vec<Fp4>, [Fp4; 4])> {
         let rounds = self.round_proofs.len();
 
@@ -237,13 +253,16 @@ impl BatchSumCheckProof {
         for round in 0..rounds {
             let round_poly = &self.round_proofs[round];
 
-            let round_eval = (Fp4::ONE - eq_point[round]) * round_poly.evaluate(Fp4::ZERO)
-                + eq_point[round] * round_poly.evaluate(Fp4::ONE);
+            let round_eval =
+                (Fp4::ONE - eq_point[round]) * round_poly.evaluate(Fp4::ZERO) +
+                eq_point[round] * round_poly.evaluate(Fp4::ONE);
             // Check sum-check relation: current_claim = (1-r_i) * g_i(0) + r_i * g_i(1)
             if current_claim != round_eval {
-                return Err(anyhow!(
-                    "OuterSumcheck round verification failed in round {round}, expected {current_claim} got {round_eval}"
-                ));
+                return Err(
+                    anyhow!(
+                        "OuterSumcheck round verification failed in round {round}, expected {current_claim} got {round_eval}"
+                    )
+                );
             }
 
             challenger.observe_fp4_elems(&round_poly.coefficients());
@@ -275,7 +294,7 @@ impl BatchSumCheckProof {
                 &folded_codewords,
                 &codewords,
                 query_range,
-                round,
+                round
             )?;
 
             verify_paths(codewords, paths, &queries, oracle_commitment)?;
@@ -285,7 +304,7 @@ impl BatchSumCheckProof {
                 codewords,
                 &queries,
                 round_challenges[round],
-                &roots[round],
+                &roots[round]
             );
 
             query_range = halfsize;
@@ -343,22 +362,21 @@ pub fn compute_round<F>(
     a: &MLE<F>,
     b: &MLE<F>,
     c: &MLE<F>,
-    z: &MLE<F>,
+    z_transpose: &MLE<F>,
     eq: &EqEvals,
     eq_point: &Vec<Fp4>,
     current_claim: Fp4,
     gamma: Fp4,
-    round: usize,
-) -> UnivariatePoly
-where
-    F: Field,
-    Fp4: ExtensionField<F>,
+    round: usize
+)
+    -> UnivariatePoly
+    where F: Field, Fp4: ExtensionField<F>
 {
     let eq_slice = &eq.coeffs()[..];
     let a_slice = &a.coeffs()[..];
     let b_slice = &b.coeffs()[..];
     let c_slice = &c.coeffs()[..];
-    let z_slice: &[F] = &z.coeffs()[..];
+    let z_slice: &[F] = &z_transpose.coeffs()[..];
 
     let (coeff_0, coeff_2) = (
         a_slice.par_chunks_exact(2),
@@ -376,7 +394,7 @@ where
         })
         .reduce(
             || (Fp4::ZERO, Fp4::ZERO),
-            |(acc_0, acc_2), (g_0, g_2)| (acc_0 + g_0, acc_2 + g_2),
+            |(acc_0, acc_2), (g_0, g_2)| (acc_0 + g_0, acc_2 + g_2)
         );
 
     let mut round_coeffs = vec![coeff_0, Fp4::ZERO, coeff_2];
@@ -394,9 +412,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Fp, challenger::Challenger, pcs::Basefold, polynomial::MLE};
+    use crate::{ Fp, challenger::Challenger, pcs::Basefold, polynomial::MLE };
     use itertools::multizip;
-    use rand::{Rng, SeedableRng, rngs::StdRng};
+    use rand::{ Rng, SeedableRng, rngs::StdRng };
     use std::collections::HashMap;
 
     #[test]
@@ -442,26 +460,37 @@ mod tests {
 
         let config = BaseFoldConfig::new().with_queries(4);
         let roots = Fp::roots_of_unity_table(1 << (z.n_vars() + 1));
-        let (commitment, prover_data) = Basefold::commit(&z, &roots, &config)?;
+        let (_, cols) = A.dimensions();
+        assert_eq!(cols, B.dimensions().1);
+        assert_eq!(cols, C.dimensions().1);
+
+        assert!(z.coeffs().len() % cols == 0, "z must align with column dimension");
+        let matrix_rows = z.coeffs().len() / cols;
+        let z_transposed = MLE::new(transpose_column_major(z.coeffs(), cols, matrix_rows));
+        let (commitment, prover_data) = Basefold::commit(&z_transposed, &roots, &config)?;
 
         let mut prover_challenger = Challenger::new();
         let (proof, round_challenges) = BatchSumCheckProof::prove(
             &A,
             &B,
             &C,
-            &z,
+            &z_transposed,
             &commitment,
             &prover_data,
             &roots,
             &config,
-            &mut prover_challenger,
+            &mut prover_challenger
         )?;
 
         assert_eq!(round_challenges.len(), z.n_vars());
 
         let mut verifier_challenger = Challenger::new();
-        let (verified_challenges, final_evals) =
-            proof.verify(commitment, &roots, &mut verifier_challenger, &config)?;
+        let (verified_challenges, final_evals) = proof.verify(
+            commitment,
+            &roots,
+            &mut verifier_challenger,
+            &config
+        )?;
 
         assert_eq!(verified_challenges, round_challenges);
         Ok(())
