@@ -7,6 +7,7 @@ use std::ops::Mul;
 use itertools::Itertools;
 use p3_baby_bear::BabyBear;
 use p3_field::{ ExtensionField, Field, PrimeCharacteristicRing, RawDataSerializable };
+use p3_monty_31::dft::RecursiveDft;
 
 use crate::{ Fp, Fp4, merkle_tree::{ MerklePath, MerkleTree }, polynomial::MLE };
 
@@ -40,6 +41,26 @@ pub fn encode_mle(poly: &MLE<Fp>, roots: &[Vec<Fp>], rate: usize) -> Encoding {
     BabyBear::forward_fft(&mut buffer, roots);
     bit_reverse_sort(&mut buffer);
     buffer
+}
+
+/// Encodes a multilinear polynomial using Reed-Solomon codes via forward FFT.
+/// Zero-pads coefficients to 2 * poly.len(), applies FFT, and bit-reverses result.
+pub fn encode_mle_ext(poly: &MLE<Fp4>, rate: usize) -> Vec<Fp4> {
+    use p3_dft::TwoAdicSubgroupDft;
+    let mut buffer = vec![Fp4::ZERO; poly.len() * rate];
+    buffer[0..poly.len()].copy_from_slice(poly.coeffs());
+    let fft: RecursiveDft<Fp> = RecursiveDft::new(buffer.len());
+
+    let buffer = fft.dft_algebra(buffer);
+    buffer
+}
+
+pub fn decode_mle_ext(encoding: Vec<Fp4>, rate: usize) -> Vec<Fp4> {
+    use p3_dft::TwoAdicSubgroupDft;
+    let fft: RecursiveDft<Fp> = RecursiveDft::new(encoding.len() / rate);
+
+    let buffer = fft.idft_algebra(encoding);
+    buffer[..buffer.len() / rate].to_vec()
 }
 
 /// Folds a pair of codewords using challenge and twiddle factor.

@@ -111,7 +111,10 @@ impl SparseMLE {
     ///
     /// The number of columns must be a power of two so the flattened output respects
     /// Spartan's hypercube layout requirements.
-    pub fn multiply_by_matrix(&self, matrix: &[BabyBear]) -> SparseResult<MLE<Fp>> {
+    pub fn multiply_by_matrix<F: ExtensionField<Fp> + Field>(
+        &self,
+        matrix: &[F]
+    ) -> SparseResult<MLE<F>> {
         let (rows, cols) = self.dimensions;
 
         if rows == 0 || cols == 0 {
@@ -119,7 +122,7 @@ impl SparseMLE {
         }
 
         if matrix.is_empty() {
-            return Ok(MLE::new(vec![BabyBear::ZERO; rows]));
+            return Ok(MLE::new(vec![F::ZERO; rows]));
         }
 
         if matrix.len() % cols != 0 {
@@ -139,14 +142,14 @@ impl SparseMLE {
             );
         }
 
-        let mut flattened = vec![BabyBear::ZERO; rows * num_columns];
+        let mut flattened = vec![F::ZERO; rows * num_columns];
 
         for ((row, col), &value) in self.iter() {
             if *row < rows && *col < cols {
                 for idx in 0..num_columns {
                     let input_offset = idx * cols + *col;
                     let output_offset = idx * rows + *row;
-                    flattened[output_offset] += value * matrix[input_offset];
+                    flattened[output_offset] += matrix[input_offset] * value;
                 }
             }
         }

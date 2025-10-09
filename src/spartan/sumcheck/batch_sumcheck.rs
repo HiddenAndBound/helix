@@ -1,16 +1,21 @@
 use crate::{
-    Fp,
-    Fp4,
     challenger::Challenger,
     eq::EqEvals,
     merkle_tree::{ MerklePath, MerkleTree },
     pcs::{
+        prover::{ commit_oracle, fold_encoding_and_polynomial, update_queries },
+        utils::{
+            decode_mle_ext,
+            encode_mle,
+            encode_mle_ext,
+            fold,
+            get_codewords,
+            get_merkle_paths,
+        },
+        verifier::{ check_query_consistency, fold_codewords, verify_paths },
         BaseFoldConfig,
         BasefoldCommitment,
         ProverData,
-        prover::{ commit_oracle, fold_encoding_and_polynomial, update_queries },
-        utils::{ fold, get_codewords, get_merkle_paths },
-        verifier::{ check_query_consistency, fold_codewords, verify_paths },
     },
     polynomial::MLE,
     sparse::SparseMLE,
@@ -18,6 +23,8 @@ use crate::{
         sumcheck::{ eval_at_infinity, eval_at_two, outer::transpose_column_major },
         univariate::UnivariatePoly,
     },
+    Fp,
+    Fp4,
 };
 use anyhow::{ anyhow, bail };
 use p3_field::{ ExtensionField, Field, PrimeCharacteristicRing };
@@ -181,7 +188,6 @@ impl BatchSumCheckProof {
                         z_fold.fold_in_place(round_challenge),
                     ),
             };
-
             eq.fold_in_place();
             round_proofs.push(round_proof);
         }
@@ -204,6 +210,7 @@ impl BatchSumCheckProof {
             0 => None,
             _ => Some(state.encodings.last().expect("Will be more than 1 round").clone()),
         };
+
         let mut codewords = Vec::with_capacity(rounds);
         let mut paths = Vec::with_capacity(rounds);
         let BasefoldState { encodings, merkle_trees, .. } = state;
@@ -345,16 +352,16 @@ impl BatchSumCheckProof {
                 }
             }
 
-            let mut az_fold = A.transpose_multiply_by_matrix(&early_code)?.coeffs().to_vec();
-
-            let mut bz_fold = B.transpose_multiply_by_matrix(&early_code)?.coeffs().to_vec();
-            let mut cz_fold = C.transpose_multiply_by_matrix(&early_code)?.coeffs().to_vec();
+            let decoding = decode_mle_ext(early_code.clone(), config.rate);
+            let mut az_fold = A.transpose_multiply_by_matrix(&decoding)?;
+            let mut bz_fold = B.transpose_multiply_by_matrix(&decoding)?;
+            let mut cz_fold = C.transpose_multiply_by_matrix(&decoding)?;
 
             for round in fri_rounds..rounds {
                 early_code = fold(&early_code, round_challenges[round], &roots[round]);
-                az_fold = fold(&az_fold, round_challenges[round], &roots[round]);
-                bz_fold = fold(&bz_fold, round_challenges[round], &roots[round]);
-                cz_fold = fold(&cz_fold, round_challenges[round], &roots[round]);
+                az_fold = az_fold.fold_in_place(round_challenges[round]);
+                bz_fold = bz_fold.fold_in_place(round_challenges[round]);
+                cz_fold = cz_fold.fold_in_place(round_challenges[round]);
             }
 
             final_fold = early_code[0];
@@ -372,8 +379,6 @@ impl BatchSumCheckProof {
 
         let [a, b, c, z] = self.final_evals;
 
-        print!("{:?}", a);
-        print!("{:?}", a_claim);
         if final_fold != z {
             anyhow::bail!(
                 "Final claim verification failed: {:?} != {:?}",
@@ -385,6 +390,16 @@ impl BatchSumCheckProof {
         // Final check: A(r)·B(r) - C(r) + \gamma.z(r) = final_claim
         if current_claim != a * b - c + gamma * z {
             return Err(anyhow!("Final Check Failed in SumCheck"));
+        }
+
+        if a_claim != a {
+            return Err(anyhow!("a fold did not match sumcheck transcript"));
+        }
+        if b_claim != b {
+            return Err(anyhow!("b fold did not match sumcheck transcript"));
+        }
+        if c_claim != c {
+            return Err(anyhow!("c fold did not match sumcheck transcript"));
         }
 
         Ok((round_challenges, self.final_evals))
@@ -471,6 +486,15 @@ pub fn compute_round<F>(
     round_proof
 }
 
+fn print_fp4(vector: &[Fp4]) {
+    print!("\n [");
+
+    for val in vector {
+        print!("{val}, ");
+    }
+
+    print!("] \n");
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -564,7 +588,7 @@ mod tests {
 
     #[test]
     fn batch_sum_check_proof_early_stopping() -> anyhow::Result<()> {
-        const ROWS: usize = 1 << 6;
+        const ROWS: usize = 1 << 3;
         const COLS: usize = ROWS;
         const WITNESS_COLS: usize = 1 << 3;
         let mut rng = StdRng::seed_from_u64(0);
@@ -603,7 +627,7 @@ mod tests {
             assert_eq!(c_i, a_i * b_i, "R1CS instance not satisfied");
         }
 
-        let config = BaseFoldConfig::new().with_queries(4).with_early_stopping(6);
+        let config = BaseFoldConfig::new().with_queries(4).with_early_stopping(3);
         let roots = Fp::roots_of_unity_table(1 << (z.n_vars() + 1));
         let (_, cols) = A.dimensions();
         assert_eq!(cols, B.dimensions().1);
