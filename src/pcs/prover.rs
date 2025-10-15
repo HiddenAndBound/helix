@@ -3,28 +3,20 @@
 //! This module contains the prover-side logic for the BaseFold polynomial commitment scheme,
 //! including commitment generation, evaluation proof construction, and all prover helper functions.
 
+use std::time::Instant;
+
 use anyhow::Result;
-use p3_field::{ ExtensionField, Field, PrimeCharacteristicRing };
+use p3_field::{ExtensionField, Field, PrimeCharacteristicRing};
 
 use crate::pcs::utils::{
-    Encoding,
-    create_hash_leaves,
-    encode_mle,
-    fold,
-    get_codewords,
-    get_merkle_paths,
+    Encoding, create_hash_leaves, encode_mle, fold, get_codewords, get_merkle_paths,
 };
 use crate::{
-    Fp,
-    Fp4,
-    challenger::Challenger,
-    eq::EqEvals,
-    merkle_tree::MerkleTree,
-    polynomial::MLE,
+    Fp, Fp4, challenger::Challenger, eq::EqEvals, merkle_tree::MerkleTree, polynomial::MLE,
     spartan::univariate::UnivariatePoly,
 };
 
-use super::{ BaseFoldConfig, Basefold, BasefoldCommitment, EvalProof, ProverData };
+use super::{BaseFoldConfig, Basefold, BasefoldCommitment, EvalProof, ProverData};
 
 /// Prover-specific state maintained during evaluation proof generation.
 pub struct BasefoldProverState {
@@ -44,7 +36,7 @@ impl BasefoldProverState {
         random_point: Fp4,
         sum_check_round: UnivariatePoly,
         current_encoding: Vec<Fp4>,
-        current_poly: MLE<Fp4>
+        current_poly: MLE<Fp4>,
     ) -> anyhow::Result<()> {
         let (oracle_commitment, merkle_tree) = commit_oracle(&current_encoding)?;
 
@@ -99,7 +91,7 @@ impl Basefold {
     pub fn commit(
         poly: &MLE<Fp>,
         roots: &[Vec<Fp>],
-        config: &BaseFoldConfig
+        config: &BaseFoldConfig,
     ) -> anyhow::Result<(BasefoldCommitment, ProverData)> {
         if !poly.len().is_power_of_two() {
             anyhow::bail!("Polynomial size must be a power of 2, got {}", poly.len());
@@ -115,12 +107,15 @@ impl Basefold {
                 roots.len()
             );
         }
+        let time = Instant::now();
 
         let encoding = encode_mle(poly, roots, config.rate);
-
+        println!("\n FFT time {:?}", time.elapsed());
         // Create leaf hashes: H(E[2i], E[2i+1]) for each codeword pair
+        let time = Instant::now();
         let leaves: Vec<[u8; 32]> = create_hash_leaves(&encoding);
         let merkle_tree = MerkleTree::from_hash(&leaves)?;
+        println!("merkle tree time {:?} \n", time.elapsed());
         let commitment = merkle_tree.root();
 
         Ok((
@@ -191,7 +186,7 @@ impl Basefold {
         evaluation: Fp4,
         prover_data: ProverData,
         roots: &[Vec<Fp>],
-        config: &BaseFoldConfig
+        config: &BaseFoldConfig,
     ) -> anyhow::Result<EvalProof> {
         if poly.n_vars() != eval_point.len() {
             anyhow::bail!(
@@ -212,14 +207,13 @@ impl Basefold {
                 0 => {
                     process_sum_check_round(poly, &eval_point, &state.current_claim, round, &mut eq)
                 }
-                _ =>
-                    process_sum_check_round(
-                        &state.current_poly,
-                        &eval_point,
-                        &state.current_claim,
-                        round,
-                        &mut eq
-                    ),
+                _ => process_sum_check_round(
+                    &state.current_poly,
+                    &eval_point,
+                    &state.current_claim,
+                    round,
+                    &mut eq,
+                ),
             };
 
             challenger.observe_fp4_elems(&round_proof.coefficients());
@@ -234,17 +228,20 @@ impl Basefold {
                 r,
                 roots,
                 poly,
-                &state.current_poly
+                &state.current_poly,
             );
             state.update(
                 round_proof.evaluate(r),
                 r,
                 round_proof,
                 current_encoding,
-                current_poly_folded
+                current_poly_folded,
             )?;
             challenger.observe_commitment(
-                state.oracle_commitments.last().expect("Will be non-empty after at least 1 fold")
+                state
+                    .oracle_commitments
+                    .last()
+                    .expect("Will be non-empty after at least 1 fold"),
             );
         }
 
@@ -261,21 +258,23 @@ impl Basefold {
 
         let mut codewords = Vec::with_capacity(rounds);
         let mut paths = Vec::with_capacity(rounds);
-        let BasefoldProverState { encodings, merkle_trees, .. } = state;
+        let BasefoldProverState {
+            encodings,
+            merkle_trees,
+            ..
+        } = state;
         for round in 0..rounds {
             let halfsize = domain_size >> 1;
             let (round_codewords, round_paths): (Vec<(Fp4, Fp4)>, Vec<_>) = match round {
-                0 =>
-                    (
-                        get_codewords(&queries, &prover_data.encoding),
-                        get_merkle_paths(&queries, &prover_data.merkle_tree),
-                    ),
+                0 => (
+                    get_codewords(&queries, &prover_data.encoding),
+                    get_merkle_paths(&queries, &prover_data.merkle_tree),
+                ),
 
-                _ =>
-                    (
-                        get_codewords(&queries, &encodings[round - 1]),
-                        get_merkle_paths(&queries, &merkle_trees[round - 1]),
-                    ),
+                _ => (
+                    get_codewords(&queries, &encodings[round - 1]),
+                    get_merkle_paths(&queries, &merkle_trees[round - 1]),
+                ),
             };
 
             codewords.push(round_codewords);
@@ -369,10 +368,11 @@ pub fn process_sum_check_round<F>(
     eval_point: &[Fp4],
     current_claim: &Fp4,
     round: usize,
-    eq: &mut EqEvals
-)
-    -> UnivariatePoly
-    where F: PrimeCharacteristicRing + Field, Fp4: ExtensionField<F>
+    eq: &mut EqEvals,
+) -> UnivariatePoly
+where
+    F: PrimeCharacteristicRing + Field,
+    Fp4: ExtensionField<F>,
 {
     let mut g_0: Fp4 = Fp4::ZERO;
     let rounds = eval_point.len();
@@ -415,11 +415,15 @@ pub fn fold_encoding_and_polynomial(
     r: Fp4,
     roots: &[Vec<Fp>],
     initial_poly: &MLE<Fp>,
-    current_poly: &MLE<Fp4>
+    current_poly: &MLE<Fp4>,
 ) -> (Vec<Fp4>, MLE<Fp4>) {
     let current_encoding = match round {
         0 => fold(initial_encoding, r, &roots[round]),
-        _ => fold(encodings.last().expect("Will be non-empty"), r, &roots[round]),
+        _ => fold(
+            encodings.last().expect("Will be non-empty"),
+            r,
+            &roots[round],
+        ),
     };
 
     let current_poly_folded = match round {
@@ -458,7 +462,7 @@ pub fn initialize_evaluation_proof_context(evaluation: Fp4, rounds: usize) -> Ba
 /// Builds a new Merkle tree over the folded encoding pairs and stores
 /// the commitment for verifier observation in the Fiat-Shamir transcript.
 pub fn commit_oracle(current_encoding: &[Fp4]) -> Result<([u8; 32], MerkleTree), anyhow::Error> {
-    let leaves: Vec<[u8; 32]> = create_hash_leaves(&current_encoding);
+    let leaves: Vec<[u8; 32]> = create_hash_leaves(current_encoding);
     let current_merkle_tree = MerkleTree::from_hash(&leaves)?;
     let current_commitment = current_merkle_tree.root();
     Ok((current_commitment, current_merkle_tree))

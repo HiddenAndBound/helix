@@ -41,6 +41,7 @@ fn eval_at_two<F: Field>(eval_0: F, eval_1: F) -> F {
     eval_1.double() - eval_0
 }
 
+#[inline]
 fn eval_at_infinity<F: Field>(eval_0: F, eval_1: F) -> F {
     eval_1 - eval_0
 }

@@ -1,8 +1,11 @@
 use p3_baby_bear::BabyBear;
 use p3_field::{ExtensionField, Field, PrimeCharacteristicRing};
-use rayon::iter::{
-    IndexedParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator,
-    Zip,
+use rayon::{
+    iter::{
+        IndexedParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator,
+        ParallelIterator, Zip,
+    },
+    slice::ParallelSlice,
 };
 use std::ops::{Add, Index, Mul, Range};
 
@@ -67,11 +70,12 @@ impl<F: PrimeCharacteristicRing + Clone + Field> MLE<F> {
 
         // For each coefficient pair (low, high) where low corresponds to x₀=0 and high to x₀=1
         // In hypercube layout, we pair coefficients that differ only in the lowest bit
-        for i in 0..half_len {
-            // Compute (1 - challenge) * low + challenge * high
-            let folded = r * (self[(i << 1) | 1] - self[i << 1]) + self[i << 1];
-            folded_coeffs.push(folded);
-        }
+        self.coeffs
+            .par_chunks_exact(2)
+            .map(|coeffs|
+                    // Compute (1 - challenge) * low + challenge * high
+                    r * (coeffs[1] - coeffs[0]) + coeffs[0])
+            .collect_into_vec(&mut folded_coeffs);
 
         MLE::new(folded_coeffs)
     }

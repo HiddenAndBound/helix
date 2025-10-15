@@ -145,25 +145,33 @@ impl SpartanProof {
 }
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use core::time;
+    use std::{collections::HashMap, time::Instant};
 
     use crate::{
         challenger::Challenger,
+        pcs::{BaseFoldConfig, Basefold},
         polynomial::MLE,
         sparse::SparseMLE,
         spartan::{
-            build_default_poseidon2_instance,
+            Poseidon2ColumnSeed, build_default_poseidon2_instance,
+            build_poseidon2_witness_matrix_from_states,
             prover::SpartanProof,
             r1cs::{R1CS, R1CSInstance, Witness},
+            sumcheck::batch_sumcheck::BatchSumCheckProof,
         },
         *,
     };
     use anyhow::bail;
     use itertools::multizip;
+    use p3_baby_bear::default_babybear_poseidon2_16;
     use p3_dft::*;
     use p3_field::{Field, PrimeCharacteristicRing};
     use p3_monty_31::dft;
-    use rand::{Rng, SeedableRng, rngs::StdRng};
+    use rand::{Rng, SeedableRng, rngs::StdRng, thread_rng};
+    use rayon::iter::{IntoParallelIterator, ParallelIterator};
+    use serde::Serialize;
+    use serde_json::Serializer;
     #[test]
     fn spartan_test() -> anyhow::Result<()> {
         // This is also the number of nonlinear constraints.
@@ -254,5 +262,119 @@ mod tests {
         proof.verify(commitment, &mut verifier_challenger)?;
 
         Ok(())
+    }
+
+    #[test]
+    fn helix_round_trip() -> anyhow::Result<()> {
+        let mut rng = StdRng::seed_from_u64(0);
+
+        const COLS: usize = 1 << 10;
+        let poseidon = default_babybear_poseidon2_16();
+        let initial_states = (0..COLS)
+            .map(|_| Fp::new_array(rng.r#gen()))
+            .collect::<Vec<_>>();
+        let witness_matrix =
+            build_poseidon2_witness_matrix_from_states(&initial_states, &poseidon)?;
+
+        let instance = build_default_poseidon2_instance(&[Fp::ZERO, Fp::ONE], None)?;
+
+        let r1cs = instance.r1cs;
+        let z_transposed = MLE::new(witness_matrix.flattened_transpose());
+
+        let config = BaseFoldConfig::new();
+        let roots = Fp::roots_of_unity_table(1 << (z_transposed.n_vars() + 1));
+        let (commitment, prover_data) = Basefold::commit(&z_transposed, &roots, &config)?;
+        let mut prover_challenger = Challenger::new();
+        let (proof, round_challenges) = BatchSumCheckProof::prove(
+            &r1cs.a,
+            &r1cs.b,
+            &r1cs.c,
+            &z_transposed,
+            &commitment,
+            &prover_data,
+            &roots,
+            &config,
+            &mut prover_challenger,
+        )?;
+
+        assert_eq!(round_challenges.len(), z_transposed.n_vars());
+
+        let mut verifier_challenger = Challenger::new();
+        let (verified_challenges, final_evals) = proof.verify(
+            &r1cs.a,
+            &r1cs.b,
+            &r1cs.c,
+            commitment,
+            &roots,
+            &mut verifier_challenger,
+            &config,
+        )?;
+
+        assert_eq!(verified_challenges, round_challenges);
+        Ok(())
+    }
+
+    #[test]
+    fn helix_timing() {
+        let rate = [Fp::ONE, Fp::TWO];
+        let instance = build_default_poseidon2_instance(&rate, None)
+            .expect("Poseidon2 instance construction should succeed");
+        let poseidon = default_babybear_poseidon2_16();
+
+        let r1cs = instance.r1cs;
+        for vars in 5..20 {
+            println!("Number of poseidon instances 2^{vars}");
+            let initial_states = (0..1 << vars)
+                .into_par_iter()
+                .map(|_| Fp::new_array(thread_rng().r#gen()))
+                .collect::<Vec<_>>();
+            let witness_matrix =
+                build_poseidon2_witness_matrix_from_states(&initial_states, &poseidon).unwrap();
+
+            let z_transposed = MLE::new(witness_matrix.flattened_transpose());
+
+            let config = BaseFoldConfig::new().with_early_stopping(11);
+            let roots = Fp::roots_of_unity_table(1 << (z_transposed.n_vars() + 1));
+
+            let prover_time = Instant::now();
+            let (commitment, prover_data) =
+                Basefold::commit(&z_transposed, &roots, &config).unwrap();
+            println!("Commit time {:?}", prover_time.elapsed());
+            let mut prover_challenger = Challenger::new();
+            let (proof, round_challenges) = BatchSumCheckProof::prove(
+                &r1cs.a,
+                &r1cs.b,
+                &r1cs.c,
+                &z_transposed,
+                &commitment,
+                &prover_data,
+                &roots,
+                &config,
+                &mut prover_challenger,
+            )
+            .unwrap();
+
+            println!("Prover time {:?}", prover_time.elapsed());
+            assert_eq!(round_challenges.len(), z_transposed.n_vars());
+
+            let proof_bytes = serde_json::to_vec(&proof).unwrap();
+            println!("Proof size {:?} bytes", proof_bytes.len());
+            let verifier_time = Instant::now();
+            let mut verifier_challenger = Challenger::new();
+            let (verified_challenges, final_evals) = proof
+                .verify(
+                    &r1cs.a,
+                    &r1cs.b,
+                    &r1cs.c,
+                    commitment,
+                    &roots,
+                    &mut verifier_challenger,
+                    &config,
+                )
+                .unwrap();
+
+            println!("Verifier time {:?}", verifier_time.elapsed());
+            assert_eq!(verified_challenges, round_challenges);
+        }
     }
 }

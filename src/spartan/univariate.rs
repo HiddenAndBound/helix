@@ -1,11 +1,12 @@
 use super::error::{SumCheckError, SumCheckResult};
 use crate::Fp4;
 use p3_field::PrimeCharacteristicRing;
+use serde::Serialize;
 use std::fmt;
 
 /// Univariate polynomials of degree 1-2 with degree-based coefficient indexing.
 /// Degree 1: f(x) = a + bx, coeffs [a, b]. Degree 2: f(x) = a + bx + cx², coeffs [a, b, c].
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct UnivariatePoly {
     /// Coefficients in degree order: coeffs[i] = coefficient of x^i
     coeffs: Vec<Fp4>,

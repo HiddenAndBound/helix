@@ -3,9 +3,6 @@
 //! This module contains the verifier-side logic for the BaseFold polynomial commitment scheme,
 //! including proof verification and all verifier helper functions.
 
-use itertools::multizip;
-use p3_field::PrimeCharacteristicRing;
-
 use crate::pcs::utils::{fold_pair, hash_field_pair};
 use crate::{
     Fp, Fp4,
@@ -13,6 +10,9 @@ use crate::{
     merkle_tree::{MerklePath, MerkleTree},
     spartan::univariate::UnivariatePoly,
 };
+use itertools::multizip;
+use p3_field::Field;
+use p3_field::PrimeCharacteristicRing;
 
 use super::{BaseFoldConfig, Basefold, BasefoldCommitment, EvalProof};
 
@@ -165,7 +165,7 @@ pub fn fold_codewords(
     roots: &[Fp],
 ) {
     for (query, fold, &codeword_pair) in multizip((queries, folded_codewords, codewords)) {
-        *fold = fold_pair(codeword_pair, r, roots[*query]);
+        *fold = fold_pair(codeword_pair, r, roots[*query].inverse());
     }
 }
 

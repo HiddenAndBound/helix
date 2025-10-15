@@ -1,11 +1,15 @@
-use crate::spartan::error::{SparseError, SparseResult};
-use crate::spartan::r1cs::{R1CS, R1CSInstance, Witness};
+use crate::spartan::error::{ SparseError, SparseResult };
+use crate::spartan::r1cs::{ R1CS, R1CSInstance, Witness };
 use crate::utils::sparse::SparseMLE;
 use p3_baby_bear::{
-    BABYBEAR_RC16_EXTERNAL_FINAL, BABYBEAR_RC16_EXTERNAL_INITIAL, BABYBEAR_RC16_INTERNAL, BabyBear,
-    Poseidon2BabyBear, default_babybear_poseidon2_16,
+    BABYBEAR_RC16_EXTERNAL_FINAL,
+    BABYBEAR_RC16_EXTERNAL_INITIAL,
+    BABYBEAR_RC16_INTERNAL,
+    BabyBear,
+    Poseidon2BabyBear,
+    default_babybear_poseidon2_16,
 };
-use p3_field::{Field, PrimeCharacteristicRing};
+use p3_field::{ Field, PrimeCharacteristicRing };
 use p3_symmetric::Permutation;
 use std::collections::HashMap;
 
@@ -87,10 +91,7 @@ impl Poseidon2WitnessMatrix {
     /// Materialises a Spartan witness for the requested column.
     pub fn column_witness(&self, column: usize) -> Option<Witness> {
         let column_slice = self.column_slice(column)?;
-        Some(Witness::from_vec(
-            column_slice.to_vec(),
-            self.num_public_inputs,
-        ))
+        Some(Witness::from_vec(column_slice.to_vec(), self.num_public_inputs))
     }
 
     /// Returns a flattened column-major representation of the transpose of the
@@ -140,7 +141,7 @@ trait Poseidon2Backend {
         &mut self,
         terms: &[(usize, BabyBear)],
         constant: BabyBear,
-        one_index: usize,
+        one_index: usize
     );
 }
 
@@ -179,9 +180,8 @@ impl Poseidon2Backend for AssignmentCollector {
         &mut self,
         _terms: &[(usize, BabyBear)],
         _constant: BabyBear,
-        _one_index: usize,
-    ) {
-    }
+        _one_index: usize
+    ) {}
 }
 
 struct Poseidon2WitnessArtifacts {
@@ -203,7 +203,7 @@ struct Poseidon2WitnessArtifacts {
 pub fn build_poseidon2_instance(
     rate: &[BabyBear],
     capacity: Option<&[BabyBear; WIDTH - RATE]>,
-    poseidon: &Poseidon2BabyBear<WIDTH>,
+    poseidon: &Poseidon2BabyBear<WIDTH>
 ) -> SparseResult<Poseidon2Instance> {
     let initial_state = assemble_initial_state(rate, capacity)?;
     let mut builder = ConstraintBuilder::new(initial_state.to_vec());
@@ -251,7 +251,7 @@ pub fn build_poseidon2_instance(
 /// Helper for consumers that do not need to pass an explicit Poseidon2 reference implementation.
 pub fn build_default_poseidon2_instance(
     rate: &[BabyBear],
-    capacity: Option<&[BabyBear; WIDTH - RATE]>,
+    capacity: Option<&[BabyBear; WIDTH - RATE]>
 ) -> SparseResult<Poseidon2Instance> {
     let poseidon = default_babybear_poseidon2_16();
     build_poseidon2_instance(rate, capacity, &poseidon)
@@ -259,12 +259,12 @@ pub fn build_default_poseidon2_instance(
 
 fn assemble_initial_state(
     rate: &[BabyBear],
-    capacity: Option<&[BabyBear; WIDTH - RATE]>,
+    capacity: Option<&[BabyBear; WIDTH - RATE]>
 ) -> SparseResult<[BabyBear; WIDTH]> {
     if rate.len() > RATE {
-        return Err(SparseError::ValidationError(
-            "rate must contain at most two elements".to_string(),
-        ));
+        return Err(
+            SparseError::ValidationError("rate must contain at most two elements".to_string())
+        );
     }
 
     let mut state = [BabyBear::ZERO; WIDTH];
@@ -278,7 +278,7 @@ fn assemble_initial_state(
 fn generate_poseidon2_witness<B: Poseidon2Backend>(
     backend: &mut B,
     initial_state: &[BabyBear; WIDTH],
-    poseidon: &Poseidon2BabyBear<WIDTH>,
+    poseidon: &Poseidon2BabyBear<WIDTH>
 ) -> SparseResult<Poseidon2WitnessArtifacts> {
     let mut state_indices = core::array::from_fn(|i| i);
     let mut state_values = *initial_state;
@@ -286,59 +286,53 @@ fn generate_poseidon2_witness<B: Poseidon2Backend>(
     let one_index = backend.alloc(BabyBear::ONE);
     backend.enforce_constant_one(one_index);
 
-    let (state_indices_tmp, state_values_tmp) =
-        external_linear_layer(backend, &state_indices, &state_values, one_index);
-    state_indices = state_indices_tmp;
-    state_values = state_values_tmp;
+    let (indices_after_linear, values_after_linear) = external_linear_layer(
+        backend,
+        &state_indices,
+        &state_values,
+        one_index
+    );
+    state_indices = indices_after_linear;
+    state_values = values_after_linear;
 
-    for round in 0..EXTERNAL_ROUNDS {
-        let constants = BABYBEAR_RC16_EXTERNAL_INITIAL
-            .get(round)
-            .expect("missing initial round constant");
-        let (indices_after_const, values_after_const) =
-            add_round_constants(backend, &state_indices, &state_values, constants, one_index);
-        let (indices_after_sbox, values_after_sbox) =
-            full_sbox_layer(backend, &indices_after_const, &values_after_const);
-        let (indices_after_linear, values_after_linear) =
-            external_linear_layer(backend, &indices_after_sbox, &values_after_sbox, one_index);
-        state_indices = indices_after_linear;
-        state_values = values_after_linear;
-    }
+    let (indices_after_rounds, values_after_rounds) = apply_external_rounds(
+        backend,
+        state_indices,
+        state_values,
+        &BABYBEAR_RC16_EXTERNAL_INITIAL,
+        one_index
+    );
+    state_indices = indices_after_rounds;
+    state_values = values_after_rounds;
 
-    for round in 0..INTERNAL_ROUNDS {
-        let rc = BABYBEAR_RC16_INTERNAL
-            .get(round)
-            .expect("missing internal round constant");
-        let (indices_after_const, values_after_const) =
-            add_internal_constant(backend, &state_indices, &state_values, *rc, one_index);
-        let (indices_after_sbox, values_after_sbox) =
-            single_sbox_layer(backend, &indices_after_const, &values_after_const);
-        let (indices_after_linear, values_after_linear) =
-            internal_linear_layer(backend, &indices_after_sbox, &values_after_sbox, one_index);
-        state_indices = indices_after_linear;
-        state_values = values_after_linear;
-    }
+    let (indices_after_internal, values_after_internal) = apply_internal_rounds(
+        backend,
+        state_indices,
+        state_values,
+        &BABYBEAR_RC16_INTERNAL,
+        one_index
+    );
+    state_indices = indices_after_internal;
+    state_values = values_after_internal;
 
-    for round in 0..EXTERNAL_ROUNDS {
-        let constants = BABYBEAR_RC16_EXTERNAL_FINAL
-            .get(round)
-            .expect("missing terminal round constant");
-        let (indices_after_const, values_after_const) =
-            add_round_constants(backend, &state_indices, &state_values, constants, one_index);
-        let (indices_after_sbox, values_after_sbox) =
-            full_sbox_layer(backend, &indices_after_const, &values_after_const);
-        let (indices_after_linear, values_after_linear) =
-            external_linear_layer(backend, &indices_after_sbox, &values_after_sbox, one_index);
-        state_indices = indices_after_linear;
-        state_values = values_after_linear;
-    }
+    let (indices_after_final, values_after_final) = apply_external_rounds(
+        backend,
+        state_indices,
+        state_values,
+        &BABYBEAR_RC16_EXTERNAL_FINAL,
+        one_index
+    );
+    state_indices = indices_after_final;
+    state_values = values_after_final;
 
     let mut expected_state = *initial_state;
     poseidon.permute_mut(&mut expected_state);
     if expected_state != state_values {
-        return Err(SparseError::ValidationError(
-            "Poseidon2 wiring mismatch compared to reference permutation".to_string(),
-        ));
+        return Err(
+            SparseError::ValidationError(
+                "Poseidon2 wiring mismatch compared to reference permutation".to_string()
+            )
+        );
     }
 
     let layout = Poseidon2Layout {
@@ -357,12 +351,14 @@ fn generate_poseidon2_witness<B: Poseidon2Backend>(
 /// Builds a column-major matrix where each column encodes the witness for an independent Poseidon2 hash.
 pub fn build_poseidon2_witness_matrix(
     seeds: &[Poseidon2ColumnSeed],
-    poseidon: &Poseidon2BabyBear<WIDTH>,
+    poseidon: &Poseidon2BabyBear<WIDTH>
 ) -> SparseResult<Poseidon2WitnessMatrix> {
     if seeds.is_empty() {
-        return Err(SparseError::ValidationError(
-            "at least one Poseidon2 column seed is required".to_string(),
-        ));
+        return Err(
+            SparseError::ValidationError(
+                "at least one Poseidon2 column seed is required".to_string()
+            )
+        );
     }
 
     let mut initial_states = Vec::with_capacity(seeds.len());
@@ -383,12 +379,14 @@ pub fn build_poseidon2_witness_matrix(
 /// column produces a layout/length that differs from the first column.
 pub fn build_poseidon2_witness_matrix_from_states(
     initial_states: &[[BabyBear; WIDTH]],
-    poseidon: &Poseidon2BabyBear<WIDTH>,
+    poseidon: &Poseidon2BabyBear<WIDTH>
 ) -> SparseResult<Poseidon2WitnessMatrix> {
     if initial_states.is_empty() {
-        return Err(SparseError::ValidationError(
-            "at least one Poseidon2 initial state is required".to_string(),
-        ));
+        return Err(
+            SparseError::ValidationError(
+                "at least one Poseidon2 initial state is required".to_string()
+            )
+        );
     }
 
     let mut builder = ConstraintBuilder::new(initial_states[0].to_vec());
@@ -418,22 +416,25 @@ pub fn build_poseidon2_witness_matrix_from_states(
         let artifacts = generate_poseidon2_witness(&mut collector, initial_state, poseidon)?;
 
         if collector.len() != raw_column_len {
-            return Err(SparseError::ValidationError(
-                "Poseidon2 witness column length mismatch".to_string(),
-            ));
+            return Err(
+                SparseError::ValidationError("Poseidon2 witness column length mismatch".to_string())
+            );
         }
 
         let mut column = collector.into_assignment();
         column.resize(column_len, BabyBear::ZERO);
         assignments.extend_from_slice(&column);
 
-        if artifacts.layout.final_state_positions != base_layout.final_state_positions
-            || artifacts.layout.one_index != base_layout.one_index
-            || artifacts.layout.public_input_positions != base_layout.public_input_positions
+        if
+            artifacts.layout.final_state_positions != base_layout.final_state_positions ||
+            artifacts.layout.one_index != base_layout.one_index ||
+            artifacts.layout.public_input_positions != base_layout.public_input_positions
         {
-            return Err(SparseError::ValidationError(
-                "Poseidon2 layout mismatch across witness columns".to_string(),
-            ));
+            return Err(
+                SparseError::ValidationError(
+                    "Poseidon2 layout mismatch across witness columns".to_string()
+                )
+            );
         }
 
         final_states.push(artifacts.final_state);
@@ -454,7 +455,7 @@ pub fn build_poseidon2_witness_matrix_from_states(
 /// Convenience wrapper that wires the default BabyBear Poseidon2 permutation into
 /// [`build_poseidon2_witness_matrix_from_states`].
 pub fn build_default_poseidon2_witness_matrix_from_states(
-    initial_states: &[[BabyBear; WIDTH]],
+    initial_states: &[[BabyBear; WIDTH]]
 ) -> SparseResult<Poseidon2WitnessMatrix> {
     let poseidon = default_babybear_poseidon2_16();
     build_poseidon2_witness_matrix_from_states(initial_states, &poseidon)
@@ -483,7 +484,7 @@ impl ConstraintBuilder {
         matrix: &mut HashMap<(usize, usize), BabyBear>,
         row: usize,
         col: usize,
-        coeff: BabyBear,
+        coeff: BabyBear
     ) {
         matrix
             .entry((row, col))
@@ -521,7 +522,7 @@ impl Poseidon2Backend for ConstraintBuilder {
         &mut self,
         terms: &[(usize, BabyBear)],
         constant: BabyBear,
-        one_index: usize,
+        one_index: usize
     ) {
         let row = self.next_row;
         self.next_row += 1;
@@ -537,12 +538,100 @@ impl Poseidon2Backend for ConstraintBuilder {
     }
 }
 
+fn apply_external_rounds(
+    backend: &mut impl Poseidon2Backend,
+    state_indices: [usize; WIDTH],
+    state_values: [BabyBear; WIDTH],
+    constants: &[[BabyBear; WIDTH]],
+    one_index: usize
+) -> ([usize; WIDTH], [BabyBear; WIDTH]) {
+    assert_eq!(
+        constants.len(),
+        EXTERNAL_ROUNDS,
+        "expected {} external round constants",
+        EXTERNAL_ROUNDS
+    );
+
+    let mut indices = state_indices;
+    let mut values = state_values;
+
+    for round_constants in constants.iter().take(EXTERNAL_ROUNDS) {
+        let (after_constant_idx, after_constant_val) = add_round_constants(
+            backend,
+            &indices,
+            &values,
+            round_constants,
+            one_index
+        );
+        let (after_sbox_idx, after_sbox_val) = full_sbox_layer(
+            backend,
+            &after_constant_idx,
+            &after_constant_val
+        );
+        let (after_linear_idx, after_linear_val) = external_linear_layer(
+            backend,
+            &after_sbox_idx,
+            &after_sbox_val,
+            one_index
+        );
+
+        indices = after_linear_idx;
+        values = after_linear_val;
+    }
+
+    (indices, values)
+}
+
+fn apply_internal_rounds(
+    backend: &mut impl Poseidon2Backend,
+    state_indices: [usize; WIDTH],
+    state_values: [BabyBear; WIDTH],
+    constants: &[BabyBear],
+    one_index: usize
+) -> ([usize; WIDTH], [BabyBear; WIDTH]) {
+    assert_eq!(
+        constants.len(),
+        INTERNAL_ROUNDS,
+        "expected {} internal round constants",
+        INTERNAL_ROUNDS
+    );
+
+    let mut indices = state_indices;
+    let mut values = state_values;
+
+    for &constant in constants.iter().take(INTERNAL_ROUNDS) {
+        let (after_constant_idx, after_constant_val) = add_internal_constant(
+            backend,
+            &indices,
+            &values,
+            constant,
+            one_index
+        );
+        let (after_sbox_idx, after_sbox_val) = single_sbox_layer(
+            backend,
+            &after_constant_idx,
+            &after_constant_val
+        );
+        let (after_linear_idx, after_linear_val) = internal_linear_layer(
+            backend,
+            &after_sbox_idx,
+            &after_sbox_val,
+            one_index
+        );
+
+        indices = after_linear_idx;
+        values = after_linear_val;
+    }
+
+    (indices, values)
+}
+
 fn add_round_constants(
     backend: &mut impl Poseidon2Backend,
     state_indices: &[usize; WIDTH],
     state_values: &[BabyBear; WIDTH],
     constants: &[BabyBear; WIDTH],
-    one_index: usize,
+    one_index: usize
 ) -> ([usize; WIDTH], [BabyBear; WIDTH]) {
     let mut next_indices = *state_indices;
     let mut next_values = *state_values;
@@ -567,14 +656,17 @@ fn add_internal_constant(
     state_indices: &[usize; WIDTH],
     state_values: &[BabyBear; WIDTH],
     constant: BabyBear,
-    one_index: usize,
+    one_index: usize
 ) -> ([usize; WIDTH], [BabyBear; WIDTH]) {
     let mut next_indices = *state_indices;
     let mut next_values = *state_values;
 
     let updated = state_values[0] + constant;
     let idx = backend.alloc(updated);
-    let terms = [(idx, BabyBear::NEG_ONE), (state_indices[0], BabyBear::ONE)];
+    let terms = [
+        (idx, BabyBear::NEG_ONE),
+        (state_indices[0], BabyBear::ONE),
+    ];
     backend.enforce_linear_relation(&terms, constant, one_index);
     next_indices[0] = idx;
     next_values[0] = updated;
@@ -585,7 +677,7 @@ fn add_internal_constant(
 fn full_sbox_layer(
     backend: &mut impl Poseidon2Backend,
     state_indices: &[usize; WIDTH],
-    state_values: &[BabyBear; WIDTH],
+    state_values: &[BabyBear; WIDTH]
 ) -> ([usize; WIDTH], [BabyBear; WIDTH]) {
     let mut next_indices = *state_indices;
     let mut next_values = *state_values;
@@ -602,7 +694,7 @@ fn full_sbox_layer(
 fn single_sbox_layer(
     backend: &mut impl Poseidon2Backend,
     state_indices: &[usize; WIDTH],
-    state_values: &[BabyBear; WIDTH],
+    state_values: &[BabyBear; WIDTH]
 ) -> ([usize; WIDTH], [BabyBear; WIDTH]) {
     let mut next_indices = *state_indices;
     let mut next_values = *state_values;
@@ -615,7 +707,7 @@ fn single_sbox_layer(
 fn apply_sbox(
     backend: &mut impl Poseidon2Backend,
     input_idx: usize,
-    input_value: BabyBear,
+    input_value: BabyBear
 ) -> (usize, BabyBear) {
     let x2 = input_value * input_value;
     let x2_idx = backend.alloc(x2);
@@ -640,7 +732,7 @@ fn external_linear_layer(
     backend: &mut impl Poseidon2Backend,
     state_indices: &[usize; WIDTH],
     state_values: &[BabyBear; WIDTH],
-    one_index: usize,
+    one_index: usize
 ) -> ([usize; WIDTH], [BabyBear; WIDTH]) {
     let mat = external_mds_matrix();
 
@@ -715,7 +807,7 @@ fn internal_linear_layer(
     backend: &mut impl Poseidon2Backend,
     state_indices: &[usize; WIDTH],
     state_values: &[BabyBear; WIDTH],
-    one_index: usize,
+    one_index: usize
 ) -> ([usize; WIDTH], [BabyBear; WIDTH]) {
     let diag = internal_diag();
     let mut next_indices = *state_indices;
@@ -779,20 +871,20 @@ fn internal_diag() -> [BabyBear; WIDTH] {
 
     [
         neg_one * two, // -2
-        one,           // 1
-        two,           // 2
-        half,          // 1/2
-        three,         // 3
-        four,          // 4
-        -half,         // -1/2
-        -three,        // -3
-        -four,         // -4
-        inv_2_pow_8,   // 1/2^8
-        quarter,       // 1/4
-        eighth,        // 1/8
-        inv_2_pow_27,  // 1/2^27
-        -inv_2_pow_8,  // -1/2^8
-        -sixteenth,    // -1/16
+        one, // 1
+        two, // 2
+        half, // 1/2
+        three, // 3
+        four, // 4
+        -half, // -1/2
+        -three, // -3
+        -four, // -4
+        inv_2_pow_8, // 1/2^8
+        quarter, // 1/4
+        eighth, // 1/8
+        inv_2_pow_27, // 1/2^27
+        -inv_2_pow_8, // -1/2^8
+        -sixteenth, // -1/16
         -inv_2_pow_27, // -1/2^27
     ]
 }
@@ -808,8 +900,9 @@ mod tests {
         let poseidon = default_babybear_poseidon2_16();
         let rate = [BabyBear::ONE, BabyBear::TWO];
         let capacity = [BabyBear::ZERO; WIDTH - RATE];
-        let instance = build_poseidon2_instance(&rate, Some(&capacity), &poseidon)
-            .expect("poseidon2 instance construction should succeed");
+        let instance = build_poseidon2_instance(&rate, Some(&capacity), &poseidon).expect(
+            "poseidon2 instance construction should succeed"
+        );
 
         let mut expected = [BabyBear::ZERO; WIDTH];
         expected[..RATE].copy_from_slice(&rate);
@@ -820,8 +913,7 @@ mod tests {
         assert_eq!(expected_perm[..], instance.witness.final_state[..]);
         assert_eq!(&expected_perm[..RATE], &instance.witness.digest);
 
-        let verified = instance
-            .r1cs
+        let verified = instance.r1cs
             .verify(&instance.witness.witness.to_mle())
             .expect("verification should succeed");
         assert!(verified);
@@ -829,7 +921,7 @@ mod tests {
 
     #[test]
     fn poseidon2_random_input_is_consistent() {
-        use rand::{Rng, SeedableRng};
+        use rand::{ Rng, SeedableRng };
 
         let poseidon = default_babybear_poseidon2_16();
         let mut rng = rand::rngs::StdRng::seed_from_u64(0xdeadbeef);
@@ -842,10 +934,10 @@ mod tests {
             *lane = BabyBear::from_int(rng.r#gen::<u32>());
         }
 
-        let instance = build_poseidon2_instance(&rate, Some(&capacity), &poseidon)
-            .expect("poseidon2 instance construction should succeed");
-        let verified = instance
-            .r1cs
+        let instance = build_poseidon2_instance(&rate, Some(&capacity), &poseidon).expect(
+            "poseidon2 instance construction should succeed"
+        );
+        let verified = instance.r1cs
             .verify(&instance.witness.witness.to_mle())
             .expect("verification should succeed");
         assert!(verified);
@@ -867,31 +959,27 @@ mod tests {
             Poseidon2ColumnSeed {
                 rate: vec![BabyBear::TWO],
                 capacity: None,
-            },
+            }
         ];
 
-        let matrix = build_poseidon2_witness_matrix(&seeds, &poseidon)
-            .expect("matrix generation should succeed");
+        let matrix = build_poseidon2_witness_matrix(&seeds, &poseidon).expect(
+            "matrix generation should succeed"
+        );
 
         assert_eq!(matrix.num_columns, seeds.len());
         assert_eq!(matrix.num_public_inputs, WIDTH);
-        assert_eq!(
-            matrix.assignments.len(),
-            matrix.column_len * matrix.num_columns
-        );
+        assert_eq!(matrix.assignments.len(), matrix.column_len * matrix.num_columns);
 
         let instance0 = build_poseidon2_instance(
             seeds[0].rate.as_slice(),
             seeds[0].capacity.as_ref(),
-            &poseidon,
-        )
-        .expect("first column witness generation should succeed");
+            &poseidon
+        ).expect("first column witness generation should succeed");
         let instance1 = build_poseidon2_instance(
             seeds[1].rate.as_slice(),
             seeds[1].capacity.as_ref(),
-            &poseidon,
-        )
-        .expect("second column witness generation should succeed");
+            &poseidon
+        ).expect("second column witness generation should succeed");
 
         let column0 = matrix.column_slice(0).expect("column 0 should exist");
         let column1 = matrix.column_slice(1).expect("column 1 should exist");
@@ -904,9 +992,7 @@ mod tests {
         assert_eq!(matrix.digests[0], instance0.witness.digest);
         assert_eq!(matrix.digests[1], instance1.witness.digest);
 
-        let witness0 = matrix
-            .column_witness(0)
-            .expect("should construct witness for first column");
+        let witness0 = matrix.column_witness(0).expect("should construct witness for first column");
         assert_eq!(witness0, instance0.witness.witness);
 
         let row = 3;
@@ -923,8 +1009,9 @@ mod tests {
             capacity: None,
         }];
 
-        let matrix = build_poseidon2_witness_matrix(&seeds, &poseidon)
-            .expect("matrix generation should succeed");
+        let matrix = build_poseidon2_witness_matrix(&seeds, &poseidon).expect(
+            "matrix generation should succeed"
+        );
 
         let rows = matrix.column_len;
         let cols = matrix.num_columns;
@@ -951,15 +1038,13 @@ mod tests {
         state1[5] = BabyBear::from_int(7);
 
         let states = vec![state0, state1];
-        let matrix = build_default_poseidon2_witness_matrix_from_states(&states)
-            .expect("matrix generation should succeed");
+        let matrix = build_default_poseidon2_witness_matrix_from_states(&states).expect(
+            "matrix generation should succeed"
+        );
 
         assert_eq!(matrix.num_columns, states.len());
         assert_eq!(matrix.num_public_inputs, WIDTH);
-        assert_eq!(
-            matrix.assignments.len(),
-            matrix.column_len * matrix.num_columns
-        );
+        assert_eq!(matrix.assignments.len(), matrix.column_len * matrix.num_columns);
 
         for (column, state) in states.iter().enumerate() {
             let slice = matrix
@@ -988,8 +1073,9 @@ mod tests {
         state1[4] = BabyBear::from_int(13);
 
         let states = vec![state0, state1];
-        let matrix = build_poseidon2_witness_matrix_from_states(&states, &poseidon)
-            .expect("matrix generation should succeed");
+        let matrix = build_poseidon2_witness_matrix_from_states(&states, &poseidon).expect(
+            "matrix generation should succeed"
+        );
 
         let expected_public_inputs: Vec<usize> = (0..WIDTH).collect();
         assert_eq!(matrix.layout.public_input_positions, expected_public_inputs);
@@ -1001,8 +1087,9 @@ mod tests {
             let mut capacity = [BabyBear::ZERO; WIDTH - RATE];
             capacity.copy_from_slice(&state[RATE..]);
 
-            let instance = build_poseidon2_instance(&rate, Some(&capacity), &poseidon)
-                .expect("single-column instance should build");
+            let instance = build_poseidon2_instance(&rate, Some(&capacity), &poseidon).expect(
+                "single-column instance should build"
+            );
 
             assert_eq!(matrix.final_states[column], instance.witness.final_state);
             assert_eq!(matrix.digests[column], instance.witness.digest);
@@ -1023,11 +1110,13 @@ mod tests {
         let poseidon = default_babybear_poseidon2_16();
         let result = build_poseidon2_witness_matrix_from_states(&[], &poseidon);
 
-        assert!(matches!(
+        assert!(
+            matches!(
             result,
             Err(SparseError::ValidationError(ref msg))
                 if msg == "at least one Poseidon2 initial state is required"
-        ));
+        )
+        );
     }
 
     proptest! {

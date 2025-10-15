@@ -45,6 +45,7 @@ pub struct BaseFoldConfig {
     /// Enable parallel processing for folding operations.
     pub enable_parallel: bool,
     /// Enable optimizations like hash pruning and early stopping.
+    pub round_skip: usize,
     pub early_stopping_threshold: usize,
 }
 
@@ -54,6 +55,7 @@ impl Default for BaseFoldConfig {
             queries: 144,
             rate: 2,
             enable_parallel: false,
+            round_skip: 4,
             early_stopping_threshold: 0,
         }
     }
@@ -95,6 +97,7 @@ impl BaseFoldConfig {
             queries: 256,
             rate: 2,
             enable_parallel: true,
+            round_skip: 4,
             early_stopping_threshold: 0,
         }
     }
@@ -105,6 +108,7 @@ impl BaseFoldConfig {
             queries: 80,
             rate: 2,
             enable_parallel: true,
+            round_skip: 4,
             early_stopping_threshold: 0,
         }
     }
