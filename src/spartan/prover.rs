@@ -7,10 +7,11 @@ use p3_baby_bear::BabyBear;
 
 use crate::{
     challenger::Challenger,
-    pcs::{BaseFoldConfig, Basefold, BasefoldCommitment, EvalProof},
+    pcs::{ BaseFoldConfig, Basefold, BasefoldCommitment, EvalProof },
     spartan::{
-        Poseidon2Instance, R1CSInstance,
-        sumcheck::{InnerSumCheckProof, OuterSumCheckProof},
+        Poseidon2Instance,
+        R1CSInstance,
+        sumcheck::{ InnerSumCheckProof, OuterSumCheckProof },
     },
 };
 
@@ -28,7 +29,7 @@ impl SpartanProof {
     pub fn new(
         outer_sumcheck_proof: OuterSumCheckProof,
         inner_sumcheck_proof: InnerSumCheckProof,
-        z_eval_proof: EvalProof,
+        z_eval_proof: EvalProof
     ) -> Self {
         Self {
             outer_sumcheck_proof,
@@ -48,7 +49,7 @@ impl SpartanProof {
 
     pub fn prove(
         instance: R1CSInstance,
-        challenger: &mut Challenger,
+        challenger: &mut Challenger
     ) -> anyhow::Result<(Self, BasefoldCommitment)> {
         let z = &instance.witness_mle();
 
@@ -75,7 +76,7 @@ impl SpartanProof {
             z,
             outer_sum_check.final_evals,
             gamma,
-            challenger,
+            challenger
         );
 
         let z_evaluation = inner_sum_check.final_evaluations()[3];
@@ -86,19 +87,16 @@ impl SpartanProof {
             z_evaluation,
             prover_data,
             &roots,
-            &config,
+            &config
         )?;
 
-        Ok((
-            SpartanProof::new(outer_sum_check, inner_sum_check, z_eval_proof),
-            z_commitment,
-        ))
+        Ok((SpartanProof::new(outer_sum_check, inner_sum_check, z_eval_proof), z_commitment))
     }
 
     /// Convenience wrapper for proving the dedicated Poseidon2 R1CS instance.
     pub fn prove_poseidon2(
         instance: &Poseidon2Instance,
-        challenger: &mut Challenger,
+        challenger: &mut Challenger
     ) -> anyhow::Result<(Self, BasefoldCommitment)> {
         let r1cs_instance = instance.to_r1cs_instance()?;
         SpartanProof::prove(r1cs_instance, challenger)
@@ -107,7 +105,7 @@ impl SpartanProof {
     pub fn verify(
         &self,
         z_commitment: BasefoldCommitment,
-        challenger: &mut crate::challenger::Challenger,
+        challenger: &mut crate::challenger::Challenger
     ) -> anyhow::Result<()> {
         // Phase 1: Verify the outer sum-check proof
         // This ensures R1CS constraints are satisfied
@@ -117,9 +115,11 @@ impl SpartanProof {
         // This ensures evaluation claims from outer sumcheck are correct
         challenger.observe_fp4_elems(&self.outer_sumcheck_proof.final_evals);
         let gamma = challenger.get_challenge();
-        let (evaluation_point, final_evals) =
-            self.inner_sumcheck_proof
-                .verify(outer_claims, gamma, challenger);
+        let (evaluation_point, final_evals) = self.inner_sumcheck_proof.verify(
+            outer_claims,
+            gamma,
+            challenger
+        );
 
         let z_evaluation = final_evals[3];
         let rounds = self.inner_sumcheck_proof.rounds();
@@ -133,7 +133,7 @@ impl SpartanProof {
             z_commitment,
             &roots,
             challenger,
-            &config,
+            &config
         )?;
 
         // Note: In a complete Spartan implementation, additional steps would include:
@@ -146,18 +146,19 @@ impl SpartanProof {
 #[cfg(test)]
 mod tests {
     use core::time;
-    use std::{collections::HashMap, time::Instant};
+    use std::{ collections::HashMap, time::Instant };
 
     use crate::{
         challenger::Challenger,
-        pcs::{BaseFoldConfig, Basefold},
+        pcs::{ BaseFoldConfig, Basefold },
         polynomial::MLE,
         sparse::SparseMLE,
         spartan::{
-            Poseidon2ColumnSeed, build_default_poseidon2_instance,
+            Poseidon2ColumnSeed,
+            build_default_poseidon2_instance,
             build_poseidon2_witness_matrix_from_states,
             prover::SpartanProof,
-            r1cs::{R1CS, R1CSInstance, Witness},
+            r1cs::{ R1CS, R1CSInstance, Witness },
             sumcheck::batch_sumcheck::BatchSumCheckProof,
         },
         *,
@@ -166,12 +167,14 @@ mod tests {
     use itertools::multizip;
     use p3_baby_bear::default_babybear_poseidon2_16;
     use p3_dft::*;
-    use p3_field::{Field, PrimeCharacteristicRing};
+    use p3_field::{ Field, PrimeCharacteristicRing };
     use p3_monty_31::dft;
-    use rand::{Rng, SeedableRng, rngs::StdRng, thread_rng};
-    use rayon::iter::{IntoParallelIterator, ParallelIterator};
+    use rand::{ Rng, SeedableRng, rngs::StdRng, thread_rng };
+    use rayon::iter::{ IntoParallelIterator, ParallelIterator };
     use serde::Serialize;
     use serde_json::Serializer;
+    use tracing::{ span, subscriber::set_global_default, Level };
+    use tracing_subscriber::{ fmt::format::FmtSpan, util::SubscriberInitExt };
     #[test]
     fn spartan_test() -> anyhow::Result<()> {
         // This is also the number of nonlinear constraints.
@@ -250,13 +253,12 @@ mod tests {
 
         let rate = [BabyBear::ONE, BabyBear::TWO];
         let poseidon_instance = build_default_poseidon2_instance(&rate, None)?;
-        println!(
-            "length of witness {:?}",
-            poseidon_instance.witness.witness.len()
-        );
+        println!("length of witness {:?}", poseidon_instance.witness.witness.len());
         let mut prover_challenger = Challenger::new();
-        let (proof, commitment) =
-            SpartanProof::prove_poseidon2(&poseidon_instance, &mut prover_challenger)?;
+        let (proof, commitment) = SpartanProof::prove_poseidon2(
+            &poseidon_instance,
+            &mut prover_challenger
+        )?;
 
         let mut verifier_challenger = Challenger::new();
         proof.verify(commitment, &mut verifier_challenger)?;
@@ -270,11 +272,11 @@ mod tests {
 
         const COLS: usize = 1 << 10;
         let poseidon = default_babybear_poseidon2_16();
-        let initial_states = (0..COLS)
-            .map(|_| Fp::new_array(rng.r#gen()))
-            .collect::<Vec<_>>();
-        let witness_matrix =
-            build_poseidon2_witness_matrix_from_states(&initial_states, &poseidon)?;
+        let initial_states = (0..COLS).map(|_| Fp::new_array(rng.r#gen())).collect::<Vec<_>>();
+        let witness_matrix = build_poseidon2_witness_matrix_from_states(
+            &initial_states,
+            &poseidon
+        )?;
 
         let instance = build_default_poseidon2_instance(&[Fp::ZERO, Fp::ONE], None)?;
 
@@ -294,7 +296,7 @@ mod tests {
             &prover_data,
             &roots,
             &config,
-            &mut prover_challenger,
+            &mut prover_challenger
         )?;
 
         assert_eq!(round_challenges.len(), z_transposed.n_vars());
@@ -307,7 +309,7 @@ mod tests {
             commitment,
             &roots,
             &mut verifier_challenger,
-            &config,
+            &config
         )?;
 
         assert_eq!(verified_challenges, round_challenges);
@@ -316,30 +318,45 @@ mod tests {
 
     #[test]
     fn helix_timing() {
+        use tracing::{ Subscriber, span, Level };
+        use tracing::{ debug, info };
         let rate = [Fp::ONE, Fp::TWO];
-        let instance = build_default_poseidon2_instance(&rate, None)
-            .expect("Poseidon2 instance construction should succeed");
+        let instance = build_default_poseidon2_instance(&rate, None).expect(
+            "Poseidon2 instance construction should succeed"
+        );
         let poseidon = default_babybear_poseidon2_16();
 
         let r1cs = instance.r1cs;
+
+        let sub = tracing_subscriber
+            ::fmt()
+            // enable everything
+            .with_max_level(tracing::Level::TRACE)
+            // sets this to be the default, global subscriber for this application.
+            .finish();
+
+        set_global_default(sub).expect("Setting subscriber failed");
         for vars in 5..20 {
-            println!("Number of poseidon instances 2^{vars}");
+            tracing::info!("Vars 2^{vars}");
             let initial_states = (0..1 << vars)
                 .into_par_iter()
                 .map(|_| Fp::new_array(thread_rng().r#gen()))
                 .collect::<Vec<_>>();
-            let witness_matrix =
-                build_poseidon2_witness_matrix_from_states(&initial_states, &poseidon).unwrap();
+            let witness_matrix = build_poseidon2_witness_matrix_from_states(
+                &initial_states,
+                &poseidon
+            ).unwrap();
 
             let z_transposed = MLE::new(witness_matrix.flattened_transpose());
 
             let config = BaseFoldConfig::new().with_early_stopping(11);
             let roots = Fp::roots_of_unity_table(1 << (z_transposed.n_vars() + 1));
 
-            let prover_time = Instant::now();
-            let (commitment, prover_data) =
-                Basefold::commit(&z_transposed, &roots, &config).unwrap();
-            println!("Commit time {:?}", prover_time.elapsed());
+            let (commitment, prover_data) = Basefold::commit(
+                &z_transposed,
+                &roots,
+                &config
+            ).unwrap();
             let mut prover_challenger = Challenger::new();
             let (proof, round_challenges) = BatchSumCheckProof::prove(
                 &r1cs.a,
@@ -350,16 +367,13 @@ mod tests {
                 &prover_data,
                 &roots,
                 &config,
-                &mut prover_challenger,
-            )
-            .unwrap();
+                &mut prover_challenger
+            ).unwrap();
 
-            println!("Prover time {:?}", prover_time.elapsed());
             assert_eq!(round_challenges.len(), z_transposed.n_vars());
 
             let proof_bytes = serde_json::to_vec(&proof).unwrap();
             println!("Proof size {:?} bytes", proof_bytes.len());
-            let verifier_time = Instant::now();
             let mut verifier_challenger = Challenger::new();
             let (verified_challenges, final_evals) = proof
                 .verify(
@@ -369,11 +383,10 @@ mod tests {
                     commitment,
                     &roots,
                     &mut verifier_challenger,
-                    &config,
+                    &config
                 )
                 .unwrap();
 
-            println!("Verifier time {:?}", verifier_time.elapsed());
             assert_eq!(verified_challenges, round_challenges);
         }
     }

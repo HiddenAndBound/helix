@@ -1,26 +1,32 @@
 //! BaseFold utility functions for Reed-Solomon encoding, polynomial folding,
 //! Merkle tree operations, and cryptographic hashing.
 
-use std::iter::zip;
+use core::hash;
+use std::cell::UnsafeCell;
+use std::io::{ IoSlice, Write };
+use std::thread::{ self, scope };
+use std::{ iter::zip, thread::available_parallelism };
 use std::ops::Mul;
 
-use itertools::Itertools;
+use itertools::{ multizip, Itertools };
 use p3_baby_bear::BabyBear;
-use p3_field::{ExtensionField, Field, PrimeCharacteristicRing, RawDataSerializable};
+use p3_field::{ ExtensionField, Field, PrimeCharacteristicRing, RawDataSerializable };
 use p3_monty_31::dft::RecursiveDft;
 use rayon::iter::{
-    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelBridge,
+    IndexedParallelIterator,
+    IntoParallelIterator,
+    IntoParallelRefIterator,
+    ParallelBridge,
     ParallelIterator,
 };
+use serde::Serialize;
+use sha3::{ Digest, Keccak256 };
+use tracing::instrument;
 
-use crate::{
-    Fp, Fp4,
-    merkle_tree::{MerklePath, MerkleTree},
-    polynomial::MLE,
-};
+use crate::{ merkle_tree::{ HashOutput, MerklePath, MerkleTree }, polynomial::MLE, Fp, Fp4 };
 
 /// Cryptographic commitment as 32-byte Blake3 hash.
-pub type Commitment = [u8; 32];
+pub type Commitment = HashOutput;
 
 /// Reed-Solomon encoded polynomial.
 pub type Encoding = Vec<Fp>;
@@ -36,6 +42,7 @@ pub const HALF: Fp = Fp::new(1006632961);
 
 /// Encodes a multilinear polynomial using Reed-Solomon codes via forward FFT.
 /// Zero-pads coefficients to 2 * poly.len(), applies FFT, and bit-reverses result.
+#[instrument(level = "debug", skip_all)]
 pub fn encode_mle(poly: &MLE<Fp>, roots: &[Vec<Fp>], rate: usize) -> Encoding {
     let mut buffer = vec![Fp::ZERO; poly.len() * rate];
     buffer[0..poly.len()].copy_from_slice(poly.coeffs());
@@ -73,30 +80,24 @@ pub fn decode_mle_ext(encoding: Vec<Fp4>, rate: usize) -> Vec<Fp4> {
 
 /// Folds a pair of codewords using challenge and twiddle factor.
 /// Computes g₀ = (a₀ + a₁)/2, g₁ = (a₀ - a₁)/2 * ω⁻¹, returns g₀ + r*(g₁ - g₀).
+#[inline(always)]
 pub fn fold_pair<F>(codewords: (F, F), r: Fp4, twiddle: Fp) -> Fp4
-where
-    F: Field + Mul<Fp, Output = F>,
-    Fp4: ExtensionField<F>,
+    where F: Field + Mul<Fp, Output = F>, Fp4: ExtensionField<F>
 {
     let (a0, a1) = codewords;
-    let (g0, g1) = ((a0 + a1) * HALF, (a0 - a1) * HALF * twiddle);
+    let (g0, g1) = ((a0 + a1).halve(), (a0 - a1).halve() * twiddle);
     r * (g1 - g0) + g0
 }
 
 /// Folds an encoding by applying fold_pair to adjacent pairs, reducing size by half.
 /// Uses slice splitting to eliminate manual offset calculation and prevent out-of-bounds access.
 /// Applies fold_pair to pairs from left and right halves of the input slice.
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn fold<F>(code: &[F], random_challenge: Fp4, roots: &[Fp]) -> Vec<Fp4>
-where
-    F: Field + Mul<Fp, Output = F>,
-    Fp4: ExtensionField<F>,
+    where F: Field + Mul<Fp, Output = F>, Fp4: ExtensionField<F>
 {
     let half_size = code.len() >> 1;
-    assert_eq!(
-        roots.len(),
-        half_size,
-        "roots length must equal half of code length"
-    );
+    assert_eq!(roots.len(), half_size, "roots length must equal half of code length");
 
     let powers: Vec<_> = roots[1].inverse().powers().take(half_size).collect();
 
@@ -132,24 +133,18 @@ pub fn get_merkle_paths(queries: &[usize], merkle_tree: &MerkleTree) -> Vec<Merk
 
 /// Computes Blake3 hash of a field element pair.
 /// Converts elements to Fp4, serializes to bytes, and hashes with Blake3.
-pub fn hash_field_pair<T>(left: T, right: T) -> [u8; 32]
-where
-    Fp4: RawDataSerializable + From<T>,
+pub fn hash_field_pair<T>(left: T, right: T) -> HashOutput
+    where T: Copy + Sync + Send, Fp4: RawDataSerializable + From<T>
 {
-    let buffer = Fp4::from(left)
-        .into_bytes()
-        .into_iter()
-        .chain(Fp4::from(right).into_bytes().into_iter())
-        .collect_vec();
-
+    let mut buffer = [0u8; 32];
+    fill_buf(left, right, &mut buffer);
     blake3::hash(&buffer).into()
 }
 
 /// Creates hash leaves from field element pairs.
-pub fn create_hash_leaves<T>(data: &[T]) -> Vec<[u8; 32]>
-where
-    T: Copy + Sync + Send,
-    Fp4: RawDataSerializable + From<T>,
+#[tracing::instrument(level = "debug", skip_all)]
+pub fn create_hash_leaves<T>(data: &[T]) -> Vec<HashOutput>
+    where T: Copy + Sync + Send, Fp4: RawDataSerializable + From<T>
 {
     let (left, right) = data.split_at(data.len() / 2);
     left.par_iter()
@@ -158,16 +153,66 @@ where
         .collect()
 }
 
+/// Creates hash leaves from field element pairs.
+#[tracing::instrument(level = "debug", skip_all)]
+pub fn create_hash_leaves_std<T>(data: &[T]) -> Vec<HashOutput>
+    where T: Copy + Sync + Send, Fp4: RawDataSerializable + From<T>
+{
+    let (left, right) = data.split_at(data.len() / 2);
+    let mut leaves = vec![[0;32]; data.len()/2];
+    let threads = available_parallelism().unwrap();
+    let chunk_size = leaves.len().div_ceil(threads.get());
+    let mut leaf_chunks = leaves.chunks_mut(chunk_size);
+
+    scope(|s| {
+        for thread in 0..threads.into() {
+            // Creating multiple mutable pointers, this is ok
+            let leaves_ref = leaf_chunks.next().unwrap();
+            let left_ref = left.chunks(chunk_size).nth(thread).unwrap();
+            let right_ref = right.chunks(chunk_size).nth(thread).unwrap();
+
+            s.spawn(move || {
+                let mut hasher = blake3::Hasher::new();
+                let mut buffer = [0u8; 32];
+                for (parent, (&left, &right)) in leaves_ref
+                    .iter_mut()
+                    .zip(zip(left_ref.iter(), right_ref.iter())) {
+                    fill_buf(left, right, &mut buffer);
+                    *parent = hasher.update(&buffer).finalize().into();
+                    hasher.reset();
+                }
+            });
+        }
+    });
+    leaves
+}
+
+#[inline(always)]
+pub fn fill_buf<T>(left: T, right: T, buf: &mut [u8; 32])
+    where T: Copy + Sync + Send, Fp4: RawDataSerializable + From<T>
+{
+    Fp4::from(left)
+        .into_bytes()
+        .into_iter()
+        .zip(&mut buf[0..16])
+        .for_each(|(byte, buf)| {
+            *buf = byte;
+        });
+
+    Fp4::from(right)
+        .into_bytes()
+        .into_iter()
+        .zip(&mut buf[16..32])
+        .for_each(|(byte, buf)| {
+            *buf = byte;
+        });
+}
 /// Performs in-place bit-reverse sort on a vector.
 /// Swaps element at position i with element at bit_reverse(i).
 /// Vector length must be a power of 2.
 pub fn bit_reverse_sort<T>(vec: &mut [T]) {
     let len = vec.len();
-    assert!(
-        len == 0 || len.is_power_of_two(),
-        "Vector length must be a power of 2, got {}",
-        len
-    );
+    assert!(len == 0 || len.is_power_of_two(), "Vector length must be a power of 2, got {}", len);
 
     if len <= 1 {
         return;
@@ -191,11 +236,7 @@ pub fn bit_reverse_sort<T>(vec: &mut [T]) {
 /// Vector length must be a power of 2.
 pub fn bit_reverse_sorted<T: Clone>(vec: &Vec<T>) -> Vec<T> {
     let len = vec.len();
-    assert!(
-        len == 0 || len.is_power_of_two(),
-        "Vector length must be a power of 2, got {}",
-        len
-    );
+    assert!(len == 0 || len.is_power_of_two(), "Vector length must be a power of 2, got {}", len);
 
     if len <= 1 {
         return vec.clone();
@@ -217,9 +258,9 @@ pub fn bit_reverse_sorted<T: Clone>(vec: &Vec<T>) -> Vec<T> {
 mod tests {
     use std::default;
 
-    use p3_matrix::{Matrix, dense::RowMajorMatrix};
+    use p3_matrix::{ Matrix, dense::RowMajorMatrix };
     use p3_monty_31::dft::RecursiveDft;
-    use rand::{RngCore, SeedableRng, rngs::StdRng};
+    use rand::{ RngCore, SeedableRng, rngs::StdRng };
 
     use super::*;
 
@@ -307,32 +348,14 @@ mod tests {
 
     #[test]
     fn test_bit_reverse_sorted_strings() {
-        let vec = vec![
-            "a".to_string(),
-            "b".to_string(),
-            "c".to_string(),
-            "d".to_string(),
-        ];
+        let vec = vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()];
         let result = bit_reverse_sorted(&vec);
 
         assert_eq!(
             result,
-            vec![
-                "a".to_string(),
-                "c".to_string(),
-                "b".to_string(),
-                "d".to_string()
-            ]
+            vec!["a".to_string(), "c".to_string(), "b".to_string(), "d".to_string()]
         );
-        assert_eq!(
-            vec,
-            vec![
-                "a".to_string(),
-                "b".to_string(),
-                "c".to_string(),
-                "d".to_string()
-            ]
-        );
+        assert_eq!(vec, vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()]);
     }
 
     #[test]
@@ -405,7 +428,7 @@ mod tests {
             ComplexData {
                 id: 3,
                 name: "three".to_string(),
-            },
+            }
         ];
 
         let result = bit_reverse_sorted(&vec);
