@@ -13,7 +13,7 @@ use crate::{
 };
 use anyhow::bail;
 use itertools::multizip;
-use p3_field::Field;
+use p3_field::{ ExtensionField, Field };
 use p3_field::PrimeCharacteristicRing;
 
 use super::{ BaseFoldConfig, Basefold, BasefoldCommitment, EvalProof };
@@ -175,13 +175,15 @@ pub fn fold_codewords(
 ///
 /// This operation mimics the encoding folding performed by the prover,
 /// allowing the verifier to check consistency across folding rounds.
-pub fn fold_codewords_vec(
+pub fn fold_codewords_vec<F>(
     folded_codewords: &mut [Fp4],
-    codewords: &[Vec<Fp4>],
+    codewords: &[Vec<F>],
     queries: &[usize],
     r: Fp4,
     roots: &[Fp]
-) {
+)
+    where F: ExtensionField<Fp>, Fp4: ExtensionField<F>
+{
     for (query, fold, codeword_pair) in multizip((queries, folded_codewords, codewords)) {
         *fold = fold_pair((codeword_pair[0], codeword_pair[1]), r, roots[*query].inverse());
     }
@@ -264,12 +266,15 @@ pub fn check_query_consistency_vec(
 ///
 /// Ensures that the prover provided authentic codewords from the committed
 /// Reed-Solomon encoding, preventing substitution attacks.
-pub fn verify_paths_vec(
-    codewords: &[Vec<Fp4>],
+pub fn verify_paths_vec<F>(
+    codewords: &[Vec<F>],
     paths: &[MerklePath],
     queries: &[usize],
     oracle_commitment: [u8; 32]
-) -> anyhow::Result<()> {
+)
+    -> anyhow::Result<()>
+    where F: ExtensionField<Fp>, Fp4: From<F>
+{
     for (query, path, codeword_pair) in multizip((queries, paths, codewords)) {
         if codeword_pair.len() != 2 {
             bail!("Incorrect codeword length");

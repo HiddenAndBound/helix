@@ -429,8 +429,8 @@ pub fn fold_encoding_and_polynomial(
     };
 
     let current_poly_folded = match round {
-        0 => initial_poly.fold_in_place(r),
-        _ => current_poly.fold_in_place(r),
+        0 => initial_poly.fold(r),
+        _ => current_poly.fold(r),
     };
     (current_encoding, current_poly_folded)
 }

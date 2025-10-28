@@ -190,17 +190,17 @@ impl BatchSumCheckProof {
             ) = match round {
                 0 =>
                     (
-                        a.fold_in_place(round_challenge),
-                        b.fold_in_place(round_challenge),
-                        c.fold_in_place(round_challenge),
-                        z_transpose.fold_in_place(round_challenge),
+                        a.fold(round_challenge),
+                        b.fold(round_challenge),
+                        c.fold(round_challenge),
+                        z_transpose.fold(round_challenge),
                     ),
                 _ =>
                     (
-                        a_fold.fold_in_place(round_challenge),
-                        b_fold.fold_in_place(round_challenge),
-                        c_fold.fold_in_place(round_challenge),
-                        z_fold.fold_in_place(round_challenge),
+                        a_fold.fold(round_challenge),
+                        b_fold.fold(round_challenge),
+                        c_fold.fold(round_challenge),
+                        z_fold.fold(round_challenge),
                     ),
             };
             eq.fold_in_place();
@@ -227,25 +227,22 @@ impl BatchSumCheckProof {
         };
 
         let mut codewords = Vec::with_capacity(rounds);
+        let mut first_round_codewords = Vec::with_capacity(rounds);
         let mut paths = Vec::with_capacity(rounds);
         let BasefoldState { encodings, merkle_trees, .. } = state;
         for round in 0..fri_rounds {
             let halfsize = domain_size >> 1;
-            let (round_codewords, round_paths): (Vec<Vec<Fp4>>, Vec<_>) = match round {
-                0 =>
-                    (
-                        get_codewords_vec(&queries, &prover_data.encoding),
-                        get_merkle_paths(&queries, &prover_data.merkle_tree),
-                    ),
-
-                _ =>
-                    (
-                        get_codewords_vec(&queries, &encodings[round - 1]),
-                        get_merkle_paths(&queries, &merkle_trees[round - 1]),
-                    ),
+            let round_paths = match round {
+                0 => {
+                    first_round_codewords = get_codewords_vec(&queries, &prover_data.encoding);
+                    get_merkle_paths(&queries, &prover_data.merkle_tree)
+                }
+                _ => {
+                    codewords.push(get_codewords_vec(&queries, &encodings[round - 1]));
+                    get_merkle_paths(&queries, &merkle_trees[round - 1])
+                }
             };
 
-            codewords.push(round_codewords);
             paths.push(round_paths);
 
             // Update query indices for next round using bitwise masking
@@ -261,7 +258,7 @@ impl BatchSumCheckProof {
                 state.oracle_commitments,
                 z_eval,
                 early_codeword,
-                Vec::new(),
+                first_round_codewords,
                 codewords,
                 paths
             ),
@@ -330,25 +327,41 @@ impl BatchSumCheckProof {
                 _ => self.oracle_commitments[round - 1],
             };
 
-            let (codewords, paths) = (&self.codewords[round], &self.paths[round]);
+            let paths = &self.paths[round];
+            match round {
+                0 => {
+                    let codewords = &self.first_round_codewords;
+                    verify_paths_vec(codewords, paths, &queries, oracle_commitment)?;
 
-            check_query_consistency_vec(
-                &mut queries,
-                &folded_codewords,
-                &codewords,
-                query_range,
-                round
-            )?;
+                    fold_codewords_vec(
+                        &mut folded_codewords,
+                        codewords,
+                        &queries,
+                        round_challenges[round],
+                        &roots[round]
+                    );
+                }
+                _ => {
+                    let codewords = &self.codewords[round - 1];
+                    check_query_consistency_vec(
+                        &mut queries,
+                        &folded_codewords,
+                        codewords,
+                        query_range,
+                        round
+                    )?;
 
-            verify_paths_vec(codewords, paths, &queries, oracle_commitment)?;
+                    verify_paths_vec(codewords, paths, &queries, oracle_commitment)?;
 
-            fold_codewords_vec(
-                &mut folded_codewords,
-                codewords,
-                &queries,
-                round_challenges[round],
-                &roots[round]
-            );
+                    fold_codewords_vec(
+                        &mut folded_codewords,
+                        codewords,
+                        &queries,
+                        round_challenges[round],
+                        &roots[round]
+                    );
+                }
+            }
 
             query_range = halfsize;
         }
@@ -375,9 +388,9 @@ impl BatchSumCheckProof {
 
             for round in fri_rounds..rounds {
                 early_code = fold(&early_code, round_challenges[round], &roots[round]);
-                az_fold = az_fold.fold_in_place(round_challenges[round]);
-                bz_fold = bz_fold.fold_in_place(round_challenges[round]);
-                cz_fold = cz_fold.fold_in_place(round_challenges[round]);
+                az_fold = az_fold.fold(round_challenges[round]);
+                bz_fold = bz_fold.fold(round_challenges[round]);
+                cz_fold = cz_fold.fold(round_challenges[round]);
             }
 
             final_fold = early_code[0];
@@ -425,14 +438,14 @@ impl BatchSumCheckProof {
 
 /// Retrieves codeword pairs from an encoding at query positions.
 /// Uses slice splitting to eliminate manual offset calculation.
-pub fn get_codewords_vec<F: Into<Fp4> + Copy>(queries: &[usize], encoding: &[F]) -> Vec<Vec<Fp4>> {
+pub fn get_codewords_vec<F: Copy>(queries: &[usize], encoding: &[F]) -> Vec<Vec<F>> {
     let halfsize = encoding.len() >> 1;
     let (left, right) = encoding.split_at(halfsize);
 
     queries
         .iter()
         .copied()
-        .map(|i| vec![left[i].into(), right[i].into()])
+        .map(|i| vec![left[i], right[i]])
         .collect()
 }
 

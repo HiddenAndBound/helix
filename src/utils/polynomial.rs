@@ -19,6 +19,10 @@ pub struct MLE<F: PrimeCharacteristicRing + Field + Clone> {
     coeffs: Vec<F>,
 }
 
+impl MLE<Fp4> {
+    pub fn fold_in_place(&mut self, r: Fp4) {}
+}
+
 impl<F: PrimeCharacteristicRing + Clone + Field> MLE<F> {
     pub fn new(coeffs: Vec<F>) -> Self {
         assert!(coeffs.len().is_power_of_two());
@@ -53,9 +57,7 @@ impl<F: PrimeCharacteristicRing + Clone + Field> MLE<F> {
     /// g(x₁, ..., xₙ₋₁) = f(challenge, x₁, ..., xₙ₋₁)
     ///                  = (1 - challenge) * f(0, x₁, ..., xₙ₋₁) + challenge * f(1, x₁, ..., xₙ₋₁)
     #[tracing::instrument(level = "debug", skip_all)]
-    pub fn fold_in_place(&self, r: Fp4) -> MLE<Fp4>
-        where Fp4: ExtensionField<F> + Mul<F, Output = Fp4>
-    {
+    pub fn fold(&self, r: Fp4) -> MLE<Fp4> where Fp4: ExtensionField<F> + Mul<F, Output = Fp4> {
         if self.coeffs.len() == 1 {
             // Base case: 0-variable polynomial, promote to Fp4 and return
             return MLE::new(vec![Fp4::from(self.coeffs[0].clone())]);
@@ -133,10 +135,10 @@ impl<F: PrimeCharacteristicRing + Clone + Field> MLE<F> {
     {
         assert!(num_vars <= self.n_vars(), "Too many variables to bind");
 
-        let mut current = self.fold_in_place(point[0]);
+        let mut current = self.fold(point[0]);
 
         for &challenge in point.iter().take(num_vars).skip(1) {
-            current = current.fold_in_place(challenge);
+            current = current.fold(challenge);
         }
 
         current
@@ -200,7 +202,7 @@ mod tests {
         let mle = MLE::new(coeffs.clone());
         let challenge = Fp4::from_u32(13);
 
-        let folded = mle.fold_in_place(challenge);
+        let folded = mle.fold(challenge);
 
         // Should return constant polynomial (0 variables)
         assert_eq!(folded.n_vars(), 0);
@@ -218,7 +220,7 @@ mod tests {
         let mle = MLE::new(coeffs.clone());
         let challenge = Fp4::from_u32(17);
 
-        let folded = mle.fold_in_place(challenge);
+        let folded = mle.fold(challenge);
 
         // Should remain constant polynomial (promoted to Fp4)
         assert_eq!(folded.n_vars(), 0);
@@ -246,8 +248,8 @@ mod tests {
         let mle_ext = MLE::new(coeffs_ext);
         let challenge = Fp4::from_u32(7);
 
-        let folded_base = mle_base.fold_in_place(challenge);
-        let folded_ext = mle_ext.fold_in_place(challenge);
+        let folded_base = mle_base.fold(challenge);
+        let folded_ext = mle_ext.fold(challenge);
 
         // Results should be identical
         assert_eq!(folded_base.coeffs(), folded_ext.coeffs());
@@ -268,12 +270,12 @@ mod tests {
         assert_eq!(mle.n_vars(), 2);
 
         // First fold: 2 vars -> 1 var
-        let mle = mle.fold_in_place(Fp4::from_u32(5));
+        let mle = mle.fold(Fp4::from_u32(5));
         assert_eq!(mle.n_vars(), 1);
         assert_eq!(mle.coeffs().len(), 2);
 
         // Second fold: 1 var -> 0 vars (constant)
-        let mle = mle.fold_in_place(Fp4::from_u32(7));
+        let mle = mle.fold(Fp4::from_u32(7));
         assert_eq!(mle.n_vars(), 0);
         assert_eq!(mle.coeffs().len(), 1);
     }
@@ -288,7 +290,7 @@ mod tests {
             BabyBear::from_u32(40) // f(1,1)
         ];
         let mle = MLE::new(coeffs);
-        let folded = mle.fold_in_place(Fp4::ZERO);
+        let folded = mle.fold(Fp4::ZERO);
 
         // With challenge = 0, we get g(x₁) where g(x₁) = f(0, x₁)
         // So g(0) = f(0,0) = 10 and g(1) = f(0,1) = 30
@@ -306,7 +308,7 @@ mod tests {
             BabyBear::from_u32(40)
         ];
         let mle = MLE::new(coeffs);
-        let folded = mle.fold_in_place(Fp4::ONE);
+        let folded = mle.fold(Fp4::ONE);
 
         // With challenge = 1, result should be [f(1,0), f(1,1)] = [20, 40]
         assert_eq!(folded.coeffs()[0], Fp4::from_u32(20));
