@@ -46,7 +46,7 @@ impl MerkleTree {
         let length = leaves.len();
         let depth = length.trailing_zeros();
         // Allocate space for all nodes (leaves + internal nodes)
-        let mut nodes = vec![[0u8; 32].into(); 2 * leaves.len() - 1];
+        let mut nodes = vec![[0u8; 32]; 2 * leaves.len() - 1];
         // Hash each leaf and store in the first `length` positions
         nodes[..leaves.len()].copy_from_slice(&leaves);
 

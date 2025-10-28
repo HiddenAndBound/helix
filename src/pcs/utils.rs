@@ -8,6 +8,7 @@ use std::thread::{ self, scope };
 use std::{ iter::zip, thread::available_parallelism };
 use std::ops::Mul;
 
+use blake3::Hasher;
 use itertools::{ multizip, Itertools };
 use p3_baby_bear::BabyBear;
 use p3_field::{ ExtensionField, Field, PrimeCharacteristicRing, RawDataSerializable };
@@ -23,6 +24,7 @@ use serde::Serialize;
 use sha3::{ Digest, Keccak256 };
 use tracing::instrument;
 
+use crate::pcs::BaseFoldConfig;
 use crate::{ merkle_tree::{ HashOutput, MerklePath, MerkleTree }, polynomial::MLE, Fp, Fp4 };
 
 /// Cryptographic commitment as 32-byte Blake3 hash.
@@ -207,6 +209,51 @@ pub fn fill_buf<T>(left: T, right: T, buf: &mut [u8; 32])
             *buf = byte;
         });
 }
+
+/// Creates hash leaves from field element pairs.
+#[tracing::instrument(level = "debug", skip_all)]
+pub fn create_hash_leaves_skip<T>(data: &[T], config: &BaseFoldConfig) -> Vec<HashOutput>
+    where T: Copy + Sync + Send + RawDataSerializable
+{
+    let rounds_skipped = config.round_skip;
+    let partitions = 2 << rounds_skipped;
+    let partition_size = data.len() / partitions;
+    let data_chunks = data.chunks(partition_size);
+    let mut leaves = vec![[0;32]; partition_size];
+    let threads = available_parallelism().unwrap();
+    let chunk_size = leaves.len().div_ceil(threads.get());
+    let mut leaf_chunks = leaves.chunks_mut(chunk_size);
+
+    scope(|s| {
+        for thread in 0..threads.get() {
+            let buffer_size = size_of::<T>() * partitions;
+            let chunk = leaf_chunks.next().unwrap();
+
+            s.spawn(move || {
+                let mut hasher = Hasher::new();
+                let mut buffer = vec![0u8; buffer_size.clone()];
+                for i in 0..chunk.len() {
+                    for j in 0..partitions {
+                        buffer.chunks_mut(size_of::<T>()).for_each(|buf|
+                            data[i + j * partition_size]
+                                .into_bytes()
+                                .into_iter()
+                                .zip(buf)
+                                .for_each(|(b, byte)| {
+                                    *byte = b;
+                                })
+                        );
+                    }
+                    chunk[i] = hasher.update(&buffer).finalize().into();
+                    hasher.reset();
+                }
+            });
+        }
+    });
+
+    leaves
+}
+
 /// Performs in-place bit-reverse sort on a vector.
 /// Swaps element at position i with element at bit_reverse(i).
 /// Vector length must be a power of 2.

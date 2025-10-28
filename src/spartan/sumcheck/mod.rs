@@ -30,12 +30,9 @@
 //!
 //! Where g takes different forms depending on the specific protocol variant.
 pub mod batch_sumcheck;
-pub mod inner;
-pub mod outer;
-// Re-export all sum-check proof types
-pub use inner::InnerSumCheckProof;
-pub use outer::OuterSumCheckProof;
-use p3_field::Field;
+use p3_field::{ Field, PrimeCharacteristicRing };
+
+use crate::Fp;
 
 fn eval_at_two<F: Field>(eval_0: F, eval_1: F) -> F {
     eval_1.double() - eval_0
@@ -44,4 +41,19 @@ fn eval_at_two<F: Field>(eval_0: F, eval_1: F) -> F {
 #[inline]
 fn eval_at_infinity<F: Field>(eval_0: F, eval_1: F) -> F {
     eval_1 - eval_0
+}
+
+pub fn transpose_column_major(matrix: &[Fp], rows: usize, cols: usize) -> Vec<Fp> {
+    assert_eq!(rows * cols, matrix.len(), "matrix dimensions mismatch");
+
+    let mut transposed = vec![Fp::ZERO; matrix.len()];
+
+    for col in 0..cols {
+        let start = col * rows;
+        for row in 0..rows {
+            transposed[row * cols + col] = matrix[start + row];
+        }
+    }
+
+    transposed
 }

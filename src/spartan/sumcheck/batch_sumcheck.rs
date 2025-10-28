@@ -14,7 +14,14 @@ use crate::{
             get_codewords,
             get_merkle_paths,
         },
-        verifier::{ check_query_consistency, fold_codewords, verify_paths },
+        verifier::{
+            check_query_consistency,
+            check_query_consistency_vec,
+            fold_codewords,
+            fold_codewords_vec,
+            verify_paths,
+            verify_paths_vec,
+        },
         BaseFoldConfig,
         BasefoldCommitment,
         ProverData,
@@ -22,20 +29,17 @@ use crate::{
     polynomial::MLE,
     sparse::SparseMLE,
     spartan::{
-        sumcheck::{ eval_at_infinity, eval_at_two, outer::transpose_column_major },
+        sumcheck::{ eval_at_infinity, eval_at_two, transpose_column_major },
         univariate::UnivariatePoly,
     },
     Fp,
     Fp4,
 };
 use anyhow::{ anyhow, bail };
-use p3_dft::TwoAdicSubgroupDft;
 use p3_field::{ ExtensionField, Field, PrimeCharacteristicRing };
-use p3_monty_31::dft::RecursiveDft;
 use rayon::{ iter::{ IntoParallelIterator, ParallelIterator }, slice::ParallelSlice };
 use serde::Serialize;
 use tracing::instrument;
-use p3_merkle_tree::MerkleTree as P3Merkle_Tree;
 #[derive(Serialize)]
 pub struct BatchSumCheckProof {
     round_proofs: Vec<UnivariatePoly>,
@@ -43,7 +47,8 @@ pub struct BatchSumCheckProof {
     oracle_commitments: Vec<HashOutput>,
     z_eval: Fp4,
     early_codeword: Option<Vec<Fp4>>,
-    codewords: Vec<Vec<(Fp4, Fp4)>>,
+    first_round_codewords: Vec<Vec<Fp>>,
+    codewords: Vec<Vec<Vec<Fp4>>>,
     paths: Vec<Vec<MerklePath>>,
 }
 
@@ -54,7 +59,8 @@ impl BatchSumCheckProof {
         oracle_commitments: Vec<HashOutput>,
         z_eval: Fp4,
         early_codeword: Option<Vec<Fp4>>,
-        codewords: Vec<Vec<(Fp4, Fp4)>>,
+        first_round_codewords: Vec<Vec<Fp>>,
+        codewords: Vec<Vec<Vec<Fp4>>>,
         paths: Vec<Vec<MerklePath>>
     ) -> Self {
         Self {
@@ -63,6 +69,7 @@ impl BatchSumCheckProof {
             oracle_commitments,
             z_eval,
             early_codeword,
+            first_round_codewords,
             codewords,
             paths,
         }
@@ -224,16 +231,16 @@ impl BatchSumCheckProof {
         let BasefoldState { encodings, merkle_trees, .. } = state;
         for round in 0..fri_rounds {
             let halfsize = domain_size >> 1;
-            let (round_codewords, round_paths): (Vec<(Fp4, Fp4)>, Vec<_>) = match round {
+            let (round_codewords, round_paths): (Vec<Vec<Fp4>>, Vec<_>) = match round {
                 0 =>
                     (
-                        get_codewords(&queries, &prover_data.encoding),
+                        get_codewords_vec(&queries, &prover_data.encoding),
                         get_merkle_paths(&queries, &prover_data.merkle_tree),
                     ),
 
                 _ =>
                     (
-                        get_codewords(&queries, &encodings[round - 1]),
+                        get_codewords_vec(&queries, &encodings[round - 1]),
                         get_merkle_paths(&queries, &merkle_trees[round - 1]),
                     ),
             };
@@ -254,6 +261,7 @@ impl BatchSumCheckProof {
                 state.oracle_commitments,
                 z_eval,
                 early_codeword,
+                Vec::new(),
                 codewords,
                 paths
             ),
@@ -324,7 +332,7 @@ impl BatchSumCheckProof {
 
             let (codewords, paths) = (&self.codewords[round], &self.paths[round]);
 
-            check_query_consistency(
+            check_query_consistency_vec(
                 &mut queries,
                 &folded_codewords,
                 &codewords,
@@ -332,9 +340,9 @@ impl BatchSumCheckProof {
                 round
             )?;
 
-            verify_paths(codewords, paths, &queries, oracle_commitment)?;
+            verify_paths_vec(codewords, paths, &queries, oracle_commitment)?;
 
-            fold_codewords(
+            fold_codewords_vec(
                 &mut folded_codewords,
                 codewords,
                 &queries,
@@ -413,6 +421,19 @@ impl BatchSumCheckProof {
         }
         Ok((round_challenges, self.final_evals))
     }
+}
+
+/// Retrieves codeword pairs from an encoding at query positions.
+/// Uses slice splitting to eliminate manual offset calculation.
+pub fn get_codewords_vec<F: Into<Fp4> + Copy>(queries: &[usize], encoding: &[F]) -> Vec<Vec<Fp4>> {
+    let halfsize = encoding.len() >> 1;
+    let (left, right) = encoding.split_at(halfsize);
+
+    queries
+        .iter()
+        .copied()
+        .map(|i| vec![left[i].into(), right[i].into()])
+        .collect()
 }
 
 pub struct BasefoldState {
@@ -511,6 +532,7 @@ mod tests {
     use crate::{ Fp, challenger::Challenger, pcs::Basefold, polynomial::MLE };
     use itertools::multizip;
     use p3_field::BasedVectorSpace;
+    use p3_monty_31::dft::RecursiveDft;
     use rand::{ Rng, RngCore, SeedableRng, rngs::StdRng };
     use std::collections::HashMap;
 
@@ -676,22 +698,5 @@ mod tests {
 
         assert_eq!(verified_challenges, round_challenges);
         Ok(())
-    }
-
-    #[test]
-    fn test_fft() {
-        let mut rng = StdRng::seed_from_u64(0);
-        let list = (0..1 << 4).map(|_| Fp::new(rng.next_u32())).collect::<Vec<_>>();
-        let ext_list = list
-            .iter()
-            .map(|&elem| Fp4::from(elem))
-            .collect::<Vec<_>>();
-
-        let fft = RecursiveDft::new(1 << 4);
-
-        let list_transform = fft.dft(list);
-        let ext_transform = fft.dft_algebra(ext_list);
-        println!("{:?}", list_transform);
-        println!("{:?}", ext_transform);
     }
 }
