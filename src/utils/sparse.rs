@@ -7,7 +7,7 @@
 //! - Sparse MLE representation: O(nnz) storage vs O(n²) dense
 //! - Metadata preprocessing for sum-check protocols
 //! - Twist & Shout memory checking timestamps
-use crate::spartan::error::{SparseError, SparseResult};
+use crate::helix::error::{SparseError, SparseResult};
 use crate::utils::{Fp, Fp4, eq::EqEvals, polynomial::MLE};
 use p3_baby_bear::BabyBear;
 use p3_field::{ExtensionField, Field, PrimeCharacteristicRing};

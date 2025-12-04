@@ -7,7 +7,7 @@ edition = "2024"
 anyhow = "1.0.98"
 blake3 = { version = "1.8.2", features = ["neon", "serde", "digest"] }
 itertools = "0.13.0"
-p3-baby-bear = "0.3.0"
+p3-baby-bear = { version = "0.3.0", features = ["nightly-features"] }
 p3-symmetric = "0.3.0"
 p3-field = "0.3.0"
 p3-monty-31 = "=0.3.0"
@@ -22,9 +22,10 @@ p3-matrix = "0.3.0"
 sha3 = "0.11.0-rc.3"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features= ["env-filter"]}
-tracing-profile = "0.10.11"
+tracing-profile = { version = "0.10.11" }
 p3-merkle-tree = "0.3.0"
 hybrid-array = "0.4.5"
+p3-keccak = { version = "0.3.0", features = ["nightly-features"]}
 
 
 [dev-dependencies]
@@ -35,10 +36,6 @@ tokio = { version = "1.42.0", features = ["full"] }
 
 [profile.release]
 debug = false
-
-[[bench]]
-name = "fft_bench"
-harness = false
 
 [[bench]]
 name = "iteration_bench"

@@ -11,7 +11,7 @@
 
 pub mod poseidon2;
 
-use crate::spartan::error::{SparseError, SparseResult};
+use crate::helix::error::{SparseError, SparseResult};
 use crate::utils::{Fp4, eq::EqEvals, polynomial::MLE, sparse::SparseMLE};
 use p3_baby_bear::BabyBear;
 use p3_field::PrimeCharacteristicRing;

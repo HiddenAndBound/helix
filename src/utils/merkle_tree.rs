@@ -1,13 +1,20 @@
-use std::{ io::Write, thread::{ available_parallelism, scope } };
+use std::{
+    io::Write,
+    thread::{available_parallelism, scope},
+};
 
-use anyhow::{ Error, Result };
+use anyhow::{Error, Result, bail};
 use hybrid_array::Array;
 use p3_field::RawDataSerializable;
-use rayon::{ iter::{ IndexedParallelIterator, ParallelIterator }, slice::ParallelSlice };
+use rayon::{
+    iter::{IndexedParallelIterator, ParallelIterator},
+    slice::ParallelSlice,
+};
 use serde::Serialize;
-use sha3::{ digest::OutputSizeUser, Digest, Keccak256, Keccak256Full };
+use sha3::{Digest, Keccak256, Keccak256Full, digest::OutputSizeUser};
 
 use crate::pcs::utils::fill_buf;
+use p3_keccak;
 /// A Merkle tree structure for cryptographic proofs.
 ///
 /// The tree is constructed from a vector of leaves.
@@ -42,7 +49,10 @@ impl MerkleTree {
     #[tracing::instrument(level = "debug", skip_all)]
     pub fn from_hash(leaves: &[[u8; 32]]) -> Result<Self> {
         // Ensure the number of leaves is a power of two for a complete binary tree
-        assert!(leaves.len().is_power_of_two(), "Expected leaves to be a power of 2");
+        assert!(
+            leaves.len().is_power_of_two(),
+            "Expected leaves to be a power of 2"
+        );
         let length = leaves.len();
         let depth = length.trailing_zeros();
         // Allocate space for all nodes (leaves + internal nodes)
@@ -57,10 +67,9 @@ impl MerkleTree {
         for _d in 0..depth {
             let next_layer_start = current_layer_start + current_layer_size;
             let next_layer_size = current_layer_size >> 1;
-            let (prev_layer, next_layer) =
-                nodes[current_layer_start..next_layer_start + next_layer_size].split_at_mut(
-                    current_layer_size
-                );
+            let (prev_layer, next_layer) = nodes
+                [current_layer_start..next_layer_start + next_layer_size]
+                .split_at_mut(current_layer_size);
 
             parallel_layer(prev_layer, next_layer);
             current_layer_start = next_layer_start;
@@ -80,14 +89,17 @@ impl MerkleTree {
     }
 
     /// Returns a merkle path for the given index.
-    pub fn get_path(&self, index: usize) -> Vec<HashOutput> {
-        assert!(index < 1 << self.depth, "Index out of range.");
-        (0..self.depth)
+    pub fn get_path(&self, index: usize) -> anyhow::Result<Vec<HashOutput>> {
+        if !(index < 1 << self.depth) {
+            bail!("Index {index} out of range. Max: {:?}", 1 << self.depth)
+        }
+
+        Ok((0..self.depth)
             .map(|j| {
                 let node_index = (((1 << j) - 1) << (self.depth + 1 - j)) | ((index >> j) ^ 1);
                 self.nodes[node_index]
             })
-            .collect()
+            .collect())
     }
 
     //TODO: Assert path length is equal to claimed tree depth
@@ -95,7 +107,7 @@ impl MerkleTree {
         leaf: HashOutput,
         index: usize,
         path: &MerklePath,
-        root: HashOutput
+        root: HashOutput,
     ) -> Result<()> {
         let mut current_hash = leaf;
         let mut current_index = index;
@@ -119,7 +131,9 @@ impl MerkleTree {
         if current_hash == root {
             Ok(())
         } else {
-            Err(Error::msg(format!("Merkle path verification failed for index {index}")))
+            Err(Error::msg(format!(
+                "Merkle path verification failed for index {index}"
+            )))
         }
     }
 }
@@ -143,7 +157,6 @@ fn parallel_layer(prev_layer: &mut [[u8; 32]], next_layer: &mut [[u8; 32]]) {
             s.spawn(|| {
                 let mut hasher = blake3::Hasher::new();
                 let mut buffer = [0u8; 64];
-
                 for (children, parent) in children_chunk.chunks_exact(2).zip(parent_chunk) {
                     fill_buf_digests(children[0], children[1], &mut buffer);
                     *parent = hasher.update(&buffer).finalize().into();
@@ -174,9 +187,11 @@ mod tests {
 
     #[test]
     fn test_merkle_tree() {
-        let leaves = (0..1u8 << 5).map(|i| HashOutput::default()).collect::<Vec<_>>();
+        let leaves = (0..1u8 << 5)
+            .map(|i| HashOutput::default())
+            .collect::<Vec<_>>();
         let tree = MerkleTree::from_hash(&leaves).unwrap();
-        let path = tree.get_path(15);
+        let path = tree.get_path(15).unwrap();
         MerkleTree::verify_path(leaves[15], 15, &path, tree.root).unwrap();
     }
 }

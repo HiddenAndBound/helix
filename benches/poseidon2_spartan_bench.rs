@@ -4,7 +4,7 @@ use helix::{
     challenger::Challenger,
     pcs::{ BaseFoldConfig, Basefold },
     polynomial::MLE,
-    spartan::{
+    helix::{
         build_default_poseidon2_instance,
         build_poseidon2_witness_matrix_from_states,
         sumcheck::batch_sumcheck::BatchSumCheckProof,

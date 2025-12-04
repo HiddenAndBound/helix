@@ -1,48 +1,48 @@
 use helix::{
+    Fp,
     challenger::Challenger,
-    pcs::{ BaseFoldConfig, Basefold },
+    pcs::{BaseFoldConfig, Basefold},
     polynomial::MLE,
-    spartan::{
-        build_default_poseidon2_instance,
-        build_poseidon2_witness_matrix_from_states,
+    helix::{
+        build_default_poseidon2_instance, build_poseidon2_witness_matrix_from_states,
         sumcheck::batch_sumcheck::BatchSumCheckProof,
     },
-    Fp,
 };
 use p3_baby_bear::default_babybear_poseidon2_16;
-use p3_field::{ Field, PrimeCharacteristicRing };
-use rand::{ thread_rng, Rng };
-use rayon::iter::{ IntoParallelIterator, ParallelIterator };
+use p3_field::{Field, PrimeCharacteristicRing};
+use p3_monty_31::dft::RecursiveDft;
+use rand::{Rng, thread_rng};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
+use tracing_profile::{PrintTreeConfig, PrintTreeLayer, init_tracing};
 fn main() -> anyhow::Result<()> {
     let guard = tracing_profile::init_tracing().expect("Tracing failed");
-
     let rate = [Fp::ONE, Fp::TWO];
-    let instance = build_default_poseidon2_instance(&rate, None).expect(
-        "Poseidon2 instance construction should succeed"
-    );
+    let instance = build_default_poseidon2_instance(&rate, None)
+        .expect("Poseidon2 instance construction should succeed");
     let poseidon = default_babybear_poseidon2_16();
 
     let r1cs = instance.r1cs;
-
-    for vars in 5..=15 {
+    let dft = RecursiveDft::new(1 << 25);
+    for vars in 12..=12 {
         tracing::info!("Vars 2^{vars}");
         let num_states = 1usize << vars;
         let initial_states = (0..num_states)
             .into_par_iter()
             .map(|_| Fp::new_array(thread_rng().r#gen()))
             .collect::<Vec<_>>();
-        let witness_matrix = build_poseidon2_witness_matrix_from_states(
-            &initial_states,
-            &poseidon
-        ).unwrap();
+        let witness_matrix =
+            build_poseidon2_witness_matrix_from_states(&initial_states, &poseidon).unwrap();
 
         let z_transposed = MLE::new(witness_matrix.flattened_transpose());
 
-        let config = BaseFoldConfig::new().with_early_stopping(11);
+        let config = BaseFoldConfig::new()
+            .with_early_stopping(11)
+            .with_round_skip(6);
         let roots = Fp::roots_of_unity_table(1 << (z_transposed.n_vars() + 1));
 
-        let (commitment, prover_data) = Basefold::commit(&z_transposed, &roots, &config).unwrap();
+        let (commitment, prover_data) =
+            BatchSumCheckProof::commit_skip(&z_transposed, &dft, &config).unwrap();
         let mut prover_challenger = Challenger::new();
         let prove_span = tracing::info_span!(
             "batch_sumcheck_prove",
@@ -50,7 +50,6 @@ fn main() -> anyhow::Result<()> {
             num_states,
             witness_height = z_transposed.n_vars()
         );
-        let _prove_guard = prove_span.enter();
         let (proof, round_challenges) = BatchSumCheckProof::prove(
             &r1cs.a,
             &r1cs.b,
@@ -60,10 +59,12 @@ fn main() -> anyhow::Result<()> {
             &prover_data,
             &roots,
             &config,
-            &mut prover_challenger
+            &mut prover_challenger,
         )?;
-        drop(_prove_guard);
 
+        let proof_bytes = serde_json::to_vec(&proof)?;
+
+        println!("Proof size = {:?} bytes", proof_bytes.len());
         assert_eq!(round_challenges.len(), z_transposed.n_vars());
 
         let mut verifier_challenger = Challenger::new();
@@ -81,7 +82,7 @@ fn main() -> anyhow::Result<()> {
             commitment,
             &roots,
             &mut verifier_challenger,
-            &config
+            &config,
         )?;
         drop(_verify_guard);
 
