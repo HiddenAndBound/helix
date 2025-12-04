@@ -1,5 +1,5 @@
-use crate::spartan::error::{ SparseError, SparseResult };
-use crate::spartan::r1cs::{ R1CS, R1CSInstance, Witness };
+use crate::helix::error::{ SparseError, SparseResult };
+use crate::helix::r1cs::{ R1CS, R1CSInstance, Witness };
 use crate::utils::sparse::SparseMLE;
 use p3_baby_bear::{
     BABYBEAR_RC16_EXTERNAL_FINAL,

@@ -27,10 +27,13 @@
 //!                  &roots, &mut verifier_challenger)?;
 //! ```
 
-use crate::pcs::utils::{ Commitment, Encoding };
-use crate::{ Fp4, merkle_tree::{ MerklePath, MerkleTree }, spartan::univariate::UnivariatePoly };
+use crate::pcs::utils::{Commitment, Encoding};
+use crate::{
+    Fp4,
+    helix::univariate::UnivariatePoly,
+    merkle_tree::{MerklePath, MerkleTree},
+};
 
-pub mod ntt;
 pub mod prover;
 pub mod utils;
 pub mod verifier;
@@ -55,7 +58,7 @@ impl Default for BaseFoldConfig {
             queries: 144,
             rate: 2,
             enable_parallel: false,
-            round_skip: 4,
+            round_skip: 0,
             early_stopping_threshold: 0,
         }
     }
@@ -88,6 +91,11 @@ impl BaseFoldConfig {
     /// Enables or disables performance optimizations.
     pub fn with_early_stopping(mut self, early_stopping_threshold: usize) -> Self {
         self.early_stopping_threshold = early_stopping_threshold;
+        self
+    }
+
+    pub fn with_round_skip(mut self, skip_rounds: usize) -> Self {
+        self.round_skip = skip_rounds;
         self
     }
 
@@ -189,12 +197,12 @@ pub struct EvalProof {
 mod tests {
     use p3_baby_bear::BabyBear;
     use p3_field::PrimeCharacteristicRing;
-    use rand::{ Rng, SeedableRng, rngs::StdRng };
+    use rand::{Rng, SeedableRng, rngs::StdRng};
 
     use super::*;
     use crate::pcs::prover::update_query;
-    use crate::pcs::utils::{ encode_mle, fold, fold_pair, get_codewords };
-    use crate::{ Fp, challenger::Challenger, polynomial::MLE };
+    use crate::pcs::utils::{encode_mle, fold, fold_pair, get_codewords};
+    use crate::{Fp, challenger::Challenger, polynomial::MLE};
 
     #[test]
     fn test_basefold() -> Result<(), anyhow::Error> {
@@ -204,7 +212,11 @@ mod tests {
 
         const N_VARS: usize = 4;
         let roots = Fp::roots_of_unity_table(1 << (N_VARS + 1));
-        let mle = MLE::new((0..1 << N_VARS).map(|_| Fp::from_u32(rng.r#gen())).collect());
+        let mle = MLE::new(
+            (0..1 << N_VARS)
+                .map(|_| Fp::from_u32(rng.r#gen()))
+                .collect(),
+        );
 
         let eval_point: Vec<Fp4> = (0..N_VARS).map(|_| Fp4::from_u128(rng.r#gen())).collect();
         let evaluation = mle.evaluate(&eval_point);
@@ -219,8 +231,9 @@ mod tests {
             evaluation,
             prover_data,
             &roots,
-            &config
-        ).unwrap();
+            &config,
+        )
+        .unwrap();
         let mut challenger = Challenger::new();
         Basefold::verify(
             eval_proof,
@@ -229,7 +242,7 @@ mod tests {
             commitment,
             &roots,
             &mut challenger,
-            &config
+            &config,
         )?;
 
         Ok(())
@@ -244,10 +257,7 @@ mod tests {
         let eval_point: Vec<Fp4> = (0..4).map(|_| Fp4::from_u128(rng.r#gen())).collect();
         let eval = poly.evaluate(&eval_point);
         let encoding = encode_mle(&poly, &roots, 2);
-        let mut encoding: Vec<Fp4> = encoding
-            .iter()
-            .map(|&x| Fp4::from(x))
-            .collect();
+        let mut encoding: Vec<Fp4> = encoding.iter().map(|&x| Fp4::from(x)).collect();
         for i in 0..4 {
             let r = eval_point[i];
             encoding = fold(&encoding, r, &roots[i]);
@@ -312,9 +322,9 @@ mod tests {
     fn test_bitwise_query_updates() {
         // Test that bitwise operations produce identical results to arithmetic operations
         let test_cases = [
-            (5, 8), // query < halfsize
-            (13, 8), // query >= halfsize
-            (7, 16), // query < halfsize
+            (5, 8),   // query < halfsize
+            (13, 8),  // query >= halfsize
+            (7, 16),  // query < halfsize
             (23, 16), // query >= halfsize
         ];
 
@@ -331,12 +341,17 @@ mod tests {
             }
 
             assert_eq!(
-                bitwise_query,
-                arithmetic_query,
+                bitwise_query, arithmetic_query,
                 "Bitwise and arithmetic operations should produce identical results for query={}, halfsize={}",
-                query,
-                halfsize
+                query, halfsize
             );
         }
+    }
+
+    #[test]
+    fn test_parse() {
+        let two_pow_33 = 1u64 << 33;
+
+        let parse_attempt = "8589934592".parse::<i32>().unwrap();
     }
 }

@@ -20,7 +20,9 @@ pub struct MLE<F: PrimeCharacteristicRing + Field + Clone> {
 }
 
 impl MLE<Fp4> {
-    pub fn fold_in_place(&mut self, r: Fp4) {}
+    pub fn fold_in_place(&mut self, r: Fp4) {
+        
+    }
 }
 
 impl<F: PrimeCharacteristicRing + Clone + Field> MLE<F> {
