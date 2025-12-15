@@ -3,18 +3,21 @@
 //! This module contains the verifier-side logic for the BaseFold polynomial commitment scheme,
 //! including proof verification and all verifier helper functions.
 
-use crate::pcs::utils::{fold_pair, hash_field_pair};
+use crate::helix::sumcheck::batch_sumcheck::{get_codewords_vec, get_first_round_codewords};
+use crate::pcs::utils::{encode_mle, fold, fold_pair, hash_field_pair};
+use crate::polynomial::MLE;
 use crate::{
     Fp, Fp4,
     challenger::Challenger,
-    merkle_tree::{MerklePath, MerkleTree},
     helix::univariate::UnivariatePoly,
+    merkle_tree::{MerklePath, MerkleTree},
 };
-use anyhow::bail;
+use anyhow::{Ok, bail};
 use blake3::Hasher;
 use itertools::multizip;
 use p3_field::{ExtensionField, Field};
 use p3_field::{PrimeCharacteristicRing, RawDataSerializable};
+use rand::rngs::StdRng;
 
 use super::{BaseFoldConfig, Basefold, BasefoldCommitment, EvalProof};
 
@@ -194,22 +197,45 @@ pub fn fold_codewords_vec<F>(
     }
 }
 
+/// We have to fold up vectors of codewords that will result in the codeword at the corresponding query of the folded code in the skipped round.
+/// Supposing we have skipped k rounds, each query's fibre will have 2^k many codewords to be successively folded
 pub fn fold_codewords_vec_skip<F>(
     folded_codewords: &mut [Fp4],
     codewords: &[Vec<F>],
     queries: &[usize],
-    r: Fp4,
+    challenges: &[Fp4],
     roots: &[Fp],
+    domain_size: usize,
 ) where
     F: ExtensionField<Fp>,
     Fp4: ExtensionField<F>,
 {
-    for (query, fold, codeword_pair) in multizip((queries, folded_codewords, codewords)) {
-        *fold = fold_pair(
-            (codeword_pair[0], codeword_pair[1]),
-            r,
-            roots[*query].inverse(),
-        );
+    let rounds = challenges.len();
+
+    let log_domain_size = domain_size.trailing_zeros() as usize;
+    for codeword in codewords {
+        assert_eq!(1 << rounds, codeword.len());
+    }
+    for (query, fold, query_codewords) in multizip((queries, folded_codewords, codewords)) {
+        let mut buff = vec![Fp4::ZERO; 1 << rounds];
+        let mut twiddle = roots[1];
+        for round in 0..rounds {
+            let offset = twiddle.exp_power_of_2(log_domain_size - rounds - round);
+            for i in 0..query_codewords.len() / 2 {
+                buff[i] = fold_pair(
+                    (
+                        query_codewords[i],
+                        query_codewords[i + query_codewords.len() / 2],
+                    ),
+                    challenges[round],
+                    twiddle.inverse(),
+                );
+                twiddle *= offset
+            }
+
+            buff.truncate(buff.len() / 2);
+        }
+        *fold = buff[0]
     }
 }
 
@@ -488,5 +514,39 @@ pub fn check_fold_dif(
         );
     }
 
+    Ok(())
+}
+
+#[test]
+fn skip_fold_test() -> anyhow::Result<()> {
+    use rand::{Rng, SeedableRng};
+
+    let message = vec![Fp4::from_u16(5); 1 << 5];
+
+    let mut rng = StdRng::seed_from_u64(0);
+    // New random message
+    let mut poly = (0..1 << 5)
+        .map(|_| Fp4::from_u32(rng.r#gen()))
+        .collect::<Vec<_>>();
+    
+    let roots = Fp::roots_of_unity_table(1 << 5);
+    let challenges: Vec<Fp4> = (0..3).map(|_| Fp4::from_u128(rng.r#gen())).collect();
+    let codewords = get_first_round_codewords(&[0], &poly, 2);
+
+    for i in 0..3 {
+        let r = challenges[i];
+        poly = fold(&poly, r, &roots[i]);
+    }
+
+    let mut folded_codewords = [Fp4::ZERO];
+    fold_codewords_vec_skip(
+        &mut folded_codewords,
+        &codewords,
+        &[0],
+        &challenges,
+        &roots[0],
+        1 << 4,
+    );
+    println!("{:?}", poly);
     Ok(())
 }

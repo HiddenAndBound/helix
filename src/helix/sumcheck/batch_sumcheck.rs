@@ -4,6 +4,10 @@ use crate::{
     Fp, Fp4,
     challenger::Challenger,
     eq::EqEvals,
+    helix::{
+        sumcheck::{eval_at_infinity, eval_at_two, transpose_column_major},
+        univariate::UnivariatePoly,
+    },
     merkle_tree::{HashOutput, MerklePath, MerkleTree},
     pcs::{
         BaseFoldConfig, BasefoldCommitment, ProverData,
@@ -19,10 +23,6 @@ use crate::{
     },
     polynomial::MLE,
     sparse::SparseMLE,
-    helix::{
-        sumcheck::{eval_at_infinity, eval_at_two, transpose_column_major},
-        univariate::UnivariatePoly,
-    },
 };
 use anyhow::{anyhow, bail};
 use p3_field::{ExtensionField, Field, PrimeCharacteristicRing};
@@ -349,7 +349,7 @@ impl BatchSumCheckProof {
         let mut query_range = 1 << log_query_range;
         let mut queries = challenger.get_indices(log_query_range, config.queries);
         let mut folded_codewords = vec![Fp4::ZERO; config.queries];
-
+        let mut challenges = Vec::new();
         eprintln!("query range {query_range}");
         for round in 0..fri_rounds {
             eprintln!("Round {round}");
@@ -360,39 +360,38 @@ impl BatchSumCheckProof {
             };
 
             let paths = &self.paths[round];
-            match round {
-                0 => {
-                    let codewords = &self.first_round_codewords;
-                    verify_paths_vec(codewords, paths, &queries, oracle_commitment)?;
+            // Accumulate challenges until a fold round occurs.
+            challenges.push(round_challenges[round]);
+            if round == 0 {
+                let codewords = &self.first_round_codewords;
+                verify_paths_vec(codewords, paths, &queries, oracle_commitment)?;
 
-                    fold_codewords_vec(
-                        &mut folded_codewords,
-                        codewords,
-                        &queries,
-                        round_challenges[round],
-                        &roots[round],
-                    );
-                }
-                _ => {
-                    let codewords = &self.codewords[round - 1];
-                    check_query_consistency_vec(
-                        &mut queries,
-                        &folded_codewords,
-                        codewords,
-                        query_range,
-                        round,
-                    )?;
+                fold_codewords_vec(
+                    &mut folded_codewords,
+                    codewords,
+                    &queries,
+                    round_challenges[round],
+                    &roots[round],
+                );
+            } else if round >= skip_rounds {
+                let codewords = &self.codewords[round - 1];
+                check_query_consistency_vec(
+                    &mut queries,
+                    &folded_codewords,
+                    codewords,
+                    query_range,
+                    round,
+                )?;
 
-                    verify_paths_vec(codewords, paths, &queries, oracle_commitment)?;
+                verify_paths_vec(codewords, paths, &queries, oracle_commitment)?;
 
-                    fold_codewords_vec(
-                        &mut folded_codewords,
-                        codewords,
-                        &queries,
-                        round_challenges[round],
-                        &roots[round],
-                    );
-                }
+                fold_codewords_vec(
+                    &mut folded_codewords,
+                    codewords,
+                    &queries,
+                    round_challenges[round],
+                    &roots[round],
+                );
             }
 
             query_range = halfsize;
