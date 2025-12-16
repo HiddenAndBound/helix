@@ -490,9 +490,6 @@ pub fn get_first_round_codewords<F: Copy>(
     let partition_size = encoding.len() >> (skip + 1);
     let partitions = 1 << (skip + 1);
 
-    println!("Partition size {partition_size}");
-    println!("Partitions {partitions}");
-
     queries
         .iter()
         .copied()
@@ -590,7 +587,7 @@ where
     round_proof
 }
 
-fn print_fp4(vector: &[Fp4]) {
+pub fn print_fp4(vector: &[Fp4]) {
     print!("\n [");
 
     for val in vector {
