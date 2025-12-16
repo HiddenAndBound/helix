@@ -3,7 +3,9 @@
 //! This module contains the verifier-side logic for the BaseFold polynomial commitment scheme,
 //! including proof verification and all verifier helper functions.
 
-use crate::helix::sumcheck::batch_sumcheck::{get_codewords_vec, get_first_round_codewords};
+use crate::helix::sumcheck::batch_sumcheck::{
+    get_codewords_vec, get_first_round_codewords, print_fp4,
+};
 use crate::pcs::utils::{encode_mle, fold, fold_pair, hash_field_pair};
 use crate::polynomial::MLE;
 use crate::{
@@ -204,7 +206,7 @@ pub fn fold_codewords_vec_skip<F>(
     codewords: &[Vec<F>],
     queries: &[usize],
     challenges: &[Fp4],
-    roots: &[Fp],
+    roots: &[Vec<Fp>],
     domain_size: usize,
 ) where
     F: ExtensionField<Fp>,
@@ -216,23 +218,23 @@ pub fn fold_codewords_vec_skip<F>(
     for codeword in codewords {
         assert_eq!(1 << rounds, codeword.len());
     }
-    for (query, fold, query_codewords) in multizip((queries, folded_codewords, codewords)) {
-        let mut buff = vec![Fp4::ZERO; 1 << rounds];
-        let mut twiddle = roots[1];
-        for round in 0..rounds {
-            let offset = twiddle.exp_power_of_2(log_domain_size - rounds - round);
-            for i in 0..query_codewords.len() / 2 {
-                buff[i] = fold_pair(
-                    (
-                        query_codewords[i],
-                        query_codewords[i + query_codewords.len() / 2],
-                    ),
-                    challenges[round],
-                    twiddle.inverse(),
-                );
-                twiddle *= offset
-            }
+    for (&query, fold, query_codewords) in multizip((queries, folded_codewords, codewords)) {
+        let mut buff = query_codewords
+            .iter()
+            .map(|&cw| Fp4::from(cw))
+            .collect::<Vec<_>>();
 
+        for round in 0..rounds {
+            //domain_size/rounds
+            let offset = 1 << (log_domain_size - rounds);
+
+            for i in 0..buff.len() / 2 {
+                buff[i] = fold_pair::<Fp4>(
+                    (buff[i], buff[i + (buff.len() / 2)]),
+                    challenges[round],
+                    roots[round][query + i * offset].inverse(),
+                );
+            }
             buff.truncate(buff.len() / 2);
         }
         *fold = buff[0]
@@ -521,14 +523,12 @@ pub fn check_fold_dif(
 fn skip_fold_test() -> anyhow::Result<()> {
     use rand::{Rng, SeedableRng};
 
-    let message = vec![Fp4::from_u16(5); 1 << 5];
-
     let mut rng = StdRng::seed_from_u64(0);
     // New random message
     let mut poly = (0..1 << 5)
-        .map(|_| Fp4::from_u32(rng.r#gen()))
+        .map(|_| Fp4::from_u8(rng.gen_range(0..10)))
         .collect::<Vec<_>>();
-    
+    print_fp4(&poly);
     let roots = Fp::roots_of_unity_table(1 << 5);
     let challenges: Vec<Fp4> = (0..3).map(|_| Fp4::from_u128(rng.r#gen())).collect();
     let codewords = get_first_round_codewords(&[0], &poly, 2);
@@ -536,6 +536,7 @@ fn skip_fold_test() -> anyhow::Result<()> {
     for i in 0..3 {
         let r = challenges[i];
         poly = fold(&poly, r, &roots[i]);
+        print_fp4(&poly);
     }
 
     let mut folded_codewords = [Fp4::ZERO];
@@ -544,9 +545,9 @@ fn skip_fold_test() -> anyhow::Result<()> {
         &codewords,
         &[0],
         &challenges,
-        &roots[0],
-        1 << 4,
+        &roots,
+        1 << 5,
     );
-    println!("{:?}", poly);
+    print_fp4(&folded_codewords);
     Ok(())
 }
