@@ -18,7 +18,7 @@ use crate::{
         },
         verifier::{
             check_query_consistency, check_query_consistency_vec, fold_codewords,
-            fold_codewords_vec, verify_paths, verify_paths_vec,
+            fold_codewords_vec, fold_codewords_vec_skip, verify_paths, verify_paths_vec,
         },
     },
     polynomial::MLE,
@@ -268,19 +268,21 @@ impl BatchSumCheckProof {
                 first_round_codewords =
                     get_first_round_codewords(&queries, &prover_data.encoding, skip_rounds);
                 paths.push(get_merkle_paths(&queries, &prover_data.merkle_tree)?);
-            } else if round >= skip_rounds {
+            } else if round > skip_rounds {
+                eprintln!(" merkle trees index {:?}", round - skip_rounds);
+                codewords.push(get_codewords_vec(&queries, &encodings[round - 1]));
+                paths.push(get_merkle_paths(
+                    &queries,
+                    &merkle_trees[round - skip_rounds - 1],
+                )?);
+            }
+
+            if round > 0 {
                 // Update query indices for next round using bitwise masking
                 update_queries(&mut queries, domain_size >> 1);
 
                 // Domain size halves each folding round
                 domain_size >>= 1;
-
-                eprintln!(" merkle trees index {:?}", round - skip_rounds);
-                codewords.push(get_codewords_vec(&queries, &encodings[round - 1]));
-                paths.push(get_merkle_paths(
-                    &queries,
-                    &merkle_trees[round - skip_rounds],
-                )?);
             }
         }
         Ok((
@@ -350,31 +352,37 @@ impl BatchSumCheckProof {
         let mut queries = challenger.get_indices(log_query_range, config.queries);
         let mut folded_codewords = vec![Fp4::ZERO; config.queries];
         let mut challenges = Vec::new();
+        println!("Codewords length {:?}", self.codewords.len());
+        println!("Paths length {:?}", self.paths.len());
+
         eprintln!("query range {query_range}");
         for round in 0..fri_rounds {
             eprintln!("Round {round}");
             let halfsize = query_range >> 1;
             let oracle_commitment = match round {
                 0 => commitment.commitment,
-                _ => self.oracle_commitments[round - 1],
+                _ => self.oracle_commitments[round.saturating_sub(skip_rounds)],
             };
 
-            let paths = &self.paths[round];
             // Accumulate challenges until a fold round occurs.
             challenges.push(round_challenges[round]);
             if round == 0 {
                 let codewords = &self.first_round_codewords;
+                let paths = &self.paths[round];
                 verify_paths_vec(codewords, paths, &queries, oracle_commitment)?;
 
-                fold_codewords_vec(
+                fold_codewords_vec_skip(
                     &mut folded_codewords,
                     codewords,
                     &queries,
-                    round_challenges[round],
-                    &roots[round],
+                    &round_challenges[0..=skip_rounds],
+                    &roots,
+                    config.rate << rounds,
                 );
-            } else if round >= skip_rounds {
-                let codewords = &self.codewords[round - 1];
+            } else if round > skip_rounds {
+                let codewords = &self.codewords[round - skip_rounds - 1];
+                println!("Round: {}", round - skip_rounds);
+                let paths = &self.paths[round - skip_rounds];
                 check_query_consistency_vec(
                     &mut queries,
                     &folded_codewords,

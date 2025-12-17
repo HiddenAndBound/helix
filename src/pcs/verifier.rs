@@ -199,8 +199,20 @@ pub fn fold_codewords_vec<F>(
     }
 }
 
-/// We have to fold up vectors of codewords that will result in the codeword at the corresponding query of the folded code in the skipped round.
-/// Supposing we have skipped k rounds, each query's fibre will have 2^k many codewords to be successively folded
+/// Folds each query's "fiber" of codewords across several skipped folding rounds.
+///
+/// When the verifier skips `k = challenges.len()` rounds, each query corresponds to `2^k`
+/// positions in the original codeword. The prover provides those `2^k` evaluations and the
+/// verifier must fold them successively (using the per-round challenges and twiddle factors)
+/// to recover the single folded evaluation that would have appeared after `k` rounds.
+///
+/// `folded_codewords`, `codewords`, and `queries` must be aligned (same length). `roots`
+/// should be the same roots-of-unity table used for folding (typically from
+/// `Fp::roots_of_unity_table(domain_size)`), and `domain_size` must be the size of the
+/// un-folded evaluation domain (a power of two).
+///
+/// # Panics
+/// Panics if any `codewords[i].len() != 1 << challenges.len()`.
 pub fn fold_codewords_vec_skip<F>(
     folded_codewords: &mut [Fp4],
     codewords: &[Vec<F>],
@@ -212,22 +224,35 @@ pub fn fold_codewords_vec_skip<F>(
     F: ExtensionField<Fp>,
     Fp4: ExtensionField<F>,
 {
+    // Number of successive folding rounds we are simulating in one shot.
     let rounds = challenges.len();
 
+    // `domain_size` is the size of the un-folded evaluation domain, so `log2(domain_size)`
+    // tells us how many radix-2 folds are possible.
     let log_domain_size = domain_size.trailing_zeros() as usize;
+
+    // Each query must come with a full fiber of `2^rounds` codewords that collapse to a single
+    // value after applying `rounds` folds.
     for codeword in codewords {
         assert_eq!(1 << rounds, codeword.len());
     }
+
+    // Fold each query's fiber independently, storing the final folded value into `folded_codewords`.
     for (&query, fold, query_codewords) in multizip((queries, folded_codewords, codewords)) {
+        // Work in `Fp4` regardless of the concrete extension field `F`.
         let mut buff = query_codewords
             .iter()
             .map(|&cw| Fp4::from(cw))
             .collect::<Vec<_>>();
 
         for round in 0..rounds {
-            //domain_size/rounds
+            // When skipping multiple rounds, consecutive elements in a fiber are spaced by a fixed
+            // stride in the original domain. This offset lets us map the `i`th fold-pair to the
+            // correct twiddle factor in `roots[round]`.
             let offset = 1 << (log_domain_size - rounds);
 
+            // Perform one fold: pair the lower and upper halves of `buff` and overwrite the lower
+            // half with the folded values.
             for i in 0..buff.len() / 2 {
                 buff[i] = fold_pair::<Fp4>(
                     (buff[i], buff[i + (buff.len() / 2)]),
@@ -235,8 +260,12 @@ pub fn fold_codewords_vec_skip<F>(
                     roots[round][query + i * offset].inverse(),
                 );
             }
+
+            // After one fold, the effective codeword length halves.
             buff.truncate(buff.len() / 2);
         }
+
+        // After `rounds` folds, the fiber collapses to a single value for this query.
         *fold = buff[0]
     }
 }
@@ -531,7 +560,7 @@ fn skip_fold_test() -> anyhow::Result<()> {
     print_fp4(&poly);
     let roots = Fp::roots_of_unity_table(1 << 5);
     let challenges: Vec<Fp4> = (0..3).map(|_| Fp4::from_u128(rng.r#gen())).collect();
-    let codewords = get_first_round_codewords(&[0], &poly, 2);
+    let codewords = get_first_round_codewords(&[2], &poly, 2);
 
     for i in 0..3 {
         let r = challenges[i];
@@ -543,7 +572,7 @@ fn skip_fold_test() -> anyhow::Result<()> {
     fold_codewords_vec_skip(
         &mut folded_codewords,
         &codewords,
-        &[0],
+        &[2],
         &challenges,
         &roots,
         1 << 5,
