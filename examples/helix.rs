@@ -1,12 +1,12 @@
 use helix::{
     Fp,
     challenger::Challenger,
-    pcs::{BaseFoldConfig, Basefold},
-    polynomial::MLE,
     helix::{
         build_default_poseidon2_instance, build_poseidon2_witness_matrix_from_states,
         sumcheck::batch_sumcheck::BatchSumCheckProof,
     },
+    pcs::{BaseFoldConfig, Basefold},
+    polynomial::MLE,
 };
 use p3_baby_bear::default_babybear_poseidon2_16;
 use p3_field::{Field, PrimeCharacteristicRing};
