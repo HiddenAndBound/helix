@@ -235,7 +235,7 @@ impl BatchSumCheckProof {
         // Domain starts at size 2^(vars + rate_bits - 1), halves each folding round
         let log_domain_size =
             (rounds as u32) + config.rate.trailing_zeros() - (config.round_skip as u32) - 1;
-        let mut domain_size = 1 << log_domain_size;
+        let query_range_full = 1usize << log_domain_size;
         let mut queries = challenger.get_indices(log_domain_size, config.queries);
 
         let early_codeword = match early_stopping_threshold {
@@ -258,31 +258,31 @@ impl BatchSumCheckProof {
             merkle_trees,
             ..
         } = state;
-        eprintln!(" difference in rounds {:?}", fri_rounds - skip_rounds);
-        eprintln!(" merkle trees {:?}", merkle_trees.len());
-        eprintln!(" encodings {:?}", encodings.len());
-        for round in 0..fri_rounds {
-            // Only add merkle paths to the proof if it is the first round, or the round after skipped rounds.
 
-            if round == 0 {
-                first_round_codewords =
-                    get_first_round_codewords(&queries, &prover_data.encoding, skip_rounds);
-                paths.push(get_merkle_paths(&queries, &prover_data.merkle_tree)?);
-            } else if round > skip_rounds {
-                eprintln!(" merkle trees index {:?}", round - skip_rounds);
+        // Round 0: open fibers from the initial (skip) commitment.
+        first_round_codewords =
+            get_first_round_codewords(&queries, &prover_data.encoding, skip_rounds);
+        paths.push(get_merkle_paths(&queries, &prover_data.merkle_tree)?);
+
+        // Rounds after the skip: open standard codeword pairs and Merkle paths.
+        // These rounds start at `skip_rounds + 1` since the initial fiber folds over
+        // challenges r_0..r_skip_rounds and yields values in the encoding after that many folds.
+        let start_round = skip_rounds + 1;
+        if start_round < fri_rounds {
+            let mut query_range = query_range_full >> 1;
+            update_queries(&mut queries, query_range);
+
+            for round in start_round..fri_rounds {
                 codewords.push(get_codewords_vec(&queries, &encodings[round - 1]));
                 paths.push(get_merkle_paths(
                     &queries,
-                    &merkle_trees[round - skip_rounds - 1],
+                    &merkle_trees[round - start_round],
                 )?);
-            }
 
-            if round > 0 {
-                // Update query indices for next round using bitwise masking
-                update_queries(&mut queries, domain_size >> 1);
-
-                // Domain size halves each folding round
-                domain_size >>= 1;
+                if round + 1 < fri_rounds {
+                    query_range >>= 1;
+                    update_queries(&mut queries, query_range);
+                }
             }
         }
         Ok((
@@ -345,64 +345,116 @@ impl BatchSumCheckProof {
 
         //Query Phase
 
-        // The queries are always in the range 0..encoding.len()/2
+        // In the skipped-commitment variant, the initial commitment is a Merkle tree over
+        // "fibers" of length 2^(skip_rounds + 1). Each queried fiber folds down to a single
+        // codeword after applying challenges r_0..r_skip_rounds, i.e. it simulates the
+        // first (skip_rounds + 1) FRI folding rounds in one shot.
+        //
+        // After that jump, the verifier continues the usual per-round consistency checks
+        // starting at round = skip_rounds + 1.
+        if skip_rounds >= rounds {
+            bail!("round_skip ({skip_rounds}) must be < rounds ({rounds})");
+        }
+        if skip_rounds >= fri_rounds {
+            bail!("round_skip ({skip_rounds}) must be < fri_rounds ({fri_rounds})");
+        }
+
+        // The queries are always in the range 0..(domain_size >> (skip_rounds + 1)).
         let log_query_range =
             (rounds as u32) + config.rate.trailing_zeros() - (config.round_skip as u32) - 1;
-        let mut query_range = 1 << log_query_range;
+        let query_range_full = 1usize << log_query_range;
         let mut queries = challenger.get_indices(log_query_range, config.queries);
         let mut folded_codewords = vec![Fp4::ZERO; config.queries];
-        let mut challenges = Vec::new();
-        println!("Codewords length {:?}", self.codewords.len());
-        println!("Paths length {:?}", self.paths.len());
 
-        eprintln!("query range {query_range}");
-        for round in 0..fri_rounds {
-            eprintln!("Round {round}");
-            let halfsize = query_range >> 1;
-            let oracle_commitment = match round {
-                0 => commitment.commitment,
-                _ => self.oracle_commitments[round.saturating_sub(skip_rounds)],
-            };
+        if self.paths.len() != self.codewords.len() + 1 {
+            bail!(
+                "paths length mismatch: expected {}, got {}",
+                self.codewords.len() + 1,
+                self.paths.len()
+            );
+        }
+        let expected_codewords = fri_rounds.saturating_sub(skip_rounds + 1);
+        if self.codewords.len() != expected_codewords {
+            bail!(
+                "codewords length mismatch: expected {}, got {}",
+                expected_codewords,
+                self.codewords.len()
+            );
+        }
+        if self.oracle_commitments.len() < expected_codewords {
+            bail!(
+                "oracle_commitments length mismatch: expected at least {}, got {}",
+                expected_codewords,
+                self.oracle_commitments.len()
+            );
+        }
 
-            // Accumulate challenges until a fold round occurs.
-            challenges.push(round_challenges[round]);
-            if round == 0 {
-                let codewords = &self.first_round_codewords;
-                let paths = &self.paths[round];
-                verify_paths_vec(codewords, paths, &queries, oracle_commitment)?;
-
-                fold_codewords_vec_skip(
-                    &mut folded_codewords,
-                    codewords,
-                    &queries,
-                    &round_challenges[0..=skip_rounds],
-                    &roots,
-                    config.rate << rounds,
-                );
-            } else if round > skip_rounds {
-                let codewords = &self.codewords[round - skip_rounds - 1];
-                println!("Round: {}", round - skip_rounds);
-                let paths = &self.paths[round - skip_rounds];
-                check_query_consistency_vec(
-                    &mut queries,
-                    &folded_codewords,
-                    codewords,
-                    query_range,
-                    round,
-                )?;
-
-                verify_paths_vec(codewords, paths, &queries, oracle_commitment)?;
-
-                fold_codewords_vec(
-                    &mut folded_codewords,
-                    codewords,
-                    &queries,
-                    round_challenges[round],
-                    &roots[round],
-                );
+        // Round 0: authenticate openings against the initial commitment.
+        // If `round_skip == 0`, the commitment is the standard BaseFold Merkle tree over pairs.
+        // Otherwise, it is the "skip" Merkle tree over fibers of length 2^(skip_rounds + 1).
+        let first_codewords = &self.first_round_codewords;
+        let first_paths = &self.paths[0];
+        if skip_rounds == 0 {
+            let mut first_pairs = Vec::with_capacity(first_codewords.len());
+            for codeword in first_codewords {
+                if codeword.len() != 2 {
+                    bail!(
+                        "expected 2 codewords in first round, got {}",
+                        codeword.len()
+                    );
+                }
+                first_pairs.push((Fp4::from(codeword[0]), Fp4::from(codeword[1])));
             }
+            verify_paths(&first_pairs, first_paths, &queries, commitment.commitment)?;
+        } else {
+            verify_paths_vec(
+                first_codewords,
+                first_paths,
+                &queries,
+                commitment.commitment,
+            )?;
+        }
 
-            query_range = halfsize;
+        // Fold each fiber using challenges r_0..r_skip_rounds to obtain values in the encoding
+        // after (skip_rounds + 1) folds at indices `queries`.
+        let domain_size = config.rate << rounds;
+        fold_codewords_vec_skip(
+            &mut folded_codewords,
+            first_codewords,
+            &queries,
+            &round_challenges[0..=skip_rounds],
+            roots,
+            domain_size,
+        );
+
+        // Continue the standard per-round query checks from round = skip_rounds + 1.
+        let start_round = skip_rounds + 1;
+        let mut query_range = query_range_full >> 1;
+        for round in start_round..fri_rounds {
+            let proof_round = round - start_round;
+            let codewords = &self.codewords[proof_round];
+            let paths = &self.paths[proof_round + 1];
+            let oracle_commitment = self.oracle_commitments[proof_round];
+
+            check_query_consistency_vec(
+                &mut queries,
+                &folded_codewords,
+                codewords,
+                query_range,
+                round,
+            )?;
+
+            verify_paths_vec(codewords, paths, &queries, oracle_commitment)?;
+
+            fold_codewords_vec(
+                &mut folded_codewords,
+                codewords,
+                &queries,
+                round_challenges[round],
+                &roots[round],
+            );
+
+            query_range >>= 1;
         }
 
         let final_fold;

@@ -577,6 +577,8 @@ fn skip_fold_test() -> anyhow::Result<()> {
         &roots,
         1 << 5,
     );
-    print_fp4(&folded_codewords);
+    
+    //Folded codeword should match the queried element of the folded polynomial.
+    assert_eq!(folded_codewords[0], poly[2]);
     Ok(())
 }
