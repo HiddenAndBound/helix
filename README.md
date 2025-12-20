@@ -106,10 +106,5 @@ Contributions are welcome! Please:
 
 Built with the [Plonky3](https://github.com/Plonky3/Plonky3) field arithmetic library and inspired by the Spartan and BaseFold papers.
 
-## Contact
-
-[Your contact information or links to discussions/issues]
-
----
 
 **Note**: This is research-grade software. Use in production at your own risk and conduct thorough security audits.
