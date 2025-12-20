@@ -1,8 +1,7 @@
 use p3_field::PrimeCharacteristicRing;
-use rayon::iter::{IndexedParallelIterator, IntoParallelRefMutIterator, ParallelIterator};
 use std::ops::{Index, Range};
 
-use crate::utils::Fp4;
+use crate::Fp4;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct EqEvals<'a> {

@@ -1,20 +1,6 @@
-use std::{
-    io::Write,
-    thread::{available_parallelism, scope},
-};
+use std::thread::{available_parallelism, scope};
 
 use anyhow::{Error, Result, bail};
-use hybrid_array::Array;
-use p3_field::RawDataSerializable;
-use rayon::{
-    iter::{IndexedParallelIterator, ParallelIterator},
-    slice::ParallelSlice,
-};
-use serde::Serialize;
-use sha3::{Digest, Keccak256, Keccak256Full, digest::OutputSizeUser};
-
-use crate::pcs::utils::fill_buf;
-use p3_keccak;
 /// A Merkle tree structure for cryptographic proofs.
 ///
 /// The tree is constructed from a vector of leaves.
@@ -165,20 +151,6 @@ fn parallel_layer(prev_layer: &mut [[u8; 32]], next_layer: &mut [[u8; 32]]) {
             });
         }
     });
-}
-
-fn sequential_layer(prev_layer: &mut [[u8; 32]], next_layer: &mut [[u8; 32]]) {
-    let mut hasher = blake3::Hasher::new();
-    let mut buffer = [0u8; 64];
-
-    prev_layer
-        .chunks_exact(2)
-        .zip(next_layer.iter_mut())
-        .for_each(|(children, parent)| {
-            fill_buf_digests(children[0], children[1], &mut buffer);
-            *parent = hasher.update(&buffer).finalize().into();
-            hasher.reset();
-        });
 }
 
 #[cfg(test)]

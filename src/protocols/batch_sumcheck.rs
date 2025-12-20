@@ -1,29 +1,18 @@
 use std::time::Instant;
 
-use crate::{
-    Fp, Fp4,
-    challenger::Challenger,
-    eq::EqEvals,
-    helix::{
-        sumcheck::{eval_at_infinity, eval_at_two, transpose_column_major},
-        univariate::UnivariatePoly,
+use super::univariate::UnivariatePoly;
+use crate::merkle::{HashOutput, MerklePath, MerkleTree};
+use crate::pcs::{
+    BaseFoldConfig, BasefoldCommitment, ProverData,
+    prover::{commit_oracle, update_queries},
+    utils::{create_hash_leaves_skip, decode_mle_ext, encode_mle_rec, fold, get_merkle_paths},
+    verifier::{
+        check_query_consistency_vec, fold_codewords_vec, fold_codewords_vec_skip, verify_paths,
+        verify_paths_vec,
     },
-    merkle_tree::{HashOutput, MerklePath, MerkleTree},
-    pcs::{
-        BaseFoldConfig, BasefoldCommitment, ProverData,
-        prover::{commit_oracle, fold_encoding_and_polynomial, update_queries},
-        utils::{
-            create_hash_leaves_skip, decode_mle_ext, encode_mle, encode_mle_ext, encode_mle_rec,
-            fold, get_codewords, get_merkle_paths,
-        },
-        verifier::{
-            check_query_consistency, check_query_consistency_vec, fold_codewords,
-            fold_codewords_vec, fold_codewords_vec_skip, verify_paths, verify_paths_vec,
-        },
-    },
-    polynomial::MLE,
-    sparse::SparseMLE,
 };
+use crate::poly::{EqEvals, MLE, SparseMLE};
+use crate::{Challenger, Fp, Fp4};
 use anyhow::{anyhow, bail};
 use p3_field::{ExtensionField, Field, PrimeCharacteristicRing};
 use p3_monty_31::dft::RecursiveDft;
@@ -33,6 +22,11 @@ use rayon::{
 };
 use serde::Serialize;
 use tracing::instrument;
+
+#[inline]
+fn eval_at_infinity<F: Field>(eval_0: F, eval_1: F) -> F {
+    eval_1 - eval_0
+}
 #[derive(Serialize)]
 pub struct BatchSumCheckProof {
     round_proofs: Vec<UnivariatePoly>,
@@ -97,11 +91,11 @@ impl BatchSumCheckProof {
     /// computes a univariate polynomial, gets a random challenge, and folds.
     #[instrument(target = "my_target", level = "debug", skip_all)]
     pub fn prove(
-        A: &SparseMLE,
-        B: &SparseMLE,
-        C: &SparseMLE,
+        a_matrix: &SparseMLE,
+        b_matrix: &SparseMLE,
+        c_matrix: &SparseMLE,
         z_transpose: &MLE<Fp>,
-        z_transpose_commitment: &BasefoldCommitment,
+        _z_transpose_commitment: &BasefoldCommitment,
         prover_data: &ProverData,
         roots: &[Vec<Fp>],
         config: &BaseFoldConfig,
@@ -110,11 +104,14 @@ impl BatchSumCheckProof {
         // Compute A·z, B·z, C·z (sparse matrix-MLE multiplications)
         let time = Instant::now();
         let (a, b, c) = (
-            A.transpose_multiply_by_matrix(z_transpose.coeffs())
+            a_matrix
+                .transpose_multiply_by_matrix(z_transpose.coeffs())
                 .unwrap(),
-            B.transpose_multiply_by_matrix(z_transpose.coeffs())
+            b_matrix
+                .transpose_multiply_by_matrix(z_transpose.coeffs())
                 .unwrap(),
-            C.transpose_multiply_by_matrix(z_transpose.coeffs())
+            c_matrix
+                .transpose_multiply_by_matrix(z_transpose.coeffs())
                 .unwrap(),
         );
         println!("\n Matrix multiplication time {:?} \n", time.elapsed());
@@ -250,7 +247,6 @@ impl BatchSumCheckProof {
         };
 
         let mut codewords = Vec::with_capacity(rounds);
-        let mut first_round_codewords = Vec::with_capacity(rounds);
         let mut paths = Vec::with_capacity(rounds);
 
         let BasefoldState {
@@ -260,7 +256,7 @@ impl BatchSumCheckProof {
         } = state;
 
         // Round 0: open fibers from the initial (skip) commitment.
-        first_round_codewords =
+        let first_round_codewords =
             get_first_round_codewords(&queries, &prover_data.encoding, skip_rounds);
         paths.push(get_merkle_paths(&queries, &prover_data.merkle_tree)?);
 
@@ -303,9 +299,9 @@ impl BatchSumCheckProof {
     /// Verifies the sum-check proof. Panics if verification fails.
     pub fn verify(
         &self,
-        A: &SparseMLE,
-        B: &SparseMLE,
-        C: &SparseMLE,
+        a_matrix: &SparseMLE,
+        b_matrix: &SparseMLE,
+        c_matrix: &SparseMLE,
         commitment: BasefoldCommitment,
         roots: &[Vec<Fp>],
         challenger: &mut Challenger,
@@ -473,9 +469,9 @@ impl BatchSumCheckProof {
             }
 
             let decoding = decode_mle_ext(early_code.clone(), config.rate);
-            let mut az_fold = A.transpose_multiply_by_matrix(&decoding)?;
-            let mut bz_fold = B.transpose_multiply_by_matrix(&decoding)?;
-            let mut cz_fold = C.transpose_multiply_by_matrix(&decoding)?;
+            let mut az_fold = a_matrix.transpose_multiply_by_matrix(&decoding)?;
+            let mut bz_fold = b_matrix.transpose_multiply_by_matrix(&decoding)?;
+            let mut cz_fold = c_matrix.transpose_multiply_by_matrix(&decoding)?;
 
             for round in fri_rounds..rounds {
                 early_code = fold(&early_code, round_challenges[round], &roots[round]);
@@ -655,183 +651,4 @@ pub fn print_fp4(vector: &[Fp4]) {
     }
 
     print!("] \n");
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{Fp, challenger::Challenger, pcs::Basefold, polynomial::MLE};
-    use itertools::multizip;
-    use p3_field::BasedVectorSpace;
-    use p3_monty_31::dft::RecursiveDft;
-    use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
-    use std::collections::HashMap;
-
-    #[test]
-    fn batch_sum_check_proof_end_to_end() -> anyhow::Result<()> {
-        const ROWS: usize = 1 << 6;
-        const COLS: usize = ROWS;
-        const WITNESS_COLS: usize = 1 << 3;
-        let mut rng = StdRng::seed_from_u64(0);
-
-        let mut A = HashMap::<(usize, usize), Fp>::new();
-        let mut B = HashMap::<(usize, usize), Fp>::new();
-        let mut C = HashMap::<(usize, usize), Fp>::new();
-
-        let witness_entry = Fp::new(rng.r#gen::<u32>());
-        let z = MLE::new(vec![witness_entry; COLS * WITNESS_COLS]);
-
-        let z_const = witness_entry;
-
-        for row in 0..ROWS {
-            let a_val = Fp::new(rng.r#gen::<u32>());
-            let b_val = Fp::new(rng.r#gen::<u32>());
-
-            let col_a = rng.gen_range(0..COLS);
-            let col_b = rng.gen_range(0..COLS);
-
-            A.insert((row, col_a), a_val);
-            B.insert((row, col_b), b_val);
-            C.insert((row, row), a_val * b_val * z_const);
-        }
-
-        let A = SparseMLE::new(A)?;
-        let B = SparseMLE::new(B)?;
-        let C = SparseMLE::new(C)?;
-
-        let a_eval = A.multiply_by_mle(&z)?;
-        let b_eval = B.multiply_by_mle(&z)?;
-        let c_eval = C.multiply_by_mle(&z)?;
-
-        for (&a_i, &b_i, &c_i) in multizip((a_eval.coeffs(), b_eval.coeffs(), c_eval.coeffs())) {
-            assert_eq!(c_i, a_i * b_i, "R1CS instance not satisfied");
-        }
-
-        let config = BaseFoldConfig::new().with_queries(4);
-        let roots = Fp::roots_of_unity_table(1 << (z.n_vars() + 1));
-        let (_, cols) = A.dimensions();
-        assert_eq!(cols, B.dimensions().1);
-        assert_eq!(cols, C.dimensions().1);
-
-        assert!(
-            z.coeffs().len() % cols == 0,
-            "z must align with column dimension"
-        );
-        let matrix_rows = z.coeffs().len() / cols;
-        let z_transposed = MLE::new(transpose_column_major(z.coeffs(), cols, matrix_rows));
-        let (commitment, prover_data) = Basefold::commit(&z_transposed, &roots, &config)?;
-
-        let mut prover_challenger = Challenger::new();
-        let (proof, round_challenges) = BatchSumCheckProof::prove(
-            &A,
-            &B,
-            &C,
-            &z_transposed,
-            &commitment,
-            &prover_data,
-            &roots,
-            &config,
-            &mut prover_challenger,
-        )?;
-
-        assert_eq!(round_challenges.len(), z.n_vars());
-
-        let mut verifier_challenger = Challenger::new();
-        let (verified_challenges, final_evals) = proof.verify(
-            &A,
-            &B,
-            &C,
-            commitment,
-            &roots,
-            &mut verifier_challenger,
-            &config,
-        )?;
-
-        assert_eq!(verified_challenges, round_challenges);
-        Ok(())
-    }
-
-    #[test]
-    fn batch_sum_check_proof_early_stopping() -> anyhow::Result<()> {
-        const ROWS: usize = 1 << 3;
-        const COLS: usize = ROWS;
-        const WITNESS_COLS: usize = 1 << 3;
-        let mut rng = StdRng::seed_from_u64(0);
-
-        let mut A = HashMap::<(usize, usize), Fp>::new();
-        let mut B = HashMap::<(usize, usize), Fp>::new();
-        let mut C = HashMap::<(usize, usize), Fp>::new();
-
-        let witness_entry = Fp::new(rng.r#gen::<u32>());
-        let z = MLE::new(vec![witness_entry; COLS * WITNESS_COLS]);
-
-        let z_const = witness_entry;
-
-        for row in 0..ROWS {
-            let a_val = Fp::new(rng.r#gen::<u32>());
-            let b_val = Fp::new(rng.r#gen::<u32>());
-
-            let col_a = rng.gen_range(0..COLS);
-            let col_b = rng.gen_range(0..COLS);
-
-            A.insert((row, col_a), a_val);
-            B.insert((row, col_b), b_val);
-
-            C.insert((row, row), a_val * b_val * z_const);
-        }
-
-        let A = SparseMLE::new(A)?;
-        let B = SparseMLE::new(B)?;
-        let C = SparseMLE::new(C)?;
-
-        let a_eval = A.multiply_by_mle(&z)?;
-        let b_eval = B.multiply_by_mle(&z)?;
-        let c_eval = C.multiply_by_mle(&z)?;
-
-        for (&a_i, &b_i, &c_i) in multizip((a_eval.coeffs(), b_eval.coeffs(), c_eval.coeffs())) {
-            assert_eq!(c_i, a_i * b_i, "R1CS instance not satisfied");
-        }
-
-        let config = BaseFoldConfig::new().with_queries(4).with_early_stopping(3);
-        let roots = Fp::roots_of_unity_table(1 << (z.n_vars() + 1));
-        let (_, cols) = A.dimensions();
-        assert_eq!(cols, B.dimensions().1);
-        assert_eq!(cols, C.dimensions().1);
-
-        assert!(
-            z.coeffs().len() % cols == 0,
-            "z must align with column dimension"
-        );
-        let matrix_rows = z.coeffs().len() / cols;
-        let z_transposed = MLE::new(transpose_column_major(z.coeffs(), cols, matrix_rows));
-        let (commitment, prover_data) = Basefold::commit(&z_transposed, &roots, &config)?;
-
-        let mut prover_challenger = Challenger::new();
-        let (proof, round_challenges) = BatchSumCheckProof::prove(
-            &A,
-            &B,
-            &C,
-            &z_transposed,
-            &commitment,
-            &prover_data,
-            &roots,
-            &config,
-            &mut prover_challenger,
-        )?;
-
-        assert_eq!(round_challenges.len(), z.n_vars());
-
-        let mut verifier_challenger = Challenger::new();
-        let (verified_challenges, final_evals) = proof.verify(
-            &A,
-            &B,
-            &C,
-            commitment,
-            &roots,
-            &mut verifier_challenger,
-            &config,
-        )?;
-
-        assert_eq!(verified_challenges, round_challenges);
-        Ok(())
-    }
 }

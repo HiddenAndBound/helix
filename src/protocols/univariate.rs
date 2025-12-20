@@ -1,6 +1,5 @@
-use super::error::{SumCheckError, SumCheckResult};
 use crate::Fp4;
-use p3_field::PrimeCharacteristicRing;
+use crate::error::{SumCheckError, SumCheckResult};
 use serde::Serialize;
 use std::fmt;
 

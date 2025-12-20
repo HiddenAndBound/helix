@@ -7,8 +7,9 @@
 //! - Sparse MLE representation: O(nnz) storage vs O(n²) dense
 //! - Metadata preprocessing for sum-check protocols
 //! - Twist & Shout memory checking timestamps
-use crate::helix::error::{SparseError, SparseResult};
-use crate::utils::{Fp, Fp4, eq::EqEvals, polynomial::MLE};
+use super::{EqEvals, MLE};
+use crate::error::{SparseError, SparseResult};
+use crate::{Fp, Fp4};
 use p3_baby_bear::BabyBear;
 use p3_field::{ExtensionField, Field, PrimeCharacteristicRing};
 use std::collections::HashMap;
@@ -560,8 +561,6 @@ mod tests {
 
     #[test]
     fn test_bind_first_half_variables_simple_matrix() {
-        use crate::utils::eq::EqEvals;
-
         // Create a simple 2x2 matrix:
         // [1, 2]
         // [3, 4]
@@ -598,8 +597,6 @@ mod tests {
 
     #[test]
     fn test_bind_first_half_variables_4x4_matrix() {
-        use crate::utils::eq::EqEvals;
-
         // Create a 4x4 matrix with specific pattern for easy verification
         let mut coeffs = HashMap::new();
         for row in 0..4 {
@@ -634,8 +631,6 @@ mod tests {
 
     #[test]
     fn test_bind_first_half_variables_sparse_matrix() {
-        use crate::utils::eq::EqEvals;
-
         // Create a sparse 4x4 matrix with only a few non-zero entries
         let mut coeffs = HashMap::new();
         coeffs.insert((0, 1), BabyBear::from_u32(7)); // A[0,1] = 7
@@ -669,8 +664,6 @@ mod tests {
 
     #[test]
     fn test_bind_first_half_variables_dimension_mismatch() {
-        use crate::utils::eq::EqEvals;
-
         // Create a 2x2 matrix
         let mut coeffs = HashMap::new();
         coeffs.insert((0, 0), BabyBear::ONE);
@@ -688,8 +681,6 @@ mod tests {
 
     #[test]
     fn test_bind_first_half_variables_empty_matrix() {
-        use crate::utils::eq::EqEvals;
-
         let sparse_mle = SparseMLE::empty();
         let point = vec![Fp4::from_u32(1)];
         let eq_evals = EqEvals::gen_from_point(&point);
@@ -700,8 +691,6 @@ mod tests {
 
     #[test]
     fn test_bind_first_half_variables_single_row_matrix() {
-        use crate::utils::eq::EqEvals;
-
         // Create a 1x4 matrix: [5, 6, 7, 8]
         let mut coeffs = HashMap::new();
         coeffs.insert((0, 0), BabyBear::from_u32(5));

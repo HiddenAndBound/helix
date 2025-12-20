@@ -1,22 +1,15 @@
 use helix::{
-    Fp,
-    challenger::Challenger,
-    helix::{
-        build_default_poseidon2_instance, build_poseidon2_witness_matrix_from_states,
-        sumcheck::batch_sumcheck::BatchSumCheckProof,
-    },
-    pcs::{BaseFoldConfig, Basefold},
-    polynomial::MLE,
+    BaseFoldConfig, BatchSumCheckProof, Challenger, Fp, MLE, build_default_poseidon2_instance,
+    build_poseidon2_witness_matrix_from_states,
 };
 use p3_baby_bear::default_babybear_poseidon2_16;
-use p3_field::{Field, PrimeCharacteristicRing};
+use p3_field::PrimeCharacteristicRing;
 use p3_monty_31::dft::RecursiveDft;
 use rand::{Rng, thread_rng};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
-use tracing_profile::{PrintTreeConfig, PrintTreeLayer, init_tracing};
 fn main() -> anyhow::Result<()> {
-    let guard = tracing_profile::init_tracing().expect("Tracing failed");
+    let _guard = tracing_profile::init_tracing().expect("Tracing failed");
     let rate = [Fp::ONE, Fp::TWO];
     let instance = build_default_poseidon2_instance(&rate, None)
         .expect("Poseidon2 instance construction should succeed");
@@ -24,7 +17,7 @@ fn main() -> anyhow::Result<()> {
 
     let r1cs = instance.r1cs;
     let dft = RecursiveDft::new(1 << 25);
-    for vars in 12..=12 {
+    for vars in 7..15 {
         tracing::info!("Vars 2^{vars}");
         let num_states = 1usize << vars;
         let initial_states = (0..num_states)
@@ -44,7 +37,7 @@ fn main() -> anyhow::Result<()> {
         let (commitment, prover_data) =
             BatchSumCheckProof::commit_skip(&z_transposed, &dft, &config).unwrap();
         let mut prover_challenger = Challenger::new();
-        let prove_span = tracing::info_span!(
+        let _prove_span = tracing::info_span!(
             "batch_sumcheck_prove",
             vars,
             num_states,

@@ -11,9 +11,10 @@
 
 pub mod poseidon2;
 
-use crate::helix::error::{SparseError, SparseResult};
-use crate::utils::{Fp4, eq::EqEvals, polynomial::MLE, sparse::SparseMLE};
-use p3_baby_bear::BabyBear;
+use crate::Fp;
+use crate::error::{SparseError, SparseResult};
+use crate::field::Fp4;
+use crate::poly::{EqEvals, MLE, SparseMLE};
 use p3_field::PrimeCharacteristicRing;
 use std::collections::HashMap;
 
@@ -130,7 +131,7 @@ impl R1CS {
     ///
     /// # Returns
     /// A vector indicating which constraints are satisfied
-    pub fn check_constraints(&self, z: &MLE<BabyBear>) -> SparseResult<Vec<bool>> {
+    pub fn check_constraints(&self, z: &MLE<Fp>) -> SparseResult<Vec<bool>> {
         if z.len() != self.num_variables {
             return Err(SparseError::DimensionMismatch {
                 expected: (self.num_variables, z.len()),
@@ -156,7 +157,7 @@ impl R1CS {
     }
 
     /// Validates that all constraints are satisfied by a given witness.
-    pub fn verify(&self, z: &MLE<BabyBear>) -> SparseResult<bool> {
+    pub fn verify(&self, z: &MLE<Fp>) -> SparseResult<bool> {
         let satisfied = self.check_constraints(z)?;
         Ok(satisfied.iter().all(|&s| s))
     }
@@ -176,17 +177,17 @@ impl R1CS {
 
         // Constraint: x * y = z
         // A matrix: selects x (column 0)
-        a_coeffs.insert((0, 0), BabyBear::ONE);
+        a_coeffs.insert((0, 0), Fp::ONE);
         // B matrix: selects y (column 1)
-        b_coeffs.insert((0, 1), BabyBear::ONE);
+        b_coeffs.insert((0, 1), Fp::ONE);
         // C matrix: selects z (column 2)
-        c_coeffs.insert((0, 2), BabyBear::ONE);
+        c_coeffs.insert((0, 2), Fp::ONE);
 
         // Add dummy entries to ensure all matrices have 8 columns
         for i in 3..8 {
-            a_coeffs.insert((0, i), BabyBear::new(0));
-            b_coeffs.insert((0, i), BabyBear::new(0));
-            c_coeffs.insert((0, i), BabyBear::new(0));
+            a_coeffs.insert((0, i), Fp::new(0));
+            b_coeffs.insert((0, i), Fp::new(0));
+            c_coeffs.insert((0, i), Fp::new(0));
         }
 
         let a = SparseMLE::new(a_coeffs)?;
@@ -196,22 +197,22 @@ impl R1CS {
         let r1cs = R1CS::new(a, b, c, 1)?;
 
         // Create witness: x = 2 (public), y = 3, z = 6, rest = 0
-        let mut witness_vars = vec![BabyBear::new(0); 8];
-        witness_vars[0] = BabyBear::new(2); // x = 2
-        witness_vars[1] = BabyBear::new(3); // y = 3
-        witness_vars[2] = BabyBear::new(6); // z = 6
+        let mut witness_vars = vec![Fp::new(0); 8];
+        witness_vars[0] = Fp::new(2); // x = 2
+        witness_vars[1] = Fp::new(3); // y = 3
+        witness_vars[2] = Fp::new(6); // z = 6
         // Remaining positions [3..7] stay 0
 
         let witness = Witness::new(
-            vec![BabyBear::new(2)], // public input x = 2
+            vec![Fp::new(2)], // public input x = 2
             vec![
-                BabyBear::new(3), // y = 3
-                BabyBear::new(6), // z = 6
-                BabyBear::new(0), // padding
-                BabyBear::new(0), // padding
-                BabyBear::new(0), // padding
-                BabyBear::new(0), // padding
-                BabyBear::new(0), // padding
+                Fp::new(3), // y = 3
+                Fp::new(6), // z = 6
+                Fp::new(0), // padding
+                Fp::new(0), // padding
+                Fp::new(0), // padding
+                Fp::new(0), // padding
+                Fp::new(0), // padding
             ], // private vars + padding to make 7 total
         )?;
 
@@ -232,26 +233,26 @@ impl R1CS {
         // Use 8 columns to ensure consistent dimensions
 
         // Constraint 1: x1 * x2 = y1
-        a_coeffs.insert((0, 0), BabyBear::ONE); // x1
-        b_coeffs.insert((0, 1), BabyBear::ONE); // x2
-        c_coeffs.insert((0, 4), BabyBear::ONE); // y1
+        a_coeffs.insert((0, 0), Fp::ONE); // x1
+        b_coeffs.insert((0, 1), Fp::ONE); // x2
+        c_coeffs.insert((0, 4), Fp::ONE); // y1
 
         // Constraint 2: y1 * x3 = y2
-        a_coeffs.insert((1, 4), BabyBear::ONE); // y1
-        b_coeffs.insert((1, 2), BabyBear::ONE); // x3
-        c_coeffs.insert((1, 5), BabyBear::ONE); // y2
+        a_coeffs.insert((1, 4), Fp::ONE); // y1
+        b_coeffs.insert((1, 2), Fp::ONE); // x3
+        c_coeffs.insert((1, 5), Fp::ONE); // y2
 
         // Constraint 3: y2 * x4 = out
-        a_coeffs.insert((2, 5), BabyBear::ONE); // y2
-        b_coeffs.insert((2, 3), BabyBear::ONE); // x4
-        c_coeffs.insert((2, 6), BabyBear::ONE); // out
+        a_coeffs.insert((2, 5), Fp::ONE); // y2
+        b_coeffs.insert((2, 3), Fp::ONE); // x4
+        c_coeffs.insert((2, 6), Fp::ONE); // out
 
         // Ensure consistent dimensions by padding with zeros
         for matrix in [&mut a_coeffs, &mut b_coeffs, &mut c_coeffs] {
             for row in 0..3 {
                 for col in 0..8 {
                     if !matrix.contains_key(&(row, col)) {
-                        matrix.insert((row, col), BabyBear::new(0));
+                        matrix.insert((row, col), Fp::new(0));
                     }
                 }
             }
@@ -265,28 +266,23 @@ impl R1CS {
 
         // Create witness: x1=2, x2=3, x3=4, x4=5 (public inputs)
         // Then: y1=6, y2=24, out=120, rest = 0
-        let mut witness_vars = vec![BabyBear::new(0); 8];
-        witness_vars[0] = BabyBear::new(2); // x1 = 2
-        witness_vars[1] = BabyBear::new(3); // x2 = 3
-        witness_vars[2] = BabyBear::new(4); // x3 = 4
-        witness_vars[3] = BabyBear::new(5); // x4 = 5
-        witness_vars[4] = BabyBear::new(6); // y1 = 2*3
-        witness_vars[5] = BabyBear::new(24); // y2 = 6*4
-        witness_vars[6] = BabyBear::new(120); // out = 24*5
-        witness_vars[7] = BabyBear::new(0); // padding
+        let mut witness_vars = vec![Fp::new(0); 8];
+        witness_vars[0] = Fp::new(2); // x1 = 2
+        witness_vars[1] = Fp::new(3); // x2 = 3
+        witness_vars[2] = Fp::new(4); // x3 = 4
+        witness_vars[3] = Fp::new(5); // x4 = 5
+        witness_vars[4] = Fp::new(6); // y1 = 2*3
+        witness_vars[5] = Fp::new(24); // y2 = 6*4
+        witness_vars[6] = Fp::new(120); // out = 24*5
+        witness_vars[7] = Fp::new(0); // padding
 
         let witness = Witness::new(
+            vec![Fp::new(2), Fp::new(3), Fp::new(4), Fp::new(5)],
             vec![
-                BabyBear::new(2),
-                BabyBear::new(3),
-                BabyBear::new(4),
-                BabyBear::new(5),
-            ],
-            vec![
-                BabyBear::new(6),   // y1 = 2*3
-                BabyBear::new(24),  // y2 = 6*4
-                BabyBear::new(120), // out = 24*5
-                BabyBear::new(0),   // padding
+                Fp::new(6),   // y1 = 2*3
+                Fp::new(24),  // y2 = 6*4
+                Fp::new(120), // out = 24*5
+                Fp::new(0),   // padding
             ],
         )?;
 
@@ -301,17 +297,14 @@ impl R1CS {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Witness {
     /// Public input values (known to both prover and verifier)
-    pub public_inputs: Vec<BabyBear>,
+    pub public_inputs: Vec<Fp>,
     /// Private variable values (known only to prover)
-    pub private_variables: Vec<BabyBear>,
+    pub private_variables: Vec<Fp>,
 }
 
 impl Witness {
     /// Creates a new witness from public inputs and private variables.
-    pub fn new(
-        public_inputs: Vec<BabyBear>,
-        private_variables: Vec<BabyBear>,
-    ) -> SparseResult<Self> {
+    pub fn new(public_inputs: Vec<Fp>, private_variables: Vec<Fp>) -> SparseResult<Self> {
         Ok(Witness {
             public_inputs,
             private_variables,
@@ -323,7 +316,7 @@ impl Witness {
     /// # Arguments
     /// * `all_variables` - Vector containing all variables [public || private]
     /// * `num_public_inputs` - Number of public inputs at start of vector
-    pub fn from_vec(all_variables: Vec<BabyBear>, num_public_inputs: usize) -> Self {
+    pub fn from_vec(all_variables: Vec<Fp>, num_public_inputs: usize) -> Self {
         let (public_inputs, private_variables) = all_variables.split_at(num_public_inputs);
         Witness {
             public_inputs: public_inputs.to_vec(),
@@ -332,7 +325,7 @@ impl Witness {
     }
 
     /// Returns the full witness vector as MLE.
-    pub fn to_mle(&self) -> MLE<BabyBear> {
+    pub fn to_mle(&self) -> MLE<Fp> {
         let mut full_witness = Vec::with_capacity(self.len());
         full_witness.extend_from_slice(&self.public_inputs);
         full_witness.extend_from_slice(&self.private_variables);
@@ -350,7 +343,7 @@ impl Witness {
     }
 
     /// Returns the value at the specified index in the full witness.
-    pub fn get(&self, index: usize) -> Option<&BabyBear> {
+    pub fn get(&self, index: usize) -> Option<&Fp> {
         if index < self.public_inputs.len() {
             self.public_inputs.get(index)
         } else {
@@ -361,10 +354,10 @@ impl Witness {
     /// Creates a simple test witness for development.
     pub fn test_witness() -> Self {
         Witness {
-            public_inputs: vec![BabyBear::new(2)], // x = 2
+            public_inputs: vec![Fp::new(2)], // x = 2
             private_variables: vec![
-                BabyBear::new(3), // y = 3
-                BabyBear::new(6), // z = 6
+                Fp::new(3), // y = 3
+                Fp::new(6), // z = 6
             ],
         }
     }
@@ -415,7 +408,7 @@ impl R1CSInstance {
     }
 
     /// Returns the full witness vector as MLE.
-    pub fn witness_mle(&self) -> MLE<BabyBear> {
+    pub fn witness_mle(&self) -> MLE<Fp> {
         self.witness.to_mle()
     }
 
@@ -801,7 +794,7 @@ mod tests {
         let (bound_a, _bound_b, _bound_c) = instance.compute_bound_matrices(&point).unwrap();
 
         // Manually calculate expected results using EqEvals for point [13]
-        use crate::utils::eq::EqEvals;
+        use crate::poly::eq::EqEvals;
         let eq_evals = EqEvals::gen_from_point(&point);
 
         // eq_evals should be [(1-13), 13] = [-12, 13]

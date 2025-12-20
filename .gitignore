@@ -1,11 +1,8 @@
 /target
 /context
-/.claude
-/.kilocode
-/spartan_plan
 browser*
 /.*
-*.md
+/docs
 *.pdf
 *.yaml
 planning/.DS_Store

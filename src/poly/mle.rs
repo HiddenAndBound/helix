@@ -1,28 +1,16 @@
-use p3_baby_bear::BabyBear;
-use p3_field::{ ExtensionField, Field, PrimeCharacteristicRing };
+use p3_field::{ExtensionField, Field, PrimeCharacteristicRing};
 use rayon::{
-    iter::{
-        IndexedParallelIterator,
-        IntoParallelRefIterator,
-        IntoParallelRefMutIterator,
-        ParallelIterator,
-        Zip,
-    },
+    iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
     slice::ParallelSlice,
 };
-use std::ops::{ Add, Index, Mul, Range };
+use std::ops::{Add, Index, Mul, Range};
 
-use crate::utils::{ Fp4, eq::EqEvals };
+use super::eq::EqEvals;
+use crate::Fp4;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MLE<F: PrimeCharacteristicRing + Field + Clone> {
     coeffs: Vec<F>,
-}
-
-impl MLE<Fp4> {
-    pub fn fold_in_place(&mut self, r: Fp4) {
-        
-    }
 }
 
 impl<F: PrimeCharacteristicRing + Clone + Field> MLE<F> {
@@ -40,8 +28,15 @@ impl<F: PrimeCharacteristicRing + Clone + Field> MLE<F> {
     }
 
     /// Evaluates the MLE at the given point
-    pub fn evaluate(&self, point: &[Fp4]) -> Fp4 where Fp4: ExtensionField<F> {
-        assert_eq!(point.len(), self.n_vars(), "Dimensions of point must match MLE variables");
+    pub fn evaluate(&self, point: &[Fp4]) -> Fp4
+    where
+        Fp4: ExtensionField<F>,
+    {
+        assert_eq!(
+            point.len(),
+            self.n_vars(),
+            "Dimensions of point must match MLE variables"
+        );
 
         let eq = EqEvals::gen_from_point(point);
 
@@ -59,7 +54,10 @@ impl<F: PrimeCharacteristicRing + Clone + Field> MLE<F> {
     /// g(x₁, ..., xₙ₋₁) = f(challenge, x₁, ..., xₙ₋₁)
     ///                  = (1 - challenge) * f(0, x₁, ..., xₙ₋₁) + challenge * f(1, x₁, ..., xₙ₋₁)
     #[tracing::instrument(level = "debug", skip_all)]
-    pub fn fold(&self, r: Fp4) -> MLE<Fp4> where Fp4: ExtensionField<F> + Mul<F, Output = Fp4> {
+    pub fn fold(&self, r: Fp4) -> MLE<Fp4>
+    where
+        Fp4: ExtensionField<F> + Mul<F, Output = Fp4>,
+    {
         if self.coeffs.len() == 1 {
             // Base case: 0-variable polynomial, promote to Fp4 and return
             return MLE::new(vec![Fp4::from(self.coeffs[0].clone())]);
@@ -72,11 +70,9 @@ impl<F: PrimeCharacteristicRing + Clone + Field> MLE<F> {
         // In hypercube layout, we pair coefficients that differ only in the lowest bit
         self.coeffs
             .par_chunks_exact(2)
-            .map(
-                |coeffs|
+            .map(|coeffs|
                     // Compute (1 - challenge) * low + challenge * high
-                    r * (coeffs[1] - coeffs[0]) + coeffs[0]
-            )
+                    r * (coeffs[1] - coeffs[0]) + coeffs[0])
             .collect_into_vec(&mut folded_coeffs);
 
         MLE::new(folded_coeffs)
@@ -88,7 +84,10 @@ impl<F: PrimeCharacteristicRing + Clone + Field> MLE<F> {
     /// For MLE f(x₀, x₁, ..., xₙ₋₁), this computes:
     /// g(x₁, ..., xₙ₋₁) = f(challenge, x₁, ..., xₙ₋₁)
     ///                  = (1 - challenge) * f(0, x₁, ..., xₙ₋₁) + challenge * f(1, x₁, ..., xₙ₋₁)
-    pub fn fold_hi_lo(&self, r: Fp4) -> MLE<Fp4> where Fp4: ExtensionField<F> {
+    pub fn fold_hi_lo(&self, r: Fp4) -> MLE<Fp4>
+    where
+        Fp4: ExtensionField<F>,
+    {
         if self.coeffs.len() == 1 {
             // Base case: 0-variable polynomial, promote to Fp4 and return
             return MLE::new(vec![Fp4::from(self.coeffs[0].clone())]);
@@ -133,7 +132,8 @@ impl<F: PrimeCharacteristicRing + Clone + Field> MLE<F> {
 
     /// Computes partial evaluation (binds variables from left)
     pub fn partial_evaluate(&mut self, point: &[Fp4], num_vars: usize) -> MLE<Fp4>
-        where Fp4: ExtensionField<F>
+    where
+        Fp4: ExtensionField<F>,
     {
         assert!(num_vars <= self.n_vars(), "Too many variables to bind");
 
@@ -147,8 +147,15 @@ impl<F: PrimeCharacteristicRing + Clone + Field> MLE<F> {
     }
 
     /// Computes dot product with another MLE
-    pub fn dot_product(&self, other: &Self) -> F where F: Mul<Output = F> + Add<Output = F> + Clone {
-        assert_eq!(self.len(), other.len(), "Dimension mismatch for dot product");
+    pub fn dot_product(&self, other: &Self) -> F
+    where
+        F: Mul<Output = F> + Add<Output = F> + Clone,
+    {
+        assert_eq!(
+            self.len(),
+            other.len(),
+            "Dimension mismatch for dot product"
+        );
 
         self.coeffs()
             .iter()
@@ -181,7 +188,7 @@ mod tests {
     use super::*;
     use p3_baby_bear::BabyBear;
     use p3_field::PrimeCharacteristicRing;
-    use rand::{ Rng, SeedableRng, rngs::StdRng };
+    use rand::{Rng, SeedableRng, rngs::StdRng};
     //Tests that folding, and inner product return the same value which should be the evaluation.
     #[test]
     fn test_eval_vs_fold() {
@@ -189,7 +196,9 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0);
         let point: Vec<Fp4> = (0..n_vars).map(|_| Fp4::from_u128(rng.r#gen())).collect();
         let mut mle = MLE::from_vector(
-            (0..1 << n_vars).map(|_| Fp::from_u32(rng.r#gen())).collect()
+            (0..1 << n_vars)
+                .map(|_| Fp::from_u32(rng.r#gen()))
+                .collect(),
         );
 
         let claimed_eval = mle.evaluate(&point);
@@ -237,13 +246,13 @@ mod tests {
             BabyBear::from_u32(10),
             BabyBear::from_u32(20),
             BabyBear::from_u32(30),
-            BabyBear::from_u32(40)
+            BabyBear::from_u32(40),
         ];
         let coeffs_ext = vec![
             Fp4::from_u32(10),
             Fp4::from_u32(20),
             Fp4::from_u32(30),
-            Fp4::from_u32(40)
+            Fp4::from_u32(40),
         ];
 
         let mle_base = MLE::new(coeffs_base);
@@ -265,7 +274,7 @@ mod tests {
             BabyBear::from_u32(1),
             BabyBear::from_u32(2),
             BabyBear::from_u32(3),
-            BabyBear::from_u32(4)
+            BabyBear::from_u32(4),
         ];
         let mle = MLE::new(coeffs);
 
@@ -289,7 +298,7 @@ mod tests {
             BabyBear::from_u32(10), // f(0,0)
             BabyBear::from_u32(20), // f(1,0)
             BabyBear::from_u32(30), // f(0,1)
-            BabyBear::from_u32(40) // f(1,1)
+            BabyBear::from_u32(40), // f(1,1)
         ];
         let mle = MLE::new(coeffs);
         let folded = mle.fold(Fp4::ZERO);
@@ -307,7 +316,7 @@ mod tests {
             BabyBear::from_u32(10),
             BabyBear::from_u32(20),
             BabyBear::from_u32(30),
-            BabyBear::from_u32(40)
+            BabyBear::from_u32(40),
         ];
         let mle = MLE::new(coeffs);
         let folded = mle.fold(Fp4::ONE);
@@ -331,7 +340,7 @@ mod tests {
             BabyBear::from_u32(10),
             BabyBear::from_u32(20),
             BabyBear::from_u32(30),
-            BabyBear::from_u32(40)
+            BabyBear::from_u32(40),
         ];
         let mle = MLE::new(coeffs);
 
@@ -347,7 +356,7 @@ mod tests {
             BabyBear::from_u32(10),
             BabyBear::from_u32(20),
             BabyBear::from_u32(30),
-            BabyBear::from_u32(40)
+            BabyBear::from_u32(40),
         ];
         let mle = MLE::new(coeffs);
 
@@ -374,7 +383,7 @@ mod tests {
             Fp4::from_u32(5),
             Fp4::from_u32(15),
             Fp4::from_u32(25),
-            Fp4::from_u32(35)
+            Fp4::from_u32(35),
         ];
         let mle = MLE::new(coeffs);
 
