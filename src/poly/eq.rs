@@ -65,6 +65,7 @@ impl<'a> EqEvals<'a> {
     /// g(x₁, ..., xₙ₋₁) = eq(challenge, x₁, ..., xₙ₋₁; r₀, r₁, ..., rₙ₋₁)
     ///                  = (1 - challenge) * eq(0, x₁, ..., xₙ₋₁; r₀, r₁, ..., rₙ₋₁) +
     ///                    challenge * eq(1, x₁, ..., xₙ₋₁; r₀, r₁, ..., rₙ₋₁)
+    #[tracing::instrument(level = "debug", name = "fold_eq", skip_all)]
     pub fn fold_in_place<'b>(&mut self) {
         if self.coeffs.len() == 1 {
             // Base case: 0-variable polynomial, return constant

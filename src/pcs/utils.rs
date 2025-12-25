@@ -2,7 +2,7 @@
 
 use blake3::Hasher;
 use p3_dft::TwoAdicSubgroupDft;
-use p3_field::PrimeCharacteristicRing;
+use p3_field::{PackedValue, PrimeCharacteristicRing};
 use p3_field::{ExtensionField, Field, RawDataSerializable};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrixView;
@@ -116,18 +116,19 @@ pub fn decode_mle_ext(encoding: Vec<Fp4>, rate: usize) -> Vec<Fp4> {
 
 /// Folds a pair of codewords using challenge and twiddle factor.
 #[inline(always)]
-pub fn fold_pair<F>(codewords: (F, F), r: Fp4, twiddle: Fp) -> Fp4
+pub fn fold_pair<F>(codewords: (F, F), r: Fp4, inv_twiddle: Fp) -> Fp4
 where
     F: Field,
     F: std::ops::Mul<Fp, Output = F>,
     Fp4: ExtensionField<F>,
 {
     let (a0, a1) = codewords;
-    let (g0, g1) = ((a0 + a1).halve(), (a0 - a1).halve() * twiddle);
+    let (g0, g1) = ((a0 + a1).halve(), (a0 - a1).halve() * inv_twiddle);
     r * (g1 - g0) + g0
 }
 
 /// Folds an encoding by applying `fold_pair` to adjacent pairs, reducing size by half.
+#[tracing::instrument(level = "debug", name = "FRI fold", skip_all)]
 pub fn fold<F>(code: &[F], random_challenge: Fp4, roots: &[Fp]) -> Vec<Fp4>
 where
     F: Field + std::ops::Mul<Fp, Output = F>,
@@ -140,13 +141,34 @@ where
         "roots length must equal half of code length"
     );
 
-    let powers: Vec<_> = roots[1].inverse().powers().take(half_size).collect();
+    let scaling = -roots[1];
     let (left, right) = code.split_at(half_size);
 
-    (left, right, &powers)
+    (left, right, roots.par_iter().rev())
         .into_par_iter()
-        .map(|(&l, &r, &root)| fold_pair((l, r), random_challenge, root))
+        .map(|(&l, &r, &root)| fold_pair((l, r), random_challenge, scaling*root))
         .collect()
+}
+
+
+#[inline]
+fn back_butterfly<T:Field+ Copy>(l: T, r: T, inv_twiddle: T)-> (T,T){
+    ((l+r), (l-r)*inv_twiddle);
+    
+    todo!()
+}
+/// Conducts multiple rounds of FRI folding at once. Essentially, first treating the vector `code` as the evaluations of a univariate polynomial over the FFT domain and its cosets, conducts a partial inverse fft, which is as many iterations as rounds skipped
+/// and then reinterprets the field elements of this partial decoding as the dense representation of a multilinear polynomial, computes the multilinear polynomial obtained from fixing the first skipped round many variables to the random challenges obtained over
+/// the rounds.
+pub fn fold_skip<F>(code: &[Fp], random_challenges: &[Fp4], roots: &[Vec<Fp>]) -> Vec<Fp4> {
+    let total_rounds = random_challenges.len();
+
+    let packed_code = Fp::pack_slice(code);
+
+
+    
+    
+    todo!()
 }
 
 /// Generates Merkle authentication paths for query positions.

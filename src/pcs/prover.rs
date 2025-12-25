@@ -7,6 +7,7 @@ use crate::merkle::{HashOutput, MerkleTree};
 use crate::pcs::utils::create_hash_leaves_std;
 
 /// Commits to an already-encoded oracle by building a Merkle tree over leaf hashes.
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn commit_oracle(current_encoding: &[Fp4]) -> Result<(HashOutput, MerkleTree)> {
     let leaves = create_hash_leaves_std(current_encoding);
     let merkle_tree = MerkleTree::from_hash(&leaves)?;

@@ -53,9 +53,5 @@ harness = false
 name = "parallelism_bench"
 harness = false
 
-[[bench]]
-name = "poseidon2_spartan_bench"
-harness = false
-
 [[example]]
 name = "helix"

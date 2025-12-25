@@ -188,6 +188,7 @@ impl BatchSumCheckProof {
                     ),
                 };
 
+
                 state.update(current_encoding, round >= skip_rounds)?;
                 if round > skip_rounds {
                     challenger.observe_commitment(
@@ -567,6 +568,7 @@ pub struct BasefoldState {
 }
 
 impl BasefoldState {
+    #[tracing::instrument(level = "debug", skip_all)]
     pub fn update(&mut self, current_encoding: Vec<Fp4>, commit: bool) -> anyhow::Result<()> {
         if commit {
             let (oracle_commitment, merkle_tree) = commit_oracle(&current_encoding)?;
